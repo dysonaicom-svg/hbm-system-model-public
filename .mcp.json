@@ -1,0 +1,102 @@
+{
+  "mcpServers": {
+    "discord": {
+      "command": "/home/ic/.claude/channels/discord/discord-mcp-wrapper.sh"
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/ic/JXTF/HBM"
+      ],
+      "env": {
+        "ALLOWED_DIRECTORY": "/home/ic/JXTF/HBM"
+      }
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {}
+    },
+    "fetch": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "markfetch"
+      ],
+      "env": {}
+    },
+    "vivado": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "vivado-mcp"
+      ],
+      "env": {
+        "VIVADO_PATH": "/opt/Xilinx/Vivado/2023.1/bin/vivado"
+      }
+    },
+    "tavily": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "tavily-mcp",
+        "-e",
+        "TAVILY_API_KEY=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"
+      ],
+      "env": {}
+    },
+    "thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {}
+    },
+    "papers": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "arxiv-mcp-server",
+        "arxiv-mcp-server"
+      ],
+      "env": {}
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {}
+    },
+    "design-advisor": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "/home/ic/JXTF/HBM/.claude/mcp-servers/mcp_design_advisor.py"
+      ],
+      "env": {}
+    },
+    "paper-think-tank": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "/home/ic/JXTF/HBM/.claude/mcp-servers/paper_think_tank.py"
+      ],
+      "env": {}
+    }
+  }
+}

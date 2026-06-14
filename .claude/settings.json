@@ -1,0 +1,54 @@
+{
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | grep -E '\\.(sv|v|vh|svh)$' && echo '{\"systemMessage\": \"RTL文件已修改，运行 /fpga-lint 检查语法\"}' || true",
+            "statusMessage": "检查RTL文件修改"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "检查命令是否安全: $ARGUMENTS。FPGA项目保护规则: 1) rm -rf /* 或 rm -rf / 立即拒绝 2) git reset --hard HEAD~5 以上的命令需要确认 3) vivado 烧录命令可以放行 4) 仿真命令可以放行",
+            "if": "Bash(rm -rf /*)",
+            "continueOnBlock": false
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '$ARGUMENTS' | grep -qE '(rm -rf|/bin/rm -rf)' && echo '{\"stopReason\": \"危险操作: rm -rf 可能删除系统文件\", \"continue\": false}' || echo '{\"continue\": true}'",
+            "if": "Bash(rm *)"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"additionalContext\": \"<session-context>当前项目: JXTF-HBM，HBM内存控制器开发</session-context>\"}'",
+            "statusMessage": "加载项目上下文"
+          }
+        ]
+      }
+    ]
+  }
+}
