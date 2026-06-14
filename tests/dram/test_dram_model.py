@@ -214,16 +214,17 @@ def test_all_modules():
     dram.set_time(100e-6)
     
     accesses = [
-        (0, 0, 0, 0, 0, 0x100, "READ"),
-        (0, 0, 0, 0, 0, 0x200, "READ"),
-        (0, 1, 0, 0, 0, 0x100, "WRITE"),
-        (1, 0, 0, 0, 0, 0x300, "READ"),
+        (0, 0, 0, 0, 0, 0x100, "READ"),   # Ch0/Bk0 row 0x100
+        (0, 0, 0, 0, 1, 0x200, "READ"),   # Ch0/Bk1 row 0x200 (不同 bank)
+        (0, 1, 0, 0, 0, 0x100, "WRITE"),  # Ch1/Bk0 row 0x100 (不同 channel)
+        (1, 0, 0, 0, 0, 0x300, "READ"),   # Stack1/Ch0/Bk0 (不同 stack)
     ]
     
     for i, (stack, ch, ps, bg, bank, row, cmd) in enumerate(accesses):
         success = dram.execute_request(stack, ch, ps, bg, bank, row, cmd)
         print(f"  [{i}] Stack{stack}/Ch{ch}/Ps{ps}/Bg{bg}/Bk{bank} row=0x{row:x} {cmd}: {'OK' if success else 'FAIL'}")
-        dram.tick(10)  # 推进 10 cycles
+        # 推进时间：等待 tRP + tRCD (足够完成任何未决的 bank 操作)
+        dram.tick(50)  # 50 cycles ≈ 39 ns
     
     # 4. 统计
     stats = dram.get_stats()
