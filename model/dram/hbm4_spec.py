@@ -61,15 +61,19 @@ class HBM4Spec:
     def bandwidth(self) -> float:
         """Peak bandwidth in TB/s
 
-        Formula: data_rate (Gb/s) × io_width (bits) / 8 / 1e12
-        Example: 8 GT/s × 2048 bits / 8 = 2 TB/s
+        Formula: data_rate (Gb/s) × io_width (bits) / 8 / 1000
+        Example: 8 GT/s × 2048 bits / 8 / 1000 = 2.048 TB/s
         """
-        return self.data_rate_gtps * self.io_width / 8 / 1e12
+        return self.data_rate_gtps * self.io_width / 8 / 1000
 
     @property
     def bandwidth_gbs(self) -> float:
-        """Peak bandwidth in GB/s"""
-        return self.data_rate_gtps * self.io_width / 8 / 1e9
+        """Peak bandwidth in GB/s
+
+        Formula: data_rate (Gb/s) × io_width (bits) / 8
+        Example: 8 GT/s × 2048 bits / 8 = 2048 GB/s
+        """
+        return self.data_rate_gtps * self.io_width / 8
 
     # === Timing Parameters (cycles @ tCK) ===
     # Based on Ramulator 2.0 HBM3 timing, adjusted for HBM4

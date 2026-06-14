@@ -45,16 +45,16 @@ class TestHBM4SpecInterface:
         assert spec.data_rate_gtps == 8.0, "8 GT/s base rate"
 
     def test_hbm4_spec_bandwidth(self):
-        """HBM4 @ 8 GT/s = 2 TB/s per stack"""
+        """HBM4 @ 8 GT/s = 2.048 TB/s per stack"""
         spec = HBM4Spec()
-        # 8 GT/s × 2048 bits / 8 = 2 TB/s
-        expected_bw = 2.0  # TB/s
+        # 8 GT/s × 2048 bits / 8 / 1000 = 2.048 TB/s
+        expected_bw = 2.048  # TB/s
         assert abs(spec.bandwidth - expected_bw) < 0.01
 
     def test_hbm4_spec_bandwidth_gbs(self):
         """HBM4 bandwidth in GB/s"""
         spec = HBM4Spec()
-        expected_bw = 2000.0  # GB/s
+        expected_bw = 2048.0  # GB/s (8 GT/s × 2048 / 8)
         assert abs(spec.bandwidth_gbs - expected_bw) < 1.0
 
 
@@ -223,12 +223,12 @@ class TestHBM4Comparison:
         assert spec.io_width == 2048
 
     def test_hbm4_has_higher_bandwidth(self):
-        """HBM4 has 2 TB/s vs HBM3's ~0.8 TB/s"""
+        """HBM4 has 2.048 TB/s vs HBM3's ~0.819 TB/s"""
         spec = HBM4Spec()
         hbm3_bandwidth = 0.8192  # TB/s at 6.4 GT/s with 1024-bit
 
         assert spec.bandwidth > hbm3_bandwidth
-        assert spec.bandwidth == 2.0
+        assert spec.bandwidth == 2.048
 
     def test_hbm4_has_more_pseudo_channels(self):
         """HBM4 has 64 pseudo-channels vs HBM3's 16"""
