@@ -19,18 +19,23 @@ from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
 @dataclass
 class BankGroup:
     """Bank Group
-    
+
     HBM3: 每个 pseudo-channel 有 8 个 bank groups，每个 group 2 个 banks
+
+    Attributes:
+        group_id: Bank group ID
+        banks: Bank 列表 (每个 group 2 个 bank)
+        timing: 共享的时序参数实例
     """
     group_id: int
     banks: List[BankStateMachine] = field(default_factory=list)
-    
+    timing: HBM3Timing = field(default_factory=HBM3Timing)
+
     def __post_init__(self):
         if not self.banks:
-            timing = HBM3Timing()
             self.banks = [
-                BankStateMachine(bank_id=i, timing=timing)
-                for i in range(2)
+                BankStateMachine(bank_id=i, timing=self.timing)
+                for i in range(2)  # 2 banks per group
             ]
     
     def get_bank(self, bank_in_group: int) -> BankStateMachine:

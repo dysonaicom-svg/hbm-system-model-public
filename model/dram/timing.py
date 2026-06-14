@@ -72,10 +72,6 @@ class HBM3Timing:
         """Cycles 转换为 seconds"""
         return self.cycles_to_seconds(cycles)
 
-    def cycles_to_s(self, cycles: int) -> float:
-        """Cycles 转换为秒"""
-        return cycles * self.clock_period_ns * 1e-9
-
     def ns_to_cycles(self, ns: float) -> int:
         """ns 转换为 cycles"""
         return int(ns * 1000 / self.tCK_ps + 0.5)
@@ -108,15 +104,6 @@ class HBM2Timing:
     def clock_period_ns(self) -> float:
         return self.tCK_ps / 1000.0
 
-    def cycles_to_ns(self, cycles: int) -> float:
-        return cycles * self.clock_period_ns
-
-    def cycles_to_seconds(self, cycles: int) -> float:
-        return self.cycles_to_ns(cycles) * 1e-9
-
-    def cycles_to_s(self, cycles: int) -> float:
-        return self.cycles_to_seconds(cycles)
-    
     def cycles_to_ns(self, cycles: int) -> float:
         return cycles * self.clock_period_ns
 
