@@ -1,0 +1,162 @@
+[
+  {
+    "pattern": "random",
+    "request_rate": 0.3,
+    "total_requests": 38433,
+    "completed": 38433,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.0491946243330026,
+    "simulation_time_ms": 649.2824554443359
+  },
+  {
+    "pattern": "random",
+    "request_rate": 0.5,
+    "total_requests": 63732,
+    "completed": 63732,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.0815775973249791,
+    "simulation_time_ms": 869.3175315856934
+  },
+  {
+    "pattern": "random",
+    "request_rate": 0.8,
+    "total_requests": 102292,
+    "completed": 102292,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.13093478292799163,
+    "simulation_time_ms": 1144.5207595825195
+  },
+  {
+    "pattern": "random",
+    "request_rate": 1.0,
+    "total_requests": 127999,
+    "completed": 127999,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.16384,
+    "simulation_time_ms": 1421.4284420013428
+  },
+  {
+    "pattern": "sequential",
+    "request_rate": 0.3,
+    "total_requests": 38535,
+    "completed": 38535,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.049325185353010566,
+    "simulation_time_ms": 615.9024238586426
+  },
+  {
+    "pattern": "sequential",
+    "request_rate": 0.5,
+    "total_requests": 64063,
+    "completed": 64063,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.08200128063500495,
+    "simulation_time_ms": 797.0576286315918
+  },
+  {
+    "pattern": "sequential",
+    "request_rate": 0.8,
+    "total_requests": 102444,
+    "completed": 102444,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.13112934444800348,
+    "simulation_time_ms": 1146.1644172668457
+  },
+  {
+    "pattern": "sequential",
+    "request_rate": 1.0,
+    "total_requests": 127999,
+    "completed": 127999,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.16384,
+    "simulation_time_ms": 1419.431209564209
+  },
+  {
+    "pattern": "stride",
+    "request_rate": 0.3,
+    "total_requests": 38535,
+    "completed": 38535,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.049325185353010566,
+    "simulation_time_ms": 610.2380752563477
+  },
+  {
+    "pattern": "stride",
+    "request_rate": 0.5,
+    "total_requests": 64063,
+    "completed": 64063,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.08200128063500495,
+    "simulation_time_ms": 811.4638328552246
+  },
+  {
+    "pattern": "stride",
+    "request_rate": 0.8,
+    "total_requests": 102444,
+    "completed": 102444,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.13112934444800348,
+    "simulation_time_ms": 1218.7004089355469
+  },
+  {
+    "pattern": "stride",
+    "request_rate": 1.0,
+    "total_requests": 127999,
+    "completed": 127999,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.16384,
+    "simulation_time_ms": 1461.3237380981445
+  },
+  {
+    "pattern": "hot_spot",
+    "request_rate": 0.3,
+    "total_requests": 38377,
+    "completed": 38377,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.04912294377299822,
+    "simulation_time_ms": 827.5394439697266
+  },
+  {
+    "pattern": "hot_spot",
+    "request_rate": 0.5,
+    "total_requests": 63951,
+    "completed": 63951,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.0818579195149962,
+    "simulation_time_ms": 1075.1900672912598
+  },
+  {
+    "pattern": "hot_spot",
+    "request_rate": 0.8,
+    "total_requests": 102449,
+    "completed": 102449,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.1311357444980039,
+    "simulation_time_ms": 1373.481035232544
+  },
+  {
+    "pattern": "hot_spot",
+    "request_rate": 1.0,
+    "total_requests": 127999,
+    "completed": 127999,
+    "row_hit_rate": 0.0,
+    "avg_latency": 0.0,
+    "throughput_gbps": 0.16384,
+    "simulation_time_ms": 1594.2564010620117
+  }
+]

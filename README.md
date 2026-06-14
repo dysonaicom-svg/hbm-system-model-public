@@ -12,8 +12,8 @@ HBM System Model 是一个面向芯片架构探索的 High Bandwidth Memory 系�
 | Controller model | 可运行 | 地址解码、请求队列、FR-FCFS/QoS 调度、refresh scheduler |
 | DRAM model | 可运行 | HBM3 timing、bank state machine、channel、stack、row-hit 行为 |
 | Ramulator2 baseline | 可运行 | 顺序、stride、随机访问三组 HBM3 trace 实验 |
-| Tests | 通过 | 当前项目测试 `57 passed` |
-| RTL/UVM | 占位 | `verification/uvm/` 目录已预留 |
+| Tests | 通过 | 当前项目测试 `79 passed` |
+| RTL/UVM | 可运行 | hbm_types, hbm_pkg, hbm_controller, dram_model, UVM env |
 
 ## 目录结构
 
@@ -75,7 +75,7 @@ python3 -m pytest tests -q
 当前验证结果：
 
 ```text
-57 passed
+79 passed
 ```
 
 说明：不要在仓库根目录直接运行无限定的 `pytest`，否则可能收集到 Ramulator2 第三方依赖中的上游测试。使用 `pytest tests` 限定本项目测试范围。
@@ -114,6 +114,43 @@ research/hbm-modeling/results/summary.md
 | Sequential 64B | 87.5% | 30.95 cycles |
 | Stride 4KB | 0.02% | 83.13 cycles |
 | Random | 0.01% | 42.46 cycles |
+
+## RTL/UVM 实现
+
+### 目录结构
+```text
+rtl/
+├── hbm_types.svh          # HBM 类型定义 (addr_t, req_type_t, bank_state_t, cmd_t, timing_t, req_t)
+├── hbm_pkg.sv             # UVM package (hbm_configuration, hbm_transaction)
+├── dram_model.sv          # DRAM behavioral model (bank FSM, memory array, timing)
+├── hbm_controller.sv      # HBM controller RTL (addr decoder, queue, FR-FCFS, FSM)
+└── hbm_controller_tb.sv   # Controller testbench
+
+verification/
+├── reference_model/       # 参考模型
+│   ├── dram_ref_model.sv  # DRAM 性能参考模型
+│   ├── addr_decoder_ref.sv # 地址解码器参考 (6 种映射模式)
+│   ├── bandwidth_calc.sv  # 带宽计算
+│   └── timing_checker.sv  # 时序检查
+└── uvm/                   # UVM 验证环境
+    ├── hbm_env_pkg.sv     # Environment package
+    ├── hbm_test_pkg.sv    # Test package (sequences + tests)
+    ├── hbm_tb.sv          # Testbench top
+    ├── Makefile           # Verilator 构建系统
+    └── uvm.f              # 文件列表
+```
+
+### 运行 UVM 测试
+```bash
+cd verification/uvm
+make
+```
+
+### 编译 RTL
+```bash
+cd rtl
+verilator --cc --trace hbm_controller.sv hbm_types.svh
+```
 
 ## Python 模型入口
 

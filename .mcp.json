@@ -26,7 +26,9 @@
       "command": "npx",
       "args": [
         "-y",
-        "tavily-mcp"
+        "tavily-mcp",
+        "-e",
+        "TAVILY_API_KEY=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"
       ],
       "env": {}
     },
@@ -77,6 +79,22 @@
       "args": [
         "-y",
         "@upstash/context7-mcp"
+      ],
+      "env": {}
+    },
+    "design-advisor": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "/home/ic/JXTF/HBM/.claude/mcp-servers/mcp_design_advisor.py"
+      ],
+      "env": {}
+    },
+    "paper-think-tank": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "/home/ic/JXTF/HBM/.claude/mcp-servers/paper_think_tank.py"
       ],
       "env": {}
     }

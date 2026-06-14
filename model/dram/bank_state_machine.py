@@ -33,24 +33,24 @@ class Bank:
     bank_id: int
     state: BankStateEnum = BankStateEnum.IDLE
     open_row: int = -1
-    activate_time: float = 0.0
+    activate_time: float = -1.0  # 使用 -1.0 表示从未激活
     read_time: float = 0.0
     write_time: float = 0.0
-    precharge_time: float = 0.0
+    precharge_time: float = -1.0  # 使用 -1.0 表示从未预充电
     refresh_time: float = 0.0
-    
+
     @property
     def is_idle(self) -> bool:
         return self.state == BankStateEnum.IDLE
-    
+
     @property
     def is_active(self) -> bool:
         return self.state == BankStateEnum.ACTIVE
-    
+
     @property
     def row_open(self) -> bool:
         return self.is_active and self.open_row >= 0
-    
+
     def __repr__(self) -> str:
         row_str = f"row=0x{self.open_row:x}" if self.open_row >= 0 else "row=closed"
         return f"Bank{self.bank_id}({self.state.name}, {row_str})"
@@ -73,20 +73,20 @@ class BankStateMachine:
     
     def can_activate(self) -> bool:
         """检查是否可以发起 ACT
-        
+
         时序约束:
         - Bank 必须是 IDLE 状态
-        - 距离上次激活 (任何命令) 必须 >= tRC
+        - 距离上次操作必须 >= tRC (如果是新 bank，始终可用)
         """
         if self.bank.state != BankStateEnum.IDLE:
             return False
-        
-        time_since_any = self.current_time - max(
-            self.bank.activate_time,
-            self.bank.precharge_time
-        )
-        
-        return time_since_any >= self.timing.cycles_to_s(self.timing.tRC)
+
+        # 如果 bank 从未激活过，可以激活
+        if self.bank.activate_time < 0:
+            return True
+
+        time_since_act = self.current_time - self.bank.activate_time
+        return time_since_act >= self.timing.cycles_to_s(self.timing.tRC)
     
     def activate(self, row: int) -> bool:
         """激活 Bank
