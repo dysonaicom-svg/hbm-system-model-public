@@ -2,10 +2,14 @@
 性能基准测试模块 - 分析不同流量模式下的吞吐量和延迟
 """
 
+import os
 import time
+import logging
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Optional, TextIO
 from sim.simulator import HBMSimulator, SimulationConfig, SimulationStats, TrafficPattern
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,28 +22,50 @@ class BenchmarkResult:
     row_hit_rate: float
     avg_latency: float
     throughput_gbps: float
-    simulation_time_ms: float
+    wall_clock_time_ms: float  # 修复: 重命名以区分实际含义
 
 
 class HBMBenchmark:
     """HBM 性能基准测试器"""
 
-    def __init__(self):
+    def __init__(self, output_dir: str = "sim"):
+        """初始化基准测试器
+
+        Args:
+            output_dir: 结果输出目录
+        """
         self.results: List[BenchmarkResult] = []
+        self.output_dir = output_dir
+
+    def clear_results(self):
+        """清空结果列表"""
+        self.results = []
 
     def run_single(
         self,
         pattern: TrafficPattern,
         request_rate: float,
         time_us: float = 100.0,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        read_ratio: float = 0.7  # 修复: 暴露 read_ratio 参数
     ) -> BenchmarkResult:
-        """运行单个基准测试"""
+        """运行单个基准测试
+
+        Args:
+            pattern: 流量模式
+            request_rate: 请求率 (0.0-1.0)
+            time_us: 仿真时间 (微秒)
+            seed: 随机种子
+            read_ratio: 读请求比例 (0.0-1.0)
+
+        Returns:
+            基准测试结果
+        """
         config = SimulationConfig(
             simulation_time_us=time_us,
             traffic_pattern=pattern,
             request_rate=request_rate,
-            read_ratio=0.7,
+            read_ratio=read_ratio,  # 修复: 使用参数化值
             seed=seed
         )
 
@@ -56,41 +82,104 @@ class HBMBenchmark:
             row_hit_rate=stats.row_hit_rate,
             avg_latency=stats.avg_latency,
             throughput_gbps=stats.throughput_gbps,
-            simulation_time_ms=elapsed_ms
+            wall_clock_time_ms=elapsed_ms  # 修复: 重命名字段
         )
 
-    def run_suite(self) -> List[BenchmarkResult]:
-        """运行完整基准测试套件"""
-        patterns = [
-            TrafficPattern.RANDOM,
-            TrafficPattern.SEQUENTIAL,
-            TrafficPattern.STRIDE,
-            TrafficPattern.HOT_SPOT,
-        ]
+    def run_suite(
+        self,
+        patterns: Optional[List[TrafficPattern]] = None,
+        rates: Optional[List[float]] = None,
+        time_us: float = 100.0,
+        seed: int = 42,
+        read_ratio: float = 0.7
+    ) -> List[BenchmarkResult]:
+        """运行基准测试套件
 
-        rates = [0.3, 0.5, 0.8, 1.0]
+        Args:
+            patterns: 要测试的流量模式列表
+            rates: 要测试的请求率列表
+            time_us: 仿真时间 (微秒)
+            seed: 随机种子
+            read_ratio: 读请求比例
+
+        Returns:
+            所有测试结果
+        """
+        if patterns is None:
+            patterns = [
+                TrafficPattern.RANDOM,
+                TrafficPattern.SEQUENTIAL,
+                TrafficPattern.STRIDE,
+                TrafficPattern.HOT_SPOT,
+            ]
+
+        if rates is None:
+            rates = [0.3, 0.5, 0.8, 1.0]
 
         for pattern in patterns:
             for rate in rates:
-                print(f"Running {pattern.value} @ rate={rate}...")
-                result = self.run_single(pattern, rate, time_us=100.0, seed=42)
+                logger.info(f"Running {pattern.value} @ rate={rate}...")
+                result = self.run_single(
+                    pattern, rate,
+                    time_us=time_us,
+                    seed=seed,
+                    read_ratio=read_ratio
+                )
                 self.results.append(result)
 
         return self.results
 
-    def print_results(self):
-        """打印结果表格"""
-        print("\n" + "=" * 90)
+    def print_results(self, stream: Optional[TextIO] = None):
+        """打印结果表格
+
+        Args:
+            stream: 输出流 (默认 stdout)
+        """
+        if stream is None:
+            stream = __import__('sys').stdout
+
+        print("\n" + "=" * 90, file=stream)
         print(f"{'Pattern':<15} {'Rate':>6} {'Reqs':>8} {'Completed':>10} "
-              f"{'Hit%':>8} {'Latency':>10} {'TPut':>10} {'Time':>8}")
-        print("-" * 90)
+              f"{'Hit%':>8} {'Latency':>10} {'TPut':>10} {'Time':>8}", file=stream)
+        print("-" * 90, file=stream)
 
         for r in self.results:
             print(f"{r.pattern:<15} {r.request_rate:>6.2f} {r.total_requests:>8} "
                   f"{r.completed:>10} {r.row_hit_rate:>8.1%} {r.avg_latency:>10.1f} "
-                  f"{r.throughput_gbps:>10.2f} {r.simulation_time_ms:>8.1f}")
+                  f"{r.throughput_gbps:>10.2f} {r.wall_clock_time_ms:>8.1f}", file=stream)
 
-        print("=" * 90)
+        print("=" * 90, file=stream)
+
+    def save_results(self, filename: str = "benchmark_results.json"):
+        """保存结果到 JSON 文件
+
+        Args:
+            filename: 输出文件名
+        """
+        import json
+
+        # 确保输出目录存在
+        output_path = os.path.join(self.output_dir, filename)
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        results_dict = [
+            {
+                "pattern": r.pattern,
+                "request_rate": r.request_rate,
+                "total_requests": r.total_requests,
+                "completed": r.completed,
+                "row_hit_rate": r.row_hit_rate,
+                "avg_latency": r.avg_latency,
+                "throughput_gbps": r.throughput_gbps,
+                "wall_clock_time_ms": r.wall_clock_time_ms
+            }
+            for r in self.results
+        ]
+
+        with open(output_path, "w") as f:
+            json.dump(results_dict, f, indent=2)
+
+        logger.info(f"Results saved to {output_path}")
 
 
 def main():
@@ -99,30 +188,12 @@ def main():
     print("HBM Performance Benchmark Suite")
     print("=" * 60)
 
-    bench = HBMBenchmark()
-    bench.run_suite()
+    bench = HBMBenchmark(output_dir="sim")
+    bench.run_suite(time_us=100.0, seed=42, read_ratio=0.7)
     bench.print_results()
+    bench.save_results()
 
-    # 保存结果
-    import json
-    results_dict = [
-        {
-            "pattern": r.pattern,
-            "request_rate": r.request_rate,
-            "total_requests": r.total_requests,
-            "completed": r.completed,
-            "row_hit_rate": r.row_hit_rate,
-            "avg_latency": r.avg_latency,
-            "throughput_gbps": r.throughput_gbps,
-            "simulation_time_ms": r.simulation_time_ms
-        }
-        for r in bench.results
-    ]
-
-    with open("sim/benchmark_results.json", "w") as f:
-        json.dump(results_dict, f, indent=2)
-
-    print("\nResults saved to sim/benchmark_results.json")
+    print("\nBenchmark complete.")
 
 
 if __name__ == "__main__":
