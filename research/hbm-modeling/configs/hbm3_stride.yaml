@@ -2,13 +2,12 @@ Frontend:
   impl: SimpleO3
   clock_ratio: 8
   num_expected_insts: 500000
-  traces: 
+  traces:
     - /home/ic/JXTF/HBM/research/hbm-modeling/traces/stride_rd.trace
 
   Translation:
     impl: RandomTranslation
     max_addr: 2147483648
-              
 
 MemorySystem:
   impl: GenericDRAM
@@ -17,14 +16,9 @@ MemorySystem:
   DRAM:
     impl: HBM3
     org:
+      preset: HBM3_2Gb
       channel: 1
       pseudochannel: 2
-      bankgroup: 4
-      bank: 4
-      row: 8192
-      column: 64
-      density: 4096
-      dq: 128
     timing:
       preset: HBM3_2Gbps
 
@@ -35,7 +29,7 @@ MemorySystem:
     RefreshManager:
       impl: AllBank
     RowPolicy:
-      impl: ClosedRowPolicy
+      impl: OpenRowPolicy
       cap: 4
     plugins:
 

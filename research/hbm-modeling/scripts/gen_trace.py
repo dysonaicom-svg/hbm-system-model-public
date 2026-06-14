@@ -16,7 +16,7 @@ def write_trace(path, pattern, count, base, span, stride, write_ratio, max_bubbl
         for i in range(count):
             # Generate bubble count (0-10 cycles between instructions)
             bubble = rng.randint(0, max_bubble)
-            
+
             if pattern == "seq":
                 addr = base + i * 64
             elif pattern == "stride":

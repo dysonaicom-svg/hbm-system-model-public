@@ -120,7 +120,11 @@ class FRFCFSScheduler(HBMScheduler):
         for req in queue._queue:
             bank_key = (req.channel_id, req.pseudo_channel_id, req.bank_id)
             bank_state = bank_states.get(bank_key)
-            if bank_state and bank_state.is_open and bank_state.open_row == req.row_id:
+            if bank_state is None:
+                if not bank_states and req.row_hit:
+                    candidates.append(req)
+                continue
+            if bank_state.is_open and bank_state.open_row == req.row_id:
                 req.row_hit = True
                 candidates.append(req)
             else:

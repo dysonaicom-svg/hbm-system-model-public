@@ -68,7 +68,7 @@ class RefreshScheduler:
         self.pseudo_channels = config.pseudo_channels_per_channel
         
         # Staggered refresh 状态
-        self._last_refresh_time = 0.0
+        self._last_refresh_time = -config.refresh_interval
         self._next_bank_group = 0
         self._pending_refreshes: List[RefreshCommand] = []
         
@@ -163,7 +163,7 @@ class RefreshScheduler:
     
     def reset(self):
         """重置刷新状态"""
-        self._last_refresh_time = 0.0
+        self._last_refresh_time = -self.config.refresh_interval
         self._next_bank_group = 0
         self._pending_refreshes.clear()
         self._stats = {
