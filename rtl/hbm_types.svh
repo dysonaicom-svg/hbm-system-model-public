@@ -109,7 +109,7 @@ typedef struct packed {
     hbm_addr_t   addr;           // Request address
     hbm_req_type_t req_type;    // Type of request
     logic [7:0]  length;         // Burst length (in beats)
-    logic        priority;       // Request priority (1=high, 0=normal)
+    logic        req_priority;    // Request priority (1=high, 0=normal)
     hbm_req_state_t state;      // Current request state
     logic [15:0] cycle_submitted; // Cycle when request was submitted
     logic [15:0] cycle_complete;  // Cycle when request completed

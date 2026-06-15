@@ -5,9 +5,9 @@
     "total_requests": 38433,
     "completed": 38433,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.0491946243330026,
-    "simulation_time_ms": 649.2824554443359
+    "wall_clock_time_ms": 1070.5208778381348
   },
   {
     "pattern": "random",
@@ -15,9 +15,9 @@
     "total_requests": 63732,
     "completed": 63732,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.0815775973249791,
-    "simulation_time_ms": 869.3175315856934
+    "wall_clock_time_ms": 1316.0018920898438
   },
   {
     "pattern": "random",
@@ -25,9 +25,9 @@
     "total_requests": 102292,
     "completed": 102292,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999902240644429,
     "throughput_gbps": 0.13093478292799163,
-    "simulation_time_ms": 1144.5207595825195
+    "wall_clock_time_ms": 1581.1285972595215
   },
   {
     "pattern": "random",
@@ -35,9 +35,9 @@
     "total_requests": 127999,
     "completed": 127999,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "simulation_time_ms": 1421.4284420013428
+    "wall_clock_time_ms": 1924.0765571594238
   },
   {
     "pattern": "sequential",
@@ -45,9 +45,9 @@
     "total_requests": 38535,
     "completed": 38535,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.049325185353010566,
-    "simulation_time_ms": 615.9024238586426
+    "wall_clock_time_ms": 955.9917449951172
   },
   {
     "pattern": "sequential",
@@ -55,9 +55,9 @@
     "total_requests": 64063,
     "completed": 64063,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.08200128063500495,
-    "simulation_time_ms": 797.0576286315918
+    "wall_clock_time_ms": 1167.5422191619873
   },
   {
     "pattern": "sequential",
@@ -65,9 +65,9 @@
     "total_requests": 102444,
     "completed": 102444,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999902385693648,
     "throughput_gbps": 0.13112934444800348,
-    "simulation_time_ms": 1146.1644172668457
+    "wall_clock_time_ms": 1724.4343757629395
   },
   {
     "pattern": "sequential",
@@ -75,9 +75,9 @@
     "total_requests": 127999,
     "completed": 127999,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "simulation_time_ms": 1419.431209564209
+    "wall_clock_time_ms": 1875.823736190796
   },
   {
     "pattern": "stride",
@@ -85,9 +85,9 @@
     "total_requests": 38535,
     "completed": 38535,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.049325185353010566,
-    "simulation_time_ms": 610.2380752563477
+    "wall_clock_time_ms": 959.4254493713379
   },
   {
     "pattern": "stride",
@@ -95,9 +95,9 @@
     "total_requests": 64063,
     "completed": 64063,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.08200128063500495,
-    "simulation_time_ms": 811.4638328552246
+    "wall_clock_time_ms": 1196.5663433074951
   },
   {
     "pattern": "stride",
@@ -105,9 +105,9 @@
     "total_requests": 102444,
     "completed": 102444,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999902385693648,
     "throughput_gbps": 0.13112934444800348,
-    "simulation_time_ms": 1218.7004089355469
+    "wall_clock_time_ms": 1564.9876594543457
   },
   {
     "pattern": "stride",
@@ -115,9 +115,9 @@
     "total_requests": 127999,
     "completed": 127999,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "simulation_time_ms": 1461.3237380981445
+    "wall_clock_time_ms": 1898.871660232544
   },
   {
     "pattern": "hot_spot",
@@ -125,9 +125,9 @@
     "total_requests": 38377,
     "completed": 38377,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.04912294377299822,
-    "simulation_time_ms": 827.5394439697266
+    "wall_clock_time_ms": 1073.066234588623
   },
   {
     "pattern": "hot_spot",
@@ -135,9 +135,9 @@
     "total_requests": 63951,
     "completed": 63951,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 1.0,
     "throughput_gbps": 0.0818579195149962,
-    "simulation_time_ms": 1075.1900672912598
+    "wall_clock_time_ms": 1301.6862869262695
   },
   {
     "pattern": "hot_spot",
@@ -145,9 +145,9 @@
     "total_requests": 102449,
     "completed": 102449,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999902390457691,
     "throughput_gbps": 0.1311357444980039,
-    "simulation_time_ms": 1373.481035232544
+    "wall_clock_time_ms": 1737.3294830322266
   },
   {
     "pattern": "hot_spot",
@@ -155,8 +155,8 @@
     "total_requests": 127999,
     "completed": 127999,
     "row_hit_rate": 0.0,
-    "avg_latency": 0.0,
+    "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "simulation_time_ms": 1594.2564010620117
+    "wall_clock_time_ms": 2178.6983013153076
   }
 ]

@@ -8,7 +8,11 @@ Last Updated: 2026-06-15 (Multi-agent research synthesis)
 - [x] Phase 1: Public source deep dive (5 sources, 34 high-confidence facts)
 - [x] Phase 2: Requirements analysis (7 open questions answered)
 - [x] Phase 3: Architecture design (5-layer model with interfaces)
-- [ ] Phase 4: Implementation planning (pending user review)
+- [x] Phase 4: Implementation plan created (implementation/implementation_plan.md)
+- [ ] Phase 5: Core infrastructure (HBM4Spec, Address Decoder, Controller) - **IN PROGRESS**
+- [ ] Phase 6: RAS features (Lane Repair, ECC/CRC)
+- [ ] Phase 7: Power/Thermal modeling
+- [ ] Phase 8: SystemVerilog/UVM
 
 ## Target Object
 
@@ -195,7 +199,19 @@ host traffic model
 
 **Recommended**: Lane repair as configurable Layer 3 component (marked CRITICAL by research).
 
-## Open Questions - Resolved
+## Open Questions - Resolved (2026-06-15)
+
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | Operating point | **JEDEC baseline** (8 Gb/s class) |
+| 2 | Traffic type | **TBD** - need further analysis |
+| 3 | Controller placement | **Full memory controller** in logic base die |
+| 4 | HBM4E customization | **Include as near-term requirement** |
+| 5 | Accuracy target | **Trend-correct** architecture exploration |
+| 6 | Output priority | **All outputs** (throughput/latency, power/thermal, RAS overhead, area proxy, firmware/register) |
+| 7 | Development path | **Python system modeling first**, then SystemVerilog/UVM |
+
+## Initial Success Criteria - Resolved
 
 | # | Question | Resolution | Rationale |
 |---|----------|------------|-----------|

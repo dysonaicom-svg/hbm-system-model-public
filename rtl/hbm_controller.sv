@@ -81,7 +81,7 @@ module hbm_controller #(
         logic [ADDR_WIDTH-1:0]  addr;
         logic                   rd_wr_n;
         logic [15:0]            len;
-        logic [2:0]             priority;
+        logic [2:0]             req_priority;
         logic                   open_row;     // Row buffer open flag
         logic [BK_ADDR_WIDTH-1:0]  open_bank; // Currently open bank
         logic [ROW_ADDR_WIDTH-1:0] open_row_addr; // Currently open row
@@ -152,7 +152,7 @@ module hbm_controller #(
                 queue[enq_ptr].addr          <= req_addr;
                 queue[enq_ptr].rd_wr_n       <= req_rd_wr_n;
                 queue[enq_ptr].len           <= req_len;
-                queue[enq_ptr].priority      <= req_priority;
+                queue[enq_ptr].req_priority      <= req_priority;
                 queue[enq_ptr].age           <= age_counter;
                 queue[enq_ptr].state         <= 4'd0;  // Queued
                 // Check if same channel/bank/row is already open
@@ -161,11 +161,9 @@ module hbm_controller #(
                 queue[enq_ptr].open_row_addr <= dec_row;
                 queue[enq_ptr].open_stack   <= dec_stack;
                 queue[enq_ptr].open_row      <=
-                    (dec_ch == open_ch) &&
-                    (dec_bank == open_bank) &&
-                    (dec_row == open_row_addr) &&
-                    (dec_stack == open_stack) &&
-                    row_open;
+                    (dec_bank == open_bank_reg[get_ch_idx(dec_ch)]) &&
+                    (dec_row == open_row_reg[get_ch_idx(dec_ch)]) &&
+                    row_open[get_ch_idx(dec_ch)];
             end
         end
     end
@@ -239,32 +237,32 @@ module hbm_controller #(
                 // Selection criteria: row_hit > priority > age (older wins)
                 if (!grant_valid) begin
                     best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
-                    best_priority = queue[i].priority;
+                    best_priority = queue[i].req_priority;
                     best_age = queue[i].age;
                     best_row_hit = row_hit;
                     grant_valid = 1;
                 end else if (row_hit && !best_row_hit) begin
                     best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
-                    best_priority = queue[i].priority;
+                    best_priority = queue[i].req_priority;
                     best_age = queue[i].age;
                     best_row_hit = row_hit;
                 end else if (row_hit && best_row_hit) begin
-                    if (queue[i].priority > best_priority) begin
+                    if (queue[i].req_priority > best_priority) begin
                         best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
-                        best_priority = queue[i].priority;
+                        best_priority = queue[i].req_priority;
                         best_age = queue[i].age;
-                    end else if (queue[i].priority == best_priority) begin
+                    end else if (queue[i].req_priority == best_priority) begin
                         if (queue[i].age < best_age) begin
                             best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
                             best_age = queue[i].age;
                         end
                     end
                 end else if (!row_hit && !best_row_hit) begin
-                    if (queue[i].priority > best_priority) begin
+                    if (queue[i].req_priority > best_priority) begin
                         best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
-                        best_priority = queue[i].priority;
+                        best_priority = queue[i].req_priority;
                         best_age = queue[i].age;
-                    end else if (queue[i].priority == best_priority) begin
+                    end else if (queue[i].req_priority == best_priority) begin
                         if (queue[i].age < best_age) begin
                             best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
                             best_age = queue[i].age;

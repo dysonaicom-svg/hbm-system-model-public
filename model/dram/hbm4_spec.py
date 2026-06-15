@@ -76,8 +76,9 @@ class HBM4Spec:
         return self.data_rate_gtps * self.io_width / 8
 
     # === Timing Parameters (cycles @ tCK) ===
-    # Based on Ramulator 2.0 HBM3 timing, adjusted for HBM4
-    tCK_ps: float = 1250.0                 # Clock period (1250ps = 800 MT/s DDR)
+    # Based on JEDEC JESD270-4A HBM4 specification
+    # For 8 GT/s DDR: tCK = 1000/8 = 125 ps (not 1250 ps!)
+    tCK_ps: float = 125.0                    # Clock period in ps (125ps = 8 GHz)
     nBL: int = 4                          # Burst length
     nCL: int = 8                          # CAS latency
     nRCDRD: int = 8                       # RAS to CAS delay (read)
@@ -224,13 +225,17 @@ def calculate_bandwidth(data_rate_gtps: float, io_width: int) -> float:
     Returns:
         Bandwidth in TB/s
     """
-    return data_rate_gtps * io_width / 8 / 1e12
+    # Formula: data_rate (Gb/s) × io_width (bits) / 8 / 1000 = TB/s
+    # Example: 8 GT/s × 2048 bits / 8 / 1000 = 2.048 TB/s
+    return data_rate_gtps * io_width / 8 / 1000
 
 
 def calculate_tCK_from_rate(data_rate_gtps: float) -> float:
     """Calculate clock period from data rate
 
-    For DDR signaling, each transfer is 2 bits (rising + falling edge).
+    For DDR signaling with HBM4 at 8 GT/s:
+    - Each GT/s = 1 billion transfers per second
+    - tCK = 1000 / data_rate (ps per cycle)
 
     Args:
         data_rate_gtps: Data rate in GT/s
@@ -238,8 +243,6 @@ def calculate_tCK_from_rate(data_rate_gtps: float) -> float:
     Returns:
         Clock period in picoseconds
     """
-    # tCK = 1000 / (data_rate / 2) for DDR
-    # Example: 8 GT/s → 1000 / 4 = 250 ps per half-cycle → 500 ps per cycle
-    # But for HBM, the relationship is slightly different
-    # tCK = 1000 / data_rate for the full cycle
+    # HBM4 uses DDR, so tCK = 1000 / data_rate
+    # Example: 8 GT/s → tCK = 1000/8 = 125 ps
     return 1000.0 / data_rate_gtps

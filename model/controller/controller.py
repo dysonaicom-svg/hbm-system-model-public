@@ -94,8 +94,10 @@ class HBMController:
             success = self.queue_manager.push_read(request)
         else:
             success = self.queue_manager.push_write(request)
-        
+
         if success:
+            # 设置到达时间（使用当前仿真周期）
+            request.set_arrival_time(self.current_time)
             self.stats['total_requests'] += 1
             if request.is_read:
                 self.stats['read_requests'] += 1
@@ -108,12 +110,12 @@ class HBMController:
     
     def tick(self) -> Optional[HBMResponse]:
         """执行一个时钟周期
-        
+
         Returns:
             如果有请求完成，返回响应
         """
-        self.current_time += 1e-9  # 假设 1ns 周期
-        
+        self.current_time += 1  # 使用周期作为时间单位
+
         # 检查刷新
         for stack_id in range(self.config.stack_count):
             if self.refresh_manager.needs_refresh(stack_id, self.current_time):
@@ -147,14 +149,18 @@ class HBMController:
             
             # 标记完成
             scheduled.mark_completed(self.current_time)
-            
+
             # 记录调度统计
             self.scheduler_stats.record_schedule(scheduled)
-            
+
+            # 计算延迟（周期转换为 ns）
+            latency_cycles = scheduled.get_latency_cycles()
+            latency_ns = latency_cycles * self.config.timing.clock_period_ns
+
             return HBMResponse(
                 request_id=scheduled.request_id,
                 status="OK",
-                latency=scheduled.latency * 1e9,  # 转换为 ns
+                latency=latency_ns,
             )
         
         return None

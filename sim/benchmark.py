@@ -3,10 +3,17 @@
 """
 
 import os
+import sys
 import time
 import logging
 from dataclasses import dataclass
 from typing import List, Optional, TextIO
+
+# 添加项目根目录到 Python 路径
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from sim.simulator import HBMSimulator, SimulationConfig, SimulationStats, TrafficPattern
 
 logger = logging.getLogger(__name__)
@@ -192,6 +199,30 @@ def main():
     bench.run_suite(time_us=100.0, seed=42, read_ratio=0.7)
     bench.print_results()
     bench.save_results()
+
+    # 生成 HTML 报告
+    try:
+        from sim.report_generator import generate_html_report, ReportData
+
+        # 创建报告数据
+        report = ReportData(
+            simulation_name="HBM Performance Benchmark",
+            simulation_time_us=100.0,
+            total_requests=sum(r.total_requests for r in bench.results),
+            completed_requests=sum(r.completed for r in bench.results),
+            throughput_gbps=sum(r.throughput_gbps for r in bench.results) / len(bench.results),
+            avg_latency_cycles=sum(r.avg_latency for r in bench.results) / len(bench.results),
+        )
+
+        # 添加各模式带宽数据
+        for r in bench.results:
+            report.bandwidth_by_pattern[r.pattern] = r.throughput_gbps
+
+        # 生成报告
+        generate_html_report(report, "sim/results/benchmark_report.html")
+        print("\nHTML report generated: sim/results/benchmark_report.html")
+    except Exception as e:
+        print(f"\nReport generation skipped: {e}")
 
     print("\nBenchmark complete.")
 

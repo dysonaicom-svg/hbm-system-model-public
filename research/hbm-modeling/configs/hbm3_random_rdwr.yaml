@@ -1,13 +1,7 @@
 Frontend:
-  impl: SimpleO3
+  impl: LoadStoreTrace
+  path: /home/ic/JXTF/HBM/research/hbm-modeling/traces/random_rdwr.trace
   clock_ratio: 8
-  num_expected_insts: 500000
-  traces:
-    - /home/ic/JXTF/HBM/research/hbm-modeling/traces/random_rdwr.trace
-
-  Translation:
-    impl: RandomTranslation
-    max_addr: 2147483648
 
 MemorySystem:
   impl: GenericDRAM
@@ -16,9 +10,8 @@ MemorySystem:
   DRAM:
     impl: HBM3
     org:
+      channel_width: 64
       preset: HBM3_2Gb
-      channel: 1
-      pseudochannel: 2
     timing:
       preset: HBM3_2Gbps
 
@@ -30,8 +23,6 @@ MemorySystem:
       impl: AllBank
     RowPolicy:
       impl: OpenRowPolicy
-      cap: 4
-    plugins:
 
   AddrMapper:
-    impl: RoBaRaCoCh
+    impl: ChRaBaRoCo

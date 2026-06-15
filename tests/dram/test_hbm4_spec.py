@@ -62,9 +62,9 @@ class TestHBM4SpecTiming:
     """Test HBM4 timing parameters"""
 
     def test_hbm4_tCK(self):
-        """tCK should be 1250ps for 8 GT/s DDR"""
+        """tCK should be 125ps for 8 GT/s DDR (1/8e9 = 125ps)"""
         spec = HBM4Spec()
-        assert spec.tCK_ps == 1250.0
+        assert spec.tCK_ps == 125.0
 
     def test_hbm4_nCL(self):
         """CAS latency should be 8 cycles"""

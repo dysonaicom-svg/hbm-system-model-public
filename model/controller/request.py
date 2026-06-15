@@ -5,7 +5,6 @@ HBM Request and Response Classes
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Optional, ClassVar
-import time
 
 
 class RequestState(IntEnum):
@@ -57,13 +56,13 @@ class HBMRequest:
     arrival_time: float = field(default=0.0, init=False)
     
     # 解码后的地址字段
-    stack_id: int = field(default=0, init=False)
-    channel_id: int = field(default=0, init=False)
-    pseudo_channel_id: int = field(default=0, init=False)
-    bank_group_id: int = field(default=0, init=False)
-    bank_id: int = field(default=0, init=False)
-    row_id: int = field(default=0, init=False)
-    col_id: int = field(default=0, init=False)
+    stack_id: int = 0
+    channel_id: int = 0
+    pseudo_channel_id: int = 0
+    bank_group_id: int = 0
+    bank_id: int = 0
+    row_id: int = 0
+    col_id: int = 0
     
     # 状态
     row_hit: bool = False
@@ -77,14 +76,20 @@ class HBMRequest:
     
     def __post_init__(self):
         """初始化自动生成的字段"""
-        # 设置到达时间
-        if self.arrival_time == 0.0:
-            self.arrival_time = time.time()
-        
         # 生成唯一请求 ID
         if self.request_id == 0:
             HBMRequest._next_id += 1
             self.request_id = HBMRequest._next_id
+
+    def set_arrival_time(self, cycle: float):
+        """设置到达时间（仿真周期）"""
+        self.arrival_time = cycle
+
+    def get_latency_cycles(self) -> float:
+        """计算延迟（周期）"""
+        if self.completion_time > 0 and self.arrival_time > 0:
+            return self.completion_time - self.arrival_time
+        return 0.0
     
     @property
     def latency(self) -> float:
@@ -133,21 +138,25 @@ class HBMRequest:
                 f"qos={self.qos}, state={self.state.name})")
 
 
-@dataclass  
+@dataclass
 class HBMResponse:
     """HBM 响应
-    
+
     表示请求完成后的响应。
-    
+
     Attributes:
         request_id: 关联的请求 ID
         status: 状态 ("OK", "SLVERR", "DECERR")
         latency: 响应延迟 (纳秒)
+        channel_id: 响应的通道 ID (HBM4 特有)
+        bank_id: 响应的 bank ID
         data: 读数据 (读请求时)
     """
     request_id: int
     status: str = "OK"                      # "OK", "SLVERR", "DECERR"
     latency: float = 0.0                    # response latency in ns
+    channel_id: int = 0                     # HBM4 channel
+    bank_id: int = 0                        # bank in channel
     data: Optional[bytes] = None            # read data
     
     @property

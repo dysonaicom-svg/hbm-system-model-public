@@ -19,12 +19,21 @@ from model.dram.timing import HBM3Timing
 
 
 class BankStateEnum(Enum):
-    """Bank 状态枚举"""
-    IDLE = 0
-    ACTIVE = 1
-    READING = 2
-    WRITING = 3
-    REFRESHING = 4
+    """Bank 状态枚举
+
+    与 RTL 对齐:
+    - RTL: 3-bit 编码 000=IDLE, 001=ACTIVE, 010=BUSY, 011=REFRESH, 100=POWERDN, 101=SELFREF
+    """
+    IDLE = 0       # 000 - Bank 空闲
+    ACTIVE = 1     # 001 - Bank 已激活
+    BUSY = 2       # 010 - Bank 忙 (READ/WRITE 中)
+    REFRESHING = 3 # 011 - 刷新中
+    POWERDN = 4    # 100 - 掉电
+    SELFREF = 5     # 101 - 自刷新
+
+    # 别名以兼容旧代码
+    READING = 2    # 与 BUSY 相同
+    WRITING = 2    # 与 BUSY 相同
 
 
 @dataclass
@@ -107,14 +116,23 @@ class BankStateMachine:
     
     def can_precharge(self) -> bool:
         """检查是否可以发起 PRE
-        
+
         时序约束:
         - Bank 必须是 ACTIVE 状态
         - 距离 ACT >= tRAS
         """
-        if self.bank.state != BankStateEnum.ACTIVE:
+        if self.bank.state not in [BankStateEnum.ACTIVE, BankStateEnum.BUSY]:
             return False
-        
+
+        # 对于 BUSY 状态，检查是否 READ/WRITE 已完成
+        if self.bank.state == BankStateEnum.BUSY:
+            # 简化为: 如果当前时间已过 read/write 完成时间，可以 PRE
+            time_since_read = self.current_time - self.bank.read_time
+            time_since_write = self.current_time - self.bank.write_time
+            if time_since_read < self.timing.cycles_to_s(self.timing.tCCD) and \
+               time_since_write < self.timing.cycles_to_s(self.timing.tCCD):
+                return False
+
         time_since_act = self.current_time - self.bank.activate_time
         return time_since_act >= self.timing.cycles_to_s(self.timing.tRAS)
     

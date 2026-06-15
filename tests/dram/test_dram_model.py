@@ -211,13 +211,14 @@ class TestDRAMCommand:
     """DRAM 命令枚举测试"""
 
     def test_command_enum(self):
-        """测试命令枚举"""
+        """测试命令枚举 - 与 RTL 4-bit 命令编码对齐"""
         assert DRAMCommand.NOP.value == 0
         assert DRAMCommand.ACT.value == 1
-        assert DRAMCommand.PRE.value == 2
-        assert DRAMCommand.RD.value == 4
-        assert DRAMCommand.WR.value == 5
-        assert DRAMCommand.REF.value == 6
+        assert DRAMCommand.READ.value == 2
+        assert DRAMCommand.RD.value == 2       # RD 是 READ 的别名
+        assert DRAMCommand.WR.value == 3      # WR 是 WRITE 的别名
+        assert DRAMCommand.PRE.value == 4
+        assert DRAMCommand.REF.value == 5
 
 
 class TestDRAMResponse:

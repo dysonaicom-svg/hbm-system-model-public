@@ -167,6 +167,16 @@ class RequestQueue:
     def __repr__(self) -> str:
         return f"{self.name}(size={self.size()}, max={self.max_depth})"
 
+    def __iter__(self):
+        """使队列可迭代"""
+        with self._lock:
+            return iter(list(self._queue))
+
+    def __len__(self):
+        """使队列可使用 len()"""
+        with self._lock:
+            return len(self._queue)
+
 
 class ReadQueue(RequestQueue):
     """读请求队列

@@ -6,6 +6,7 @@ HBM Configuration Module
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 import yaml
+from ..dram.timing import HBM3Timing
 
 
 @dataclass
@@ -74,6 +75,9 @@ class HBMConfig:
     bw_guarantee_high: float = 300.0
     bw_guarantee_normal: float = 200.0
     bw_guarantee_low: float = 100.0
+
+    # 时序参数 (从 dram.timing 导入)
+    timing: HBM3Timing = field(default_factory=HBM3Timing)
     
     @classmethod
     def from_yaml(cls, path: str) -> "HBMConfig":

@@ -16,15 +16,25 @@ from model.dram.stack_model import Stack
 
 
 class DRAMCommand(Enum):
-    """DRAM 命令枚举"""
-    NOP = 0
-    ACT = 1      # Activate
-    PRE = 2      # Precharge
-    PREA = 3     # Precharge All
-    RD = 4       # Read
-    WR = 5       # Write
-    REF = 6      # Refresh
-    REFPB = 7    # Refresh per bank
+    """DRAM 命令枚举
+
+    与 RTL 4-bit 命令编码对齐 (低 3 位):
+    RTL: NOP=0, ACT=1, READ=2, WRITE=3, PRE=4, REF=5, MRS=6, ZQ=7
+    """
+    NOP = 0       # 0000 - No operation
+    ACT = 1       # 0001 - Activate
+    READ = 2      # 0010 - Read (与 RTL CMD_READ 对齐)
+    WRITE = 3     # 0011 - Write (与 RTL CMD_WRITE 对齐)
+    PRE = 4       # 0100 - Precharge (与 RTL CMD_PRE 对齐)
+    REF = 5       # 0101 - Refresh (与 RTL CMD_REF 对齐)
+    MRS = 6       # 0110 - Mode Register Set
+    ZQ = 7        # 0111 - ZQ calibration
+
+    # 别名兼容旧代码
+    RD = 2
+    WR = 3
+    PREA = 8      # Precharge All (扩展)
+    REFPB = 9     # Refresh per bank (扩展)
 
 
 @dataclass

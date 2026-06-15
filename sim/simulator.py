@@ -187,7 +187,10 @@ class HBMSimulator:
 
         if response:
             self.stats.completed_requests += 1
-            self.stats.total_latency_cycles += response.latency_cycles if hasattr(response, 'latency_cycles') else 0
+            # latency 是纳秒，转换为 cycles (1 cycle = 781.25 ps)
+            latency_ns = response.latency if hasattr(response, 'latency') else 0.0
+            latency_cycles = int(latency_ns / 0.78125)
+            self.stats.total_latency_cycles += latency_cycles
 
         # 3. 更新统计
         drams_stats = self.dram.stats
