@@ -16,12 +16,13 @@
 
 module hbm_controller #(
     parameter QUEUE_DEPTH       = 32,
-    parameter STACK_ADDR_WIDTH = 8,   // Stack selection (1-8 stacks)
-    parameter CH_ADDR_WIDTH    = 2,   // Channel within stack (1-4 channels)
-    parameter BG_ADDR_WIDTH    = 2,   // Bank group
-    parameter BK_ADDR_WIDTH    = 3,   // Bank
-    parameter ROW_ADDR_WIDTH   = 16,  // Row address
-    parameter COL_ADDR_WIDTH   = 6,   // Column address (byte address within burst)
+    parameter STACK_ADDR_WIDTH = 2,    // Stack selection (4 stacks per HBM4 spec)
+    parameter CH_ADDR_WIDTH    = 5,    // Channel within stack (32 channels for HBM4)
+    parameter BG_ADDR_WIDTH    = 3,    // Bank group (8 bank groups per HBM4)
+    parameter BK_ADDR_WIDTH    = 4,    // Bank (16 banks per HBM4)
+    parameter ROW_ADDR_WIDTH   = 16,   // Row address
+    parameter COL_ADDR_WIDTH   = 6,    // Column address (byte address within burst)
+    parameter PCH_ADDR_WIDTH   = 1,    // Pseudo-channel (2 per channel for HBM4)
     parameter ADDR_WIDTH       = STACK_ADDR_WIDTH + CH_ADDR_WIDTH + BG_ADDR_WIDTH +
                                  BK_ADDR_WIDTH + ROW_ADDR_WIDTH + COL_ADDR_WIDTH
 )(
@@ -31,7 +32,7 @@ module hbm_controller #(
     // Request interface
     input  logic                          req_valid,
     input  logic [31:0]                   req_id,
-    input  logic [ADDR_WIDTH-1:0]         req_addr,
+    input  logic [ADDR_WIDTH-1:0]           req_addr,
     input  logic                          req_rd_wr_n,  // 0=write, 1=read
     input  logic [15:0]                  req_len,
     input  logic [2:0]                    req_priority,
@@ -43,11 +44,14 @@ module hbm_controller #(
     output logic                          resp_success,
     output logic [7:0]                    resp_status,
 
-    // DRAM interface
+    // DRAM interface - HBM4 4-bit command encoding
+    // CMD_NOP=0, CMD_ACT=1, CMD_READ=2, CMD_WRITE=3, CMD_PRE=4, CMD_PREA=5, CMD_REF=6
     output logic [3:0]                   dram_cmd,
-    output logic [STACK_ADDR_WIDTH-1:0]  dram_ch,
-    output logic [BK_ADDR_WIDTH-1:0]      dram_bank,
-    output logic [ROW_ADDR_WIDTH-1:0]     dram_row,
+    output logic [CH_ADDR_WIDTH-1:0]    dram_ch,     // 5 bits for 32 channels
+    output logic [BG_ADDR_WIDTH-1:0]     dram_bg,     // 3 bits for 8 bank groups
+    output logic [BK_ADDR_WIDTH-1:0]     dram_bank,   // 4 bits for 16 banks
+    output logic [PCH_ADDR_WIDTH-1:0]    dram_pch,    // 1 bit for 2 pseudo-channels
+    output logic [ROW_ADDR_WIDTH-1:0]    dram_row,
     input  logic [255:0]                 dram_rd_data,
     output logic [255:0]                 dram_wr_data,
 
@@ -58,27 +62,40 @@ module hbm_controller #(
 );
 
     // =============================================================================
-    // Address Decoder
+    // Address Decoder - HBM4 RBC (Row-Bank-Channel) Mapping
+    // =============================================================================
+    // Address layout for HBM4 (42-bit effective address):
+    // [47:46] Stack (2 bits)
+    // [45:41] Channel (5 bits, 32 channels)
+    // [40]    Pseudo-channel (1 bit, 2 pseudo-channels)
+    // [39:37] Bank group (3 bits, 8 bank groups)
+    // [36:33] Bank (4 bits, 16 banks)
+    // [32:17] Row (16 bits, 64K rows)
+    // [16:11] Column (6 bits, 64 columns)
+    // [10:3]  Burst/offset (8 bytes per beat, 4-beat burst)
     // =============================================================================
     localparam COL_LSB_WIDTH = 3;  // 8-byte granularity for 256-bit bus
 
     logic [STACK_ADDR_WIDTH-1:0]  dec_stack;
     logic [CH_ADDR_WIDTH-1:0]     dec_ch;
-    logic [BG_ADDR_WIDTH-1:0]     dec_bg;
-    logic [BK_ADDR_WIDTH-1:0]     dec_bank;
+    logic [BG_ADDR_WIDTH-1:0]    dec_bg;
+    logic [BK_ADDR_WIDTH-1:0]    dec_bank;
+    logic [PCH_ADDR_WIDTH-1:0]    dec_pch;
     logic [ROW_ADDR_WIDTH-1:0]    dec_row;
     logic [COL_ADDR_WIDTH-1:0]    dec_col;
 
     always_comb begin
-        dec_col   = req_addr[COL_ADDR_WIDTH-1:0];
-        dec_row   = req_addr[ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:COL_ADDR_WIDTH];
+        // HBM4 RBC address mapping - matches Python hbm4_address_decoder.py
+        dec_col   = req_addr[COL_ADDR_WIDTH-1:0];                              // Bits [5:0]
+        dec_row   = req_addr[ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:COL_ADDR_WIDTH]; // Bits [21:6]
         dec_bank  = req_addr[BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                           ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                           ROW_ADDR_WIDTH+COL_ADDR_WIDTH];                   // Bits [25:22]
         dec_bg    = req_addr[BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                           BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                           BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];       // Bits [28:26]
+        dec_pch   = req_addr[BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH]; // Bit [29]
         dec_ch    = req_addr[CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                           BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
-        dec_stack = req_addr[ADDR_WIDTH-1:CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                           BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH]; // Bits [34:30]
+        dec_stack = req_addr[ADDR_WIDTH-1:CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH]; // Bits [35]
     end
 
     // =============================================================================
@@ -92,9 +109,11 @@ module hbm_controller #(
         logic [15:0]            len;
         logic [2:0]             req_priority;
         logic                   open_row;     // Row buffer open flag
-        logic [BK_ADDR_WIDTH-1:0]  open_bank; // Currently open bank
+        logic [CH_ADDR_WIDTH-1:0]  open_ch;     // Currently open channel
+        logic [BG_ADDR_WIDTH-1:0] open_bg;     // Currently open bank group
+        logic [BK_ADDR_WIDTH-1:0] open_bank;   // Currently open bank
+        logic [PCH_ADDR_WIDTH-1:0] open_pch;   // Currently open pseudo-channel
         logic [ROW_ADDR_WIDTH-1:0] open_row_addr; // Currently open row
-        logic [CH_ADDR_WIDTH-1:0]  open_ch;   // Currently open channel
         logic [STACK_ADDR_WIDTH-1:0] open_stack; // Currently open stack
         logic [7:0]             age;         // Age counter for FIFO tiebreak
         logic [3:0]             state;        // Request state
@@ -178,14 +197,18 @@ module hbm_controller #(
     end
 
     // =============================================================================
-    // Row Buffer State (per channel/bank)
+    // Row Buffer State (per channel/pseudo-channel/bank)
     // =============================================================================
-    localparam NUM_CHANNELS = 8;  // Maximum channels
+    localparam NUM_CHANNELS = 32;  // HBM4: 32 channels
     localparam CH_IDX_WIDTH = $clog2(NUM_CHANNELS);
 
-    logic [NUM_CHANNELS-1:0][3:0] row_open;           // Per channel row open
-    logic [NUM_CHANNELS-1:0][BK_ADDR_WIDTH-1:0] open_bank_reg;
-    logic [NUM_CHANNELS-1:0][ROW_ADDR_WIDTH-1:0] open_row_reg;  // Fixed: ROW not BANK
+    // Per-channel row open state tracking
+    // Each entry tracks: open_row, open_bank, open_bg, open_pch
+    logic [NUM_CHANNELS-1:0]      row_open;              // Row open flag per channel
+    logic [NUM_CHANNELS-1:0][PCH_ADDR_WIDTH-1:0]  open_pch_reg;   // Pseudo-channel
+    logic [NUM_CHANNELS-1:0][BG_ADDR_WIDTH-1:0]   open_bg_reg;    // Bank group
+    logic [NUM_CHANNELS-1:0][BK_ADDR_WIDTH-1:0]   open_bank_reg;  // Bank
+    logic [NUM_CHANNELS-1:0][ROW_ADDR_WIDTH-1:0]  open_row_reg;   // Row
 
     function logic [CH_IDX_WIDTH-1:0] get_ch_idx(input logic [CH_ADDR_WIDTH-1:0] ch);
         return ch[CH_IDX_WIDTH-1:0];
@@ -194,15 +217,22 @@ module hbm_controller #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             row_open      <= '0;
+            open_pch_reg  <= '0;
+            open_bg_reg   <= '0;
             open_bank_reg <= '0;
             open_row_reg  <= '0;
         end else begin
-            if (dram_cmd == 4'd1) begin  // ACTIVATE
+            if (dram_cmd == 4'd1) begin  // CMD_ACT
+                open_pch_reg[get_ch_idx(dec_ch)]  <= dec_pch;
+                open_bg_reg[get_ch_idx(dec_ch)]   <= dec_bg;
                 open_bank_reg[get_ch_idx(dec_ch)] <= dec_bank;
                 open_row_reg[get_ch_idx(dec_ch)]  <= dec_row;
                 row_open[get_ch_idx(dec_ch)]      <= 1;
-            end else if (dram_cmd == 4'd4) begin  // PRECHARGE
-                if (dec_bank == open_bank_reg[get_ch_idx(dec_ch)])
+            end else if (dram_cmd == 4'd4) begin  // CMD_PRE
+                // Close row if matching
+                if (dec_pch  == open_pch_reg[get_ch_idx(dec_ch)] &&
+                    dec_bg   == open_bg_reg[get_ch_idx(dec_ch)]  &&
+                    dec_bank == open_bank_reg[get_ch_idx(dec_ch)])
                     row_open[get_ch_idx(dec_ch)] <= 0;
             end
         end
@@ -228,23 +258,32 @@ module hbm_controller #(
         for (int i = 0; i < QUEUE_DEPTH; i++) begin
             if (queue[i].valid) begin
                 logic row_hit;
-                logic [CH_ADDR_WIDTH-1:0]  q_ch;
-                logic [BK_ADDR_WIDTH-1:0]  q_bank;
-                logic [ROW_ADDR_WIDTH-1:0] q_row;
+                logic [CH_ADDR_WIDTH-1:0]   q_ch;
+                logic [BG_ADDR_WIDTH-1:0]   q_bg;
+                logic [BK_ADDR_WIDTH-1:0]   q_bank;
+                logic [PCH_ADDR_WIDTH-1:0]  q_pch;
+                logic [ROW_ADDR_WIDTH-1:0]  q_row;
                 logic [STACK_ADDR_WIDTH-1:0] q_stack;
 
-                q_ch    = queue[i].addr[CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                                BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                // Decode address from queue entry - HBM4 RBC mapping
+                q_ch    = queue[i].addr[CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                                BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                q_bg    = queue[i].addr[BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                                BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                q_pch   = queue[i].addr[BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH:
+                                BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
                 q_bank  = queue[i].addr[BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
                                 ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
                 q_row   = queue[i].addr[ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
                                 COL_ADDR_WIDTH];
-                q_stack = queue[i].addr[ADDR_WIDTH-1:CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                q_stack = queue[i].addr[ADDR_WIDTH-1:CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
 
+                // Row hit requires matching: channel, pseudo-channel, bank group, bank, row
                 row_hit = row_open[get_ch_idx(q_ch)] &&
+                          (q_pch  == open_pch_reg[get_ch_idx(q_ch)]) &&
+                          (q_bg   == open_bg_reg[get_ch_idx(q_ch)]) &&
                           (q_bank == open_bank_reg[get_ch_idx(q_ch)]) &&
-                          (q_row  == open_row_reg[get_ch_idx(q_ch)]) &&
-                          (q_stack == dec_stack);  // Simplified - should track per stack
+                          (q_row  == open_row_reg[get_ch_idx(q_ch)]);
 
                 // Selection criteria: row_hit > priority > age (older wins)
                 if (!grant_valid) begin
@@ -381,7 +420,9 @@ module hbm_controller #(
     assign do_precharge = (state == PRECHARGE);
 
     // =============================================================================
-    // DRAM Command Output
+    // DRAM Command Output - HBM4 Command Encoding
+    // =============================================================================
+    // Command values: 4'd0=NOP, 4'd1=ACT, 4'd2=READ, 4'd3=WRITE, 4'd4=PRE, 4'd5=PREA, 4'd6=REF
     // =============================================================================
     logic [31:0] cur_id;
     logic cur_rd_wr_n;
@@ -395,29 +436,33 @@ module hbm_controller #(
             dram_cmd <= 4'd0;
 
             if (do_activate) begin
-                dram_cmd <= 4'd1;  // ACT
+                dram_cmd <= 4'd1;  // CMD_ACT
                 cur_id <= queue[grant_idx].id;
                 cur_rd_wr_n <= queue[grant_idx].rd_wr_n;
             end else if (do_read) begin
-                dram_cmd <= 4'd2;  // RD
+                dram_cmd <= 4'd2;  // CMD_READ
             end else if (do_write) begin
-                dram_cmd <= 4'd3;  // WR
+                dram_cmd <= 4'd3;  // CMD_WRITE
             end else if (do_precharge) begin
-                dram_cmd <= 4'd4;  // PRE
+                dram_cmd <= 4'd4;  // CMD_PRE
             end
         end
     end
 
-    // DRAM address outputs
+    // DRAM address outputs - HBM4 address fields
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dram_ch   <= '0;
+            dram_bg   <= '0;
             dram_bank <= '0;
+            dram_pch  <= '0;
             dram_row  <= '0;
         end else begin
             if (grant_valid && fsm_ready) begin
                 dram_ch   <= dec_ch;
+                dram_bg   <= dec_bg;
                 dram_bank <= dec_bank;
+                dram_pch  <= dec_pch;
                 dram_row  <= dec_row;
             end
         end

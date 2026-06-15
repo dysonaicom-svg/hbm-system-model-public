@@ -163,6 +163,23 @@ class HBM4Spec:
 # Default HBM4 configuration
 HBM4_CONFIG = HBM4Spec()
 
+# Default timing values aligned with RTL hbm_types.svh HBM4_TIMING_DEFAULT
+# Values in clock cycles @ 8 GT/s DDR (tCK = 125 ps)
+# Reference: JEDEC JESD270-4A HBM4 specification
+HBM4_DEFAULT_TIMING = {
+    'tRCD': 8,    # RAS to CAS delay
+    'tRP': 8,     # Row precharge time
+    'tRAS': 20,   # Row active time
+    'tRC': 22,    # Row cycle time
+    'tCCD': 4,    # CAS-to-CAS delay
+    'tRRD': 4,    # Row-to-row delay
+    'tFAW': 16,   # Four-activate window
+    'tRFC': 180,  # Refresh cycle time
+    'tREFI': 3900,# Refresh interval
+    'tCL': 8,     # CAS latency
+    'tCWL': 3,    # CAS write latency
+}
+
 # Speed grade presets
 # These allow configuration for different vendor speed grades
 HBM4_SPEED_GRADES = {
@@ -181,8 +198,8 @@ HBM4_SPEED_GRADES = {
     # Maximum rate (e.g., Synopsys/Rambus HBM4E)
     "16Gbps": {
         "data_rate_gtps": 16.0,
-        "tCK_ps": 625.0,
-        "description": "16 GT/s maximum rate"
+        "tCK_ps": 62.5,    # 1000/16 = 62.5 ps for 16 GT/s DDR
+        "description": "16 GT/s maximum rate (HBM4E compatible)"
     },
 }
 
@@ -211,6 +228,35 @@ def create_hbm4_spec_from_speed_grade(speed_grade: str) -> HBM4Spec:
         data_rate_gtps=grade_params["data_rate_gtps"],
         tCK_ps=tCK_ps
     )
+
+    return spec
+
+
+def create_hbm4_spec_with_timing(speed_grade: str, timing_multiplier: float = 1.0) -> HBM4Spec:
+    """Create HBM4Spec with speed-grade-appropriate timing parameters
+
+    For higher data rates, some timing parameters may need adjustment
+    to maintain signal integrity at the higher frequency.
+
+    Args:
+        speed_grade: One of "8Gbps", "12Gbps", "16Gbps"
+        timing_multiplier: Scale factor for timing parameters (1.0 = keep cycles constant)
+
+    Returns:
+        HBM4Spec configured for the specified speed grade with adjusted timing
+    """
+    spec = create_hbm4_spec_from_speed_grade(speed_grade)
+
+    if timing_multiplier != 1.0:
+        # Apply timing multiplier to cycle-based parameters
+        # This allows for tighter or looser timing at higher frequencies
+        int_params = ['nCL', 'nRCDRD', 'nRCDWR', 'nRP', 'nRAS', 'nRC',
+                      'nWR', 'nRTPS', 'nRTPL', 'nCWL', 'nCCDS', 'nCCDL',
+                      'nRRDS', 'nRRDL', 'nWTRS', 'nWTRL', 'nRTW', 'nFAW',
+                      'nRFC', 'nREFI', 'nRREFD']
+        for param in int_params:
+            if hasattr(spec, param):
+                setattr(spec, param, int(getattr(spec, param) * timing_multiplier))
 
     return spec
 

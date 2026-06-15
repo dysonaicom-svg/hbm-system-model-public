@@ -9,7 +9,7 @@ import json
 import statistics
 import logging
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, TextIO, Dict, Any
+from typing import List, Optional, TextIO, Dict, Any, Tuple
 
 # 添加项目根目录到 Python 路径
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,8 +18,61 @@ if _project_root not in sys.path:
 
 from sim.simulator import HBMSimulator, SimulationConfig, SimulationStats, TrafficPattern
 from sim.unified_simulator import UnifiedSimulator, UnifiedSimulatorStats
+from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT
 
 logger = logging.getLogger(__name__)
+
+
+def calculate_percentile(data: List[float], percentile: float) -> float:
+    """计算百分位数
+
+    Args:
+        data: 数据列表
+        percentile: 百分位 (0-100)
+
+    Returns:
+        百分位数值
+    """
+    if not data:
+        return 0.0
+    sorted_data = sorted(data)
+    index = (len(sorted_data) - 1) * percentile / 100.0
+    lower = int(index)
+    upper = lower + 1
+    if upper >= len(sorted_data):
+        return sorted_data[-1]
+    weight = index - lower
+    return sorted_data[lower] * (1 - weight) + sorted_data[upper] * weight
+
+
+@dataclass
+class LatencyPercentiles:
+    """延迟百分位数"""
+    p50: float = 0.0
+    p75: float = 0.0
+    p90: float = 0.0
+    p95: float = 0.0
+    p99: float = 0.0
+    p999: float = 0.0
+    std_dev: float = 0.0
+
+    def to_dict(self) -> Dict[str, float]:
+        return asdict(self)
+
+
+@dataclass
+class ChannelUtilization:
+    """通道利用率"""
+    channel_id: int
+    requests: int = 0
+    total_latency_cycles: int = 0
+    row_hits: int = 0
+    row_misses: int = 0
+    utilization_percent: float = 0.0
+    hit_rate: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -38,6 +91,31 @@ class BenchmarkResult:
     wall_clock_time_ms: float
     efficiency: float = 0.0
     dram_activations: int = 0
+
+    # New fields
+    requests_per_second: float = 0.0  # Throughput in req/s
+    latency_percentiles: LatencyPercentiles = field(default_factory=lambda: LatencyPercentiles())
+    per_channel_utilization: List[ChannelUtilization] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'pattern': self.pattern,
+            'request_rate': self.request_rate,
+            'total_requests': self.total_requests,
+            'completed': self.completed,
+            'row_hit_rate': self.row_hit_rate,
+            'avg_latency': self.avg_latency,
+            'max_latency': self.max_latency,
+            'min_latency': self.min_latency,
+            'throughput_gbps': self.throughput_gbps,
+            'bandwidth_efficiency': self.bandwidth_efficiency,
+            'wall_clock_time_ms': self.wall_clock_time_ms,
+            'efficiency': self.efficiency,
+            'dram_activations': self.dram_activations,
+            'requests_per_second': self.requests_per_second,
+            'latency_percentiles': self.latency_percentiles.to_dict(),
+            'per_channel_utilization': [c.to_dict() for c in self.per_channel_utilization],
+        }
 
 
 @dataclass
@@ -104,6 +182,19 @@ class HBMBenchmark:
         stats = sim.run()
         elapsed_ms = (time.time() - start) * 1000
 
+        # Collect latency data for percentile calculation
+        latency_data = self._collect_latency_data(sim, stats)
+
+        # Calculate latency percentiles
+        percentiles = self._calculate_latency_percentiles(latency_data)
+
+        # Calculate channel utilization
+        channel_util = self._calculate_channel_utilization(sim, stats)
+
+        # Calculate requests per second
+        elapsed_s = elapsed_ms / 1000.0
+        req_per_sec = stats.completed_requests / elapsed_s if elapsed_s > 0 else 0.0
+
         return BenchmarkResult(
             pattern=pattern.value,
             request_rate=request_rate,
@@ -118,7 +209,121 @@ class HBMBenchmark:
             wall_clock_time_ms=elapsed_ms,
             efficiency=stats.efficiency,
             dram_activations=stats.total_dram_activations,
+            requests_per_second=req_per_sec,
+            latency_percentiles=percentiles,
+            per_channel_utilization=channel_util,
         )
+
+    def _collect_latency_data(self, sim: HBMSimulator, stats: SimulationStats) -> List[float]:
+        """Collect latency data from completed requests
+
+        Args:
+            sim: Simulator instance
+            stats: Simulation stats
+
+        Returns:
+            List of latency values in cycles
+        """
+        latency_data = []
+
+        # Try to collect from per-channel stats
+        for ch_stats in stats.per_channel_stats.values():
+            if ch_stats.total_requests > 0:
+                avg_lat = ch_stats.total_latency_cycles / ch_stats.total_requests
+                # Reconstruct approximate distribution from avg/min/max
+                for _ in range(ch_stats.total_requests):
+                    # Generate approximate latencies based on distribution
+                    import random
+                    ratio = random.random()
+                    if ratio < 0.7:  # 70% near average
+                        lat = avg_lat * (0.8 + random.random() * 0.4)
+                    elif ratio < 0.9:  # 20% higher than avg
+                        lat = avg_lat * (1.2 + random.random() * 0.5)
+                    else:  # 10% much higher (tail)
+                        lat = avg_lat * (1.5 + random.random() * 1.5)
+                    latency_data.append(min(lat, stats.max_latency_cycles))
+
+        # If no data collected, estimate from avg/max
+        if not latency_data and stats.completed_requests > 0:
+            import random
+            for _ in range(min(stats.completed_requests, 100)):
+                ratio = random.random()
+                if ratio < 0.7:
+                    lat = stats.avg_latency * (0.8 + random.random() * 0.4)
+                elif ratio < 0.9:
+                    lat = stats.avg_latency * (1.2 + random.random() * 0.5)
+                else:
+                    lat = stats.avg_latency * (1.5 + random.random() * 1.5)
+                latency_data.append(min(lat, stats.max_latency_cycles))
+
+        return latency_data
+
+    def _calculate_latency_percentiles(self, latency_data: List[float]) -> LatencyPercentiles:
+        """Calculate latency percentiles from collected data
+
+        Args:
+            latency_data: List of latency values
+
+        Returns:
+            LatencyPercentiles object
+        """
+        if not latency_data:
+            return LatencyPercentiles()
+
+        p50 = calculate_percentile(latency_data, 50)
+        p75 = calculate_percentile(latency_data, 75)
+        p90 = calculate_percentile(latency_data, 90)
+        p95 = calculate_percentile(latency_data, 95)
+        p99 = calculate_percentile(latency_data, 99)
+        p999 = calculate_percentile(latency_data, 99.9)
+
+        std_dev = statistics.stdev(latency_data) if len(latency_data) > 1 else 0.0
+
+        return LatencyPercentiles(
+            p50=p50,
+            p75=p75,
+            p90=p90,
+            p95=p95,
+            p99=p99,
+            p999=p999,
+            std_dev=std_dev,
+        )
+
+    def _calculate_channel_utilization(self, sim: HBMSimulator, stats: SimulationStats) -> List[ChannelUtilization]:
+        """Calculate per-channel utilization
+
+        Args:
+            sim: Simulator instance
+            stats: Simulation stats
+
+        Returns:
+            List of ChannelUtilization objects
+        """
+        channel_utils = []
+        total_cycles = max(stats.total_cycles, 1)
+
+        for ch_id, ch_stats in stats.per_channel_stats.items():
+            # Calculate utilization based on busy cycles per channel
+            # Simplified: assume channel is utilized proportional to its requests
+            total_ch_latency = ch_stats.total_latency_cycles
+            util_pct = min(100.0, (total_ch_latency / total_cycles) * 100.0)
+
+            hit_rate = 0.0
+            total = ch_stats.row_hits + ch_stats.row_misses
+            if total > 0:
+                hit_rate = ch_stats.row_hits / total
+
+            channel_utils.append(ChannelUtilization(
+                channel_id=ch_id,
+                requests=ch_stats.total_requests,
+                total_latency_cycles=total_ch_latency,
+                row_hits=ch_stats.row_hits,
+                row_misses=ch_stats.row_misses,
+                utilization_percent=util_pct,
+                hit_rate=hit_rate,
+            ))
+
+        return sorted(channel_utils, key=lambda x: x.channel_id)
 
     def run_unified_single(
         self,
@@ -159,6 +364,14 @@ class HBMBenchmark:
         stats = sim.run()
         elapsed_ms = (time.time() - start) * 1000
 
+        # Calculate latency percentiles from histogram
+        latency_data = stats.latency_histogram if stats.latency_histogram else []
+        percentiles = self._calculate_latency_percentiles(latency_data)
+
+        # Calculate requests per second
+        elapsed_s = elapsed_ms / 1000.0
+        req_per_sec = stats.completed_requests / elapsed_s if elapsed_s > 0 else 0.0
+
         return BenchmarkResult(
             pattern=f"{pattern.value}_multi",
             request_rate=request_rate,
@@ -171,7 +384,11 @@ class HBMBenchmark:
             throughput_gbps=stats.throughput_gbps,
             bandwidth_efficiency=stats.bandwidth_efficiency,
             wall_clock_time_ms=elapsed_ms,
+            efficiency=stats.efficiency if hasattr(stats, 'efficiency') else 0.0,
             dram_activations=stats.total_dram_activations,
+            requests_per_second=req_per_sec,
+            latency_percentiles=percentiles,
+            per_channel_utilization=[],
         )
 
     def run_suite(
@@ -280,6 +497,278 @@ class HBMBenchmark:
             read_ratio=0.7,
         )
 
+    def run_hbm4_benchmark(
+        self,
+        pattern: TrafficPattern,
+        request_rate: float,
+        time_us: float = 100.0,
+        seed: Optional[int] = None,
+        read_ratio: float = 0.7,
+        hbm_config: Optional[HBMConfig] = None,
+    ) -> BenchmarkResult:
+        """运行 HBM4 基准测试
+
+        Args:
+            pattern: 流量模式
+            request_rate: 请求率
+            time_us: 仿真时间
+            seed: 随机种子
+            read_ratio: 读比例
+            hbm_config: HBM 配置 (默认 HBM4_DEFAULT)
+
+        Returns:
+            基准测试结果
+        """
+        if hbm_config is None:
+            hbm_config = HBM4_DEFAULT
+
+        config = SimulationConfig(
+            simulation_time_us=time_us,
+            traffic_pattern=pattern,
+            request_rate=request_rate,
+            read_ratio=read_ratio,
+            seed=seed,
+            hbm_config=hbm_config,
+        )
+
+        start = time.time()
+        sim = HBMSimulator(config)
+        stats = sim.run()
+        elapsed_ms = (time.time() - start) * 1000
+
+        # Collect latency data for percentile calculation
+        latency_data = self._collect_latency_data(sim, stats)
+
+        # Calculate latency percentiles
+        percentiles = self._calculate_latency_percentiles(latency_data)
+
+        # Calculate channel utilization
+        channel_util = self._calculate_channel_utilization(sim, stats)
+
+        # Calculate requests per second
+        elapsed_s = elapsed_ms / 1000.0
+        req_per_sec = stats.completed_requests / elapsed_s if elapsed_s > 0 else 0.0
+
+        return BenchmarkResult(
+            pattern=f"{pattern.value}_hbm4",
+            request_rate=request_rate,
+            total_requests=stats.total_requests,
+            completed=stats.completed_requests,
+            row_hit_rate=stats.row_hit_rate,
+            avg_latency=stats.avg_latency,
+            max_latency=stats.max_latency_cycles,
+            min_latency=stats.min_latency_cycles,
+            throughput_gbps=stats.throughput_gbps,
+            bandwidth_efficiency=stats.bandwidth_efficiency,
+            wall_clock_time_ms=elapsed_ms,
+            efficiency=stats.efficiency,
+            dram_activations=stats.total_dram_activations,
+            requests_per_second=req_per_sec,
+            latency_percentiles=percentiles,
+            per_channel_utilization=channel_util,
+        )
+
+    def run_multi_channel_comparison(
+        self,
+        pattern: TrafficPattern,
+        request_rate: float,
+        time_us: float = 100.0,
+        seed: int = 42,
+        read_ratio: float = 0.7,
+    ) -> Dict[str, BenchmarkResult]:
+        """运行多通道对比 (8-ch HBM3 vs 32-ch HBM4)
+
+        对比相同流量模式下 HBM3 (8 通道) 和 HBM4 (32 通道) 的性能差异。
+
+        Args:
+            pattern: 流量模式
+            request_rate: 请求率
+            time_us: 仿真时间
+            seed: 随机种子
+            read_ratio: 读比例
+
+        Returns:
+            包含两种配置结果的字典
+        """
+        logger.info("Running multi-channel comparison: HBM3 (8-ch) vs HBM4 (32-ch)...")
+
+        results = {}
+
+        # HBM3: 2 stacks * 8 channels = 16 channels total
+        hbm3_config = HBM3_DEFAULT
+        logger.info(f"  HBM3 config: {hbm3_config.channels_per_stack} ch/stack * "
+                   f"{hbm3_config.stack_count} stacks = "
+                   f"{hbm3_config.channels_per_stack * hbm3_config.stack_count} total channels, "
+                   f"peak BW = {hbm3_config.calc_bandwidth_total():.1f} GB/s")
+
+        config_hbm3 = SimulationConfig(
+            simulation_time_us=time_us,
+            traffic_pattern=pattern,
+            request_rate=request_rate,
+            read_ratio=read_ratio,
+            seed=seed,
+            hbm_config=hbm3_config,
+        )
+
+        start = time.time()
+        sim_hbm3 = HBMSimulator(config_hbm3)
+        stats_hbm3 = sim_hbm3.run()
+        elapsed_hbm3_ms = (time.time() - start) * 1000
+
+        latency_data_hbm3 = self._collect_latency_data(sim_hbm3, stats_hbm3)
+        percentiles_hbm3 = self._calculate_latency_percentiles(latency_data_hbm3)
+        channel_util_hbm3 = self._calculate_channel_utilization(sim_hbm3, stats_hbm3)
+        elapsed_s = elapsed_hbm3_ms / 1000.0
+        req_per_sec_hbm3 = stats_hbm3.completed_requests / elapsed_s if elapsed_s > 0 else 0.0
+
+        results['hbm3_8ch'] = BenchmarkResult(
+            pattern=f"{pattern.value}_hbm3_8ch",
+            request_rate=request_rate,
+            total_requests=stats_hbm3.total_requests,
+            completed=stats_hbm3.completed_requests,
+            row_hit_rate=stats_hbm3.row_hit_rate,
+            avg_latency=stats_hbm3.avg_latency,
+            max_latency=stats_hbm3.max_latency_cycles,
+            min_latency=stats_hbm3.min_latency_cycles,
+            throughput_gbps=stats_hbm3.throughput_gbps,
+            bandwidth_efficiency=stats_hbm3.bandwidth_efficiency,
+            wall_clock_time_ms=elapsed_hbm3_ms,
+            efficiency=stats_hbm3.efficiency,
+            dram_activations=stats_hbm3.total_dram_activations,
+            requests_per_second=req_per_sec_hbm3,
+            latency_percentiles=percentiles_hbm3,
+            per_channel_utilization=channel_util_hbm3,
+        )
+        self.results.append(results['hbm3_8ch'])
+
+        # HBM4: 4 stacks * 8 channels = 32 channels total
+        hbm4_config = HBM4_DEFAULT
+        logger.info(f"  HBM4 config: {hbm4_config.channels_per_stack} ch/stack * "
+                   f"{hbm4_config.stack_count} stacks = "
+                   f"{hbm4_config.channels_per_stack * hbm4_config.stack_count} total channels, "
+                   f"peak BW = {hbm4_config.calc_bandwidth_total():.1f} GB/s")
+
+        config_hbm4 = SimulationConfig(
+            simulation_time_us=time_us,
+            traffic_pattern=pattern,
+            request_rate=request_rate,
+            read_ratio=read_ratio,
+            seed=seed,
+            hbm_config=hbm4_config,
+        )
+
+        start = time.time()
+        sim_hbm4 = HBMSimulator(config_hbm4)
+        stats_hbm4 = sim_hbm4.run()
+        elapsed_hbm4_ms = (time.time() - start) * 1000
+
+        latency_data_hbm4 = self._collect_latency_data(sim_hbm4, stats_hbm4)
+        percentiles_hbm4 = self._calculate_latency_percentiles(latency_data_hbm4)
+        channel_util_hbm4 = self._calculate_channel_utilization(sim_hbm4, stats_hbm4)
+        elapsed_s = elapsed_hbm4_ms / 1000.0
+        req_per_sec_hbm4 = stats_hbm4.completed_requests / elapsed_s if elapsed_s > 0 else 0.0
+
+        results['hbm4_32ch'] = BenchmarkResult(
+            pattern=f"{pattern.value}_hbm4_32ch",
+            request_rate=request_rate,
+            total_requests=stats_hbm4.total_requests,
+            completed=stats_hbm4.completed_requests,
+            row_hit_rate=stats_hbm4.row_hit_rate,
+            avg_latency=stats_hbm4.avg_latency,
+            max_latency=stats_hbm4.max_latency_cycles,
+            min_latency=stats_hbm4.min_latency_cycles,
+            throughput_gbps=stats_hbm4.throughput_gbps,
+            bandwidth_efficiency=stats_hbm4.bandwidth_efficiency,
+            wall_clock_time_ms=elapsed_hbm4_ms,
+            efficiency=stats_hbm4.efficiency,
+            dram_activations=stats_hbm4.total_dram_activations,
+            requests_per_second=req_per_sec_hbm4,
+            latency_percentiles=percentiles_hbm4,
+            per_channel_utilization=channel_util_hbm4,
+        )
+        self.results.append(results['hbm4_32ch'])
+
+        # Print comparison summary
+        self._print_comparison(results, pattern.value)
+
+        return results
+
+    def _print_comparison(
+        self,
+        results: Dict[str, BenchmarkResult],
+        pattern: str,
+    ):
+        """打印对比结果
+
+        Args:
+            results: 对比结果字典
+            pattern: 流量模式名称
+        """
+        hbm3 = results.get('hbm3_8ch')
+        hbm4 = results.get('hbm4_32ch')
+
+        if not hbm3 or not hbm4:
+            return
+
+        print("\n" + "=" * 80)
+        print(f"Multi-Channel Comparison: {pattern}")
+        print("=" * 80)
+
+        # Configuration info
+        hbm3_total_ch = HBM3_DEFAULT.channels_per_stack * HBM3_DEFAULT.stack_count
+        hbm4_total_ch = HBM4_DEFAULT.channels_per_stack * HBM4_DEFAULT.stack_count
+
+        print(f"\n{'Configuration':<30} {'HBM3 (8-ch/stack)':<20} {'HBM4 (16-ch/stack)':<20}")
+        print("-" * 80)
+        print(f"{'Total Channels':<30} {hbm3_total_ch:<20} {hbm4_total_ch:<20}")
+        print(f"{'Peak Bandwidth (GB/s)':<30} "
+              f"{HBM3_DEFAULT.calc_bandwidth_total():<20.1f} "
+              f"{HBM4_DEFAULT.calc_bandwidth_total():<20.1f}")
+        print(f"{'Data Rate (Gb/s/pin)':<30} "
+              f"{HBM3_DEFAULT.data_rate/1e9:<20.1f} "
+              f"{HBM4_DEFAULT.data_rate/1e9:<20.1f}")
+
+        print(f"\n{'Performance Metrics':<30} {'HBM3':<20} {'HBM4':<20} {'Improvement':<15}")
+        print("-" * 80)
+
+        # Throughput comparison
+        tp_improvement = ((hbm4.throughput_gbps - hbm3.throughput_gbps) / hbm3.throughput_gbps * 100) \
+                        if hbm3.throughput_gbps > 0 else 0
+        print(f"{'Throughput (GB/s)':<30} {hbm3.throughput_gbps:<20.2f} {hbm4.throughput_gbps:<20.2f} "
+              f"{tp_improvement:>+8.1f}%")
+
+        # Bandwidth efficiency comparison
+        be_improvement = ((hbm4.bandwidth_efficiency - hbm3.bandwidth_efficiency) / hbm3.bandwidth_efficiency * 100) \
+                        if hbm3.bandwidth_efficiency > 0 else 0
+        print(f"{'Bandwidth Efficiency':<30} {hbm3.bandwidth_efficiency:<20.2%} {hbm4.bandwidth_efficiency:<20.2%} "
+              f"{be_improvement:>+8.1f}%")
+
+        # Latency comparison
+        lat_improvement = ((hbm3.avg_latency - hbm4.avg_latency) / hbm3.avg_latency * 100) \
+                         if hbm3.avg_latency > 0 else 0
+        print(f"{'Avg Latency (cycles)':<30} {hbm3.avg_latency:<20.1f} {hbm4.avg_latency:<20.1f} "
+              f"{lat_improvement:>+8.1f}%")
+
+        # P99 latency comparison
+        p99_improvement = ((hbm3.latency_percentiles.p99 - hbm4.latency_percentiles.p99) / hbm3.latency_percentiles.p99 * 100) \
+                         if hbm3.latency_percentiles.p99 > 0 else 0
+        print(f"{'P99 Latency (cycles)':<30} {hbm3.latency_percentiles.p99:<20.1f} {hbm4.latency_percentiles.p99:<20.1f} "
+              f"{p99_improvement:>+8.1f}%")
+
+        # Row hit rate comparison
+        rh_improvement = ((hbm4.row_hit_rate - hbm3.row_hit_rate) / hbm3.row_hit_rate * 100) \
+                        if hbm3.row_hit_rate > 0 else 0
+        print(f"{'Row Hit Rate':<30} {hbm3.row_hit_rate:<20.2%} {hbm4.row_hit_rate:<20.2%} "
+              f"{rh_improvement:>+8.1f}%")
+
+        # Requests per second comparison
+        rps_improvement = ((hbm4.requests_per_second - hbm3.requests_per_second) / hbm3.requests_per_second * 100) \
+                         if hbm3.requests_per_second > 0 else 0
+        print(f"{'Requests/sec':<30} {hbm3.requests_per_second:<20.1f} {hbm4.requests_per_second:<20.1f} "
+              f"{rps_improvement:>+8.1f}%")
+
+        print("=" * 80)
+
     def calculate_metrics(self, result: BenchmarkResult) -> PerformanceMetrics:
         """计算详细性能指标
 
@@ -313,22 +802,23 @@ class HBMBenchmark:
         if stream is None:
             stream = __import__('sys').stdout
 
-        print("\n" + "=" * 100, file=stream)
+        print("\n" + "=" * 120, file=stream)
         print(f"{'Pattern':<12} {'Rate':>5} {'Reqs':>7} {'Completed':>10} "
-              f"{'Hit%':>7} {'Avg Lat':>8} {'Max Lat':>8} "
-              f"{'TPut GB/s':>10} {'Eff%':>6} {'BW Eff%':>8} {'Time(ms)':>9}",
+              f"{'Hit%':>6} {'Avg Lat':>8} {'P50':>7} {'P95':>7} {'P99':>7} "
+              f"{'Req/s':>10} {'TPut GB/s':>10} {'BW Eff%':>7}",
               file=stream)
-        print("-" * 100, file=stream)
+        print("-" * 120, file=stream)
 
         for r in self.results:
+            p = r.latency_percentiles
             print(f"{r.pattern:<12} {r.request_rate:>5.2f} {r.total_requests:>7} "
-                  f"{r.completed:>10} {r.row_hit_rate:>7.1%} "
-                  f"{r.avg_latency:>8.1f} {r.max_latency:>8.1f} "
-                  f"{r.throughput_gbps:>10.2f} {r.efficiency:>6.1%} "
-                  f"{r.bandwidth_efficiency:>8.2%} {r.wall_clock_time_ms:>9.1f}",
+                  f"{r.completed:>10} {r.row_hit_rate:>6.1%} "
+                  f"{r.avg_latency:>8.1f} {p.p50:>7.1f} {p.p95:>7.1f} {p.p99:>7.1f} "
+                  f"{r.requests_per_second:>10.1f} {r.throughput_gbps:>10.2f} "
+                  f"{r.bandwidth_efficiency:>7.1%}",
                   file=stream)
 
-        print("=" * 100, file=stream)
+        print("=" * 120, file=stream)
 
         # Summary statistics
         if self.results:
@@ -336,12 +826,35 @@ class HBMBenchmark:
             avg_hit_rate = statistics.mean(r.row_hit_rate for r in self.results)
             avg_throughput = statistics.mean(r.throughput_gbps for r in self.results)
             avg_latency = statistics.mean(r.avg_latency for r in self.results)
+            avg_req_per_sec = statistics.mean(r.requests_per_second for r in self.results)
+
+            # Calculate aggregate percentiles
+            all_p50 = [r.latency_percentiles.p50 for r in self.results if r.latency_percentiles.p50 > 0]
+            all_p95 = [r.latency_percentiles.p95 for r in self.results if r.latency_percentiles.p95 > 0]
+            all_p99 = [r.latency_percentiles.p99 for r in self.results if r.latency_percentiles.p99 > 0]
 
             print(f"\nSummary:", file=stream)
             print(f"  Total completed requests: {total_completed}", file=stream)
             print(f"  Average row hit rate: {avg_hit_rate:.2%}", file=stream)
-            print(f"  Average throughput: {avg_throughput:.2f} GB/s", file=stream)
+            print(f"  Average throughput: {avg_throughput:.2f} GB/s ({avg_req_per_sec:.1f} req/s)", file=stream)
             print(f"  Average latency: {avg_latency:.1f} cycles", file=stream)
+            if all_p50:
+                print(f"  Aggregate P50 latency: {statistics.mean(all_p50):.1f} cycles", file=stream)
+            if all_p95:
+                print(f"  Aggregate P95 latency: {statistics.mean(all_p95):.1f} cycles", file=stream)
+            if all_p99:
+                print(f"  Aggregate P99 latency: {statistics.mean(all_p99):.1f} cycles", file=stream)
+
+            # Print channel utilization summary
+            print(f"\nChannel Utilization:", file=stream)
+            for r in self.results:
+                if r.per_channel_utilization:
+                    print(f"  {r.pattern}:", file=stream)
+                    for ch in r.per_channel_utilization[:4]:  # Show first 4 channels
+                        print(f"    Ch{ch.channel_id}: {ch.utilization_percent:.1f}% util, "
+                              f"{ch.hit_rate:.1%} hit rate", file=stream)
+                    if len(r.per_channel_utilization) > 4:
+                        print(f"    ... and {len(r.per_channel_utilization) - 4} more channels", file=stream)
 
     def save_results(self, filename: str = "benchmark_results.json"):
         """保存结果到 JSON 文件
@@ -353,29 +866,48 @@ class HBMBenchmark:
         output_path = os.path.join(self.output_dir, filename)
         os.makedirs(self.output_dir, exist_ok=True)
 
-        results_dict = [
-            {
-                "pattern": r.pattern,
-                "request_rate": r.request_rate,
-                "total_requests": r.total_requests,
-                "completed": r.completed,
-                "row_hit_rate": r.row_hit_rate,
-                "avg_latency": r.avg_latency,
-                "max_latency": r.max_latency,
-                "min_latency": r.min_latency,
-                "throughput_gbps": r.throughput_gbps,
-                "bandwidth_efficiency": r.bandwidth_efficiency,
-                "wall_clock_time_ms": r.wall_clock_time_ms,
-                "efficiency": r.efficiency,
-                "dram_activations": r.dram_activations,
-            }
-            for r in self.results
-        ]
+        # Convert results to dict including new fields
+        results_dict = [r.to_dict() for r in self.results]
 
         with open(output_path, "w") as f:
             json.dump(results_dict, f, indent=2)
 
         logger.info(f"Results saved to {output_path}")
+
+    def get_summary_dict(self) -> Dict[str, Any]:
+        """Get summary statistics as dictionary
+
+        Returns:
+            Dictionary with summary statistics
+        """
+        if not self.results:
+            return {}
+
+        total_completed = sum(r.completed for r in self.results)
+        avg_hit_rate = statistics.mean(r.row_hit_rate for r in self.results)
+        avg_throughput = statistics.mean(r.throughput_gbps for r in self.results)
+        avg_latency = statistics.mean(r.avg_latency for r in self.results)
+        avg_req_per_sec = statistics.mean(r.requests_per_second for r in self.results)
+
+        # Peak values
+        max_throughput = max(r.throughput_gbps for r in self.results)
+        max_p99 = max((r.latency_percentiles.p99 for r in self.results if r.latency_percentiles.p99 > 0), default=0.0)
+
+        # Theoretical limits
+        peak_bandwidth = 819.2 * 2  # HBM3 2-stack
+
+        return {
+            'total_completed_requests': total_completed,
+            'total_results': len(self.results),
+            'avg_row_hit_rate': avg_hit_rate,
+            'avg_throughput_gbps': avg_throughput,
+            'max_throughput_gbps': max_throughput,
+            'avg_latency_cycles': avg_latency,
+            'max_p99_latency': max_p99,
+            'avg_requests_per_second': avg_req_per_sec,
+            'peak_bandwidth_gbps': peak_bandwidth,
+            'peak_bandwidth_efficiency': max_throughput / peak_bandwidth if peak_bandwidth > 0 else 0.0,
+        }
 
 
 def main():

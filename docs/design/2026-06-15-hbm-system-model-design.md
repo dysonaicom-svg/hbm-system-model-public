@@ -1189,7 +1189,7 @@ class ThreadSafeQueue:
 
 - [x] HBM stack count for target SoC: 1-8 configurable (default 2)
 - [x] Specific workload traces: Built-in traffic generator + trace reader interface
-- [ ] RTL integration timeline: TBD during Phase C
+- [x] RTL integration timeline: 4-6 weeks (see docs/RTL_INTEGRATION.md)
 - [x] Team members: AI-driven development (unlimited token)
 
 ---

@@ -369,7 +369,6 @@ class WeightReusePattern(AIInferencePattern):
             # Reuse same address multiple times before moving
             if self._reuse_count >= self._reuse_threshold:
                 current_addr = (current_addr + self.weight_buffer_size) % config.address_range
-                current_addr += self.addr_gen.base_address
                 self._reuse_count = 0
 
             request = HBMRequest(

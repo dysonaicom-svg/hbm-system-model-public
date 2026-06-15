@@ -14,7 +14,7 @@ HBM System Model 是一个面向芯片架构探索的 High Bandwidth Memory 系�
 | Ramulator2 baseline | Complete | 顺序、stride、随机访问 HBM3 trace 实验 |
 | RTL | Complete | hbm_types, hbm_pkg, hbm_controller, dram_model |
 | UVM | Complete | Environment, tests, reference models |
-| Tests | Active | 730+ test cases collected |
+| Tests | Active | 1544 test cases (collected) |
 
 ## 目录结构
 
@@ -108,8 +108,7 @@ python3 -m pytest tests -q
 
 当前验证结果：
 
-- 730+ test cases collected
-- 7 collection errors (regression tests need HBM3Timing fix)
+- 1544 test cases collected
 
 ## 运行 HBM3 Baseline
 
@@ -234,21 +233,14 @@ print(controller.get_stats())
 
 ## 设计文档
 
-- `docs/design/2026-06-15-hbm-system-model-design.md`
-- `docs/superpowers/plans/2026-06-15-hbm-modeling-baseline.md`
-- `research/hbm3_spec.md`
-- `research/hbm-modeling/README.md`
-
-## 已知约束
-
-- HBM3 baseline 当前使用 Ramulator2 的公开 HBM3 preset，适合架构探索，不等价于供应商精确模型
-- Ramulator2 HBM3 配置使用 OpenRowPolicy；ClosedRowPolicy 依赖 rank 层级，不适配当前 HBM3 层级
-- `research/hbm-modeling/results/*.log` 是可再生输出，默认由 `.gitignore` 忽略；提交的是 `summary.md`
-- 7 个 regression 测试有 collection error（HBM3Timing 未定义），需要修复
+- [System Architecture](docs/ARCHITECTURE.md) - 系统架构图和数据流
+- [API Reference](docs/API.md) - 关键类 API 文档
+- [Design Document](docs/design/2026-06-15-hbm-system-model-design.md) - 完整设计规范
+- [HBM3 Spec](docs/specs/hbm3_spec.md) - HBM3 参数参考
+- [Ramulator2](research/ramulator2/) - 参考模拟器
 
 ## 后续方向
 
-- 修复 regression 测试中的 HBM3Timing 错误
 - 增加 trace parser 和自动 summary 生成
 - 将 Python controller model 和 DRAM model 接入统一仿真 loop
 - 增加 AXI/NoC interconnect 模型和多 traffic source

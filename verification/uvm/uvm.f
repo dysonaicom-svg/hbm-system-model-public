@@ -15,6 +15,3 @@
 
 # Testbench top
 /home/ic/JXTF/HBM/verification/uvm/hbm_tb.sv
-
-# Main entry point
-/home/ic/JXTF/HBM/verification/uvm/build/main.cpp

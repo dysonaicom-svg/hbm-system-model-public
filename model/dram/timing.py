@@ -158,6 +158,39 @@ class HBM4Timing:
     nRFC: int = 180     # Refresh cycle time
     nREFI: int = 3900   # Refresh interval
 
+    @classmethod
+    def for_speed_grade(cls, speed_gbps: float) -> "HBM4Timing":
+        """Create HBM4Timing for a specific speed grade
+
+        Args:
+            speed_gbps: Data rate in GT/s (e.g., 8.0, 12.0, 16.0)
+
+        Returns:
+            HBM4Timing instance configured for the speed grade
+        """
+        tCK_ps = 1000.0 / speed_gbps
+
+        # Scale timing parameters proportionally for higher speeds
+        # Higher speeds may require tighter timing (fewer cycles for same absolute time)
+        # For 16Gbps: tCK halves, so we can keep cycles constant for same ns timing
+        timing = cls(tCK_ps=tCK_ps)
+        return timing
+
+    @classmethod
+    def for_8gbps(cls) -> "HBM4Timing":
+        """Create HBM4Timing for 8 GT/s (JEDEC baseline)"""
+        return cls(tCK_ps=125.0)
+
+    @classmethod
+    def for_12gbps(cls) -> "HBM4Timing":
+        """Create HBM4Timing for 12 GT/s (extended rate)"""
+        return cls(tCK_ps=83.33)
+
+    @classmethod
+    def for_16gbps(cls) -> "HBM4Timing":
+        """Create HBM4Timing for 16 GT/s (maximum rate / HBM4E)"""
+        return cls(tCK_ps=62.5)
+
     @property
     def clock_freq(self) -> float:
         """时钟频率 (Hz)"""
@@ -228,10 +261,10 @@ class HBM4Timing:
 
 def get_timing_for_hbm_version(version: str):
     """获取指定 HBM 版本的时序参数
-    
+
     Args:
-        version: "hbm2", "hbm3", "hbm4"
-        
+        version: "hbm2", "hbm3", "hbm4", or "hbm4_8gbps", "hbm4_12gbps", "hbm4_16gbps"
+
     Returns:
         对应版本的时序参数
     """
@@ -239,11 +272,39 @@ def get_timing_for_hbm_version(version: str):
         "hbm2": HBM2Timing,
         "hbm3": HBM3Timing,
         "hbm4": HBM4Timing,
+        "hbm4_8gbps": lambda: HBM4Timing.for_8gbps(),
+        "hbm4_12gbps": lambda: HBM4Timing.for_12gbps(),
+        "hbm4_16gbps": lambda: HBM4Timing.for_16gbps(),
     }
-    timing_class = versions.get(version.lower())
-    if not timing_class:
+    timing_class_or_func = versions.get(version.lower())
+    if not timing_class_or_func:
         raise ValueError(f"Unknown HBM version: {version}")
-    return timing_class()
+    if callable(timing_class_or_func) and not isinstance(timing_class_or_func, type):
+        return timing_class_or_func()
+    return timing_class_or_func()
+
+
+# Speed grade mappings for convenience
+SPEED_GRADE_TIMING = {
+    "8Gbps": lambda: HBM4Timing.for_8gbps(),
+    "12Gbps": lambda: HBM4Timing.for_12gbps(),
+    "16Gbps": lambda: HBM4Timing.for_16gbps(),
+}
+
+
+def get_timing_for_speed_grade(speed_grade: str) -> HBM4Timing:
+    """Get HBM4 timing parameters for a specific speed grade
+
+    Args:
+        speed_grade: "8Gbps", "12Gbps", or "16Gbps"
+
+    Returns:
+        HBM4Timing instance configured for the speed grade
+    """
+    if speed_grade not in SPEED_GRADE_TIMING:
+        raise ValueError(f"Unknown speed grade: {speed_grade}. "
+                        f"Available: {list(SPEED_GRADE_TIMING.keys())}")
+    return SPEED_GRADE_TIMING[speed_grade]()
 
 
 def timing_to_cycles(timing: HBM3Timing, time_ns: float) -> int:

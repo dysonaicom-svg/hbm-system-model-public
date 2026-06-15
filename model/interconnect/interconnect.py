@@ -368,12 +368,12 @@ class InterconnectBase(ABC):
         queue = self._arb_queues[port_id]
 
         # Check if this request is next in line
-        if queue and queue[0] == request.id:
+        if queue and queue[0].id == request.id:
             # Request is at head of queue, grant immediately
             wait = 0
         else:
             # Add to queue and calculate wait
-            queue.append(request.id)
+            queue.append(request)
             wait = len(queue) - 1
 
         # Simulate processing
@@ -397,29 +397,30 @@ class InterconnectBase(ABC):
             Tuple of (granted, wait_cycles)
         """
         queue = self._arb_queues[port_id]
+        request_priority = request.qos
 
         if not queue:
             # Queue is empty, immediate grant
             return True, 0
 
         # Check head of queue
-        head_priority = queue[0] & 0xF  # Assume priority encoded in low bits
-        request_priority = request.qos
+        head_request = queue[0]
+        head_priority = head_request.qos
 
         if request_priority >= head_priority:
             # Insert at front (higher or equal priority)
-            queue.appendleft(request.id)
+            queue.appendleft(request)
             wait = 0
         else:
             # Insert at appropriate position
             inserted = False
-            for i, req_id in enumerate(queue):
-                if request_priority > (req_id & 0xF):
-                    queue.insert(i, request.id)
+            for i, queued_req in enumerate(queue):
+                if request_priority > queued_req.qos:
+                    queue.insert(i, request)
                     inserted = True
                     break
             if not inserted:
-                queue.append(request.id)
+                queue.append(request)
             wait = len(queue) - 1
 
         return wait == 0, wait

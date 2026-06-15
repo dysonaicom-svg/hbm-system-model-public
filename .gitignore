@@ -64,3 +64,14 @@ vivado/
 tmp/
 temp/
 *.tmp
+
+# Claude settings (local development only - DO NOT COMMIT)
+.claude/settings.local.json
+.claude/settings.local.json.example
+.claude/scheduled_tasks.lock
+.claude/workflows/
+
+# Simulation outputs and benchmarks
+seq_rd_comparison.json
+sim/benchmark_results.json
+benchmark_results*.json

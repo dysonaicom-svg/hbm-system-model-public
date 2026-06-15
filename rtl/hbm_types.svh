@@ -2,6 +2,7 @@
 // HBM Type Definitions
 // =============================================================================
 // Type definitions for High Bandwidth Memory (HBM) SystemVerilog model
+// Supports HBM2, HBM3, and HBM4 specifications
 // =============================================================================
 
 `ifndef HBM_TYPES_SVH
@@ -9,24 +10,42 @@
 
 // verilator lint_off SYMRSVDWORD
 
+// =============================================================================
+// HBM4 Command Encoding (4-bit, aligned with Python hbm4_channel_model.py)
+// =============================================================================
+typedef enum logic [3:0] {
+    CMD_NOP    = 4'd0,   // No operation
+    CMD_ACT    = 4'd1,   // Activate command
+    CMD_READ   = 4'd2,   // Read command
+    CMD_WRITE  = 4'd3,   // Write command
+    CMD_PRE    = 4'd4,   // Precharge single bank
+    CMD_PREA   = 4'd5,   // Precharge all banks
+    CMD_REF    = 4'd6,   // Refresh (all banks)
+    CMD_RFM    = 4'd7,   // Row flash memory (refresh)
+    CMD_MRS    = 4'd8    // Mode register set
+} hbm_cmd_t;
+
 // -----------------------------------------------------------------------------
-// Address Structure
+// Address Structure - HBM4 RBC (Row-Bank-Channel) Mapping
 // -----------------------------------------------------------------------------
-// HBM address breakdown:
-// - stack:      3 bits (8 stacks maximum)
-// - channel:    3 bits (8 channels per stack)
-// - bank_group: 3 bits (8 bank groups per channel)
-// - bank:       4 bits (16 banks per bank group)
-// - row:       16 bits (64K rows per bank)
-// - col:       10 bits (1K columns per row, with sub-bank interleaving)
+// HBM4 address breakdown (42-bit effective):
+// - stack:       2 bits (4 stacks)
+// - channel:     5 bits (32 channels per stack)
+// - pseudo_ch:   1 bit (2 pseudo-channels per channel)
+// - bank_group:  3 bits (8 bank groups per pseudo-channel)
+// - bank:         4 bits (16 banks per bank group)
+// - row:         16 bits (64K rows per bank)
+// - col:          6 bits (64 columns per row)
+// - burst/offset: 8 bits (4-beat burst, 8 bytes per beat)
 
 typedef struct packed {
-    logic [15:0] row;        // Row address
-    logic [9:0]  col;        // Column address
-    logic [3:0]  bank;       // Bank address (4 bits = 16 banks)
-    logic [2:0]  bank_group; // Bank group address
-    logic [2:0]  channel;    // Channel address
-    logic [2:0]  stack;      // Stack identifier
+    logic [5:0]   col;         // Column address (6 bits = 64 columns)
+    logic [15:0] row;         // Row address (16 bits = 64K rows)
+    logic [3:0]  bank;        // Bank address (4 bits = 16 banks)
+    logic [2:0]  bank_group;   // Bank group address (3 bits = 8 groups)
+    logic [0:0]  pseudo_ch;    // Pseudo-channel (1 bit = 2 per channel)
+    logic [4:0]  channel;      // Channel address (5 bits = 32 channels)
+    logic [1:0]  stack;        // Stack identifier (2 bits = 4 stacks)
 } hbm_addr_t;
 
 // -----------------------------------------------------------------------------
@@ -63,43 +82,36 @@ typedef enum logic [2:0] {
 } hbm_bank_state_t;
 
 // -----------------------------------------------------------------------------
-// DRAM Command Enumeration
-// -----------------------------------------------------------------------------
-typedef enum logic [2:0] {
-    CMD_NOP    = 3'b000,  // No operation
-    CMD_ACT    = 3'b001,  // Activate command
-    CMD_READ   = 3'b010,  // Read command
-    CMD_WRITE  = 3'b011,  // Write command
-    CMD_PRE    = 3'b100,  // Precharge (single bank)
-    CMD_PRE_AB = 3'b101,  // Precharge all banks
-    CMD_REF    = 3'b110   // Refresh command
-} hbm_cmd_t;
-
-// -----------------------------------------------------------------------------
-// Timing Parameters Structure
+// Timing Parameters Structure - HBM4 JEDEC Values
 // -----------------------------------------------------------------------------
 // All timing values in clock cycles (@clk_i)
-// Typical HBM timing values for reference:
-// - tRCD:  CAS to RAS delay (activate to read/write)
-// - tRP:   Row precharge time
-// - tRAS:  Row active time
-// - tRC:   Row cycle time (activate to activate)
+// HBM4 timing at 8 GT/s DDR (tCK = 125 ps) per JEDEC JESD270-4A
+//
+// Standard timing parameters:
+// - tRCD:  RAS to CAS delay (activate to read/write)
+// - tRP:   Row precharge time (close row)
+// - tRAS:  Row active time (minimum row open time)
+// - tRC:   Row cycle time (activate to activate same bank)
 // - tCCD:  CAS-to-CAS delay (read/write burst spacing)
 // - tRRD:  Row-to-row delay (different bank activation)
 // - tFAW:  Four Bank Activation Window
 // - tRFC:  Refresh cycle time
 // - tREFI: Refresh interval
+// - tCL:   CAS latency (read data valid after read command)
+// - tCWL:  CAS write latency (write data valid after write command)
 
 typedef struct packed {
-    logic [7:0] tRCD;   // RAS to CAS delay (default: 4 cycles)
-    logic [7:0] tRP;    // Row precharge time (default: 4 cycles)
-    logic [7:0] tRAS;   // Row active time (default: 16 cycles)
-    logic [7:0] tRC;    // Row cycle time (default: 20 cycles)
-    logic [7:0] tCCD;   // CAS-to-CAS delay (default: 4 cycles)
-    logic [7:0] tRRD;   // Row-to-row delay (default: 4 cycles)
-    logic [7:0] tFAW;   // Four Bank Activation Window (default: 16 cycles)
-    logic [7:0] tRFC;   // Refresh cycle time (default: 80 cycles)
-    logic [15:0] tREFI; // Refresh interval (default: 3120 cycles)
+    logic [7:0] tRCD;    // RAS to CAS delay (default: 8 cycles)
+    logic [7:0] tRP;     // Row precharge time (default: 8 cycles)
+    logic [7:0] tRAS;    // Row active time (default: 20 cycles)
+    logic [7:0] tRC;     // Row cycle time (default: 22 cycles)
+    logic [7:0] tCCD;    // CAS-to-CAS delay (default: 4 cycles)
+    logic [7:0] tRRD;    // Row-to-row delay (default: 4 cycles)
+    logic [7:0] tFAW;    // Four Bank Activation Window (default: 16 cycles)
+    logic [7:0] tRFC;    // Refresh cycle time (default: 180 cycles)
+    logic [15:0] tREFI;  // Refresh interval (default: 3900 cycles)
+    logic [7:0] tCL;     // CAS latency (default: 8 cycles)
+    logic [7:0] tCWL;    // CAS write latency (default: 3 cycles)
 } hbm_timing_t;
 
 // -----------------------------------------------------------------------------
@@ -118,23 +130,38 @@ typedef struct packed {
 } hbm_req_t;
 
 // -----------------------------------------------------------------------------
-// System Configuration Constants
+// System Configuration Constants - HBM4 Specification
 // -----------------------------------------------------------------------------
-// Number of HBM stacks
-`define NUM_STACKS      8
-// Number of channels per stack
-`define NUM_CHANNELS    8
-// Number of bank groups per channel
+// Number of HBM4 stacks (per JEDEC JESD270-4A)
+`define NUM_STACKS      4
+// Number of channels per stack (HBM4: 32 channels)
+`define NUM_CHANNELS    32
+// Number of pseudo-channels per channel (2 for HBM4)
+`define NUM_PSEUDO_CH   2
+// Number of bank groups per pseudo-channel (8 for HBM4)
 `define NUM_BANK_GROUPS 8
-// Number of banks per bank group
+// Number of banks per bank group (16 for HBM4)
 `define NUM_BANKS       16
 
 // -----------------------------------------------------------------------------
-// Default Timing Parameters
+// Default Timing Parameters - HBM4 JEDEC Values
 // -----------------------------------------------------------------------------
-// Standard HBM2 timing at 1GHz (1ns cycle time)
+// HBM4 timing at 8 GT/s DDR (tCK = 125 ps)
+// All values in clock cycles @ clk_i
+// Reference: JEDEC JESD270-4A HBM4 specification
+//
+// Timing parameter naming:
+// - t-prefix: Traditional JEDEC naming (tRCD, tRP, tRAS)
+// - n-prefix: HBM4-specific naming (nRCD, nRP, nRAS) - same values
+
+`define HBM4_TIMING_DEFAULT  8,8,20,22,4,4,16,180,3900
 // tRCD, tRP, tRAS, tRC, tCCD, tRRD, tFAW, tRFC, tREFI
-`define HBM_TIMING_DEFAULT  4,4,16,20,4,4,16,80,3120
+
+// HBM2 timing for legacy compatibility (800 MHz, tCK = 1250 ps)
+`define HBM2_TIMING_DEFAULT  14,14,34,48,4,4,20,160,7800
+
+// HBM3 timing for reference (1.28 GHz, tCK = 781 ps)
+`define HBM3_TIMING_DEFAULT  17,17,42,59,5,5,26,295,5000
 
 `endif // HBM_TYPES_SVH
 // verilator lint_on SYMRSVDWORD
