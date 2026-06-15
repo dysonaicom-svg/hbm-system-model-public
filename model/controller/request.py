@@ -22,9 +22,9 @@ class RequestState(IntEnum):
 @dataclass
 class HBMRequest:
     """HBM 内存请求
-    
+
     表示一个读或写内存请求，包含地址解码信息和状态跟踪。
-    
+
     Attributes:
         addr: 64-bit 内存地址
         length: 请求长度 (bytes)
@@ -44,17 +44,18 @@ class HBMRequest:
         state: 当前请求状态
         scheduled_time: 调度时间
         completion_time: 完成时间
+        data: 写数据 (bytes, 仅写请求使用)
     """
     addr: int                                # 64-bit address
     length: int                             # bytes
     is_read: bool                           # True=read, False=write
     qos: int = 8                             # 0-15 priority
     burst_length: int = 32                  # burst size
-    
+
     # 内部字段 (自动生成)
     request_id: int = field(default=0, init=False)
     arrival_time: float = field(default=0.0, init=False)
-    
+
     # 解码后的地址字段
     stack_id: int = 0
     channel_id: int = 0
@@ -63,13 +64,16 @@ class HBMRequest:
     bank_id: int = 0
     row_id: int = 0
     col_id: int = 0
-    
+
     # 状态
     row_hit: bool = False
     state: RequestState = RequestState.PENDING
     scheduled_time: float = 0.0
     completion_time: float = 0.0
-    
+
+    # 写数据 (可选)
+    data: Optional[bytes] = None
+
     # 类变量用于生成唯一 ID
     _next_id: ClassVar[int] = 0
     _id_lock: ClassVar[bool] = False
@@ -130,7 +134,25 @@ class HBMRequest:
     def mark_failed(self):
         """标记请求失败"""
         self.state = RequestState.FAILED
-    
+
+    def set_write_data(self, data: bytes):
+        """设置写数据
+
+        Args:
+            data: 要写入的数据
+        """
+        if self.is_read:
+            raise ValueError("Cannot set write data on a read request")
+        self.data = data
+
+    def get_write_data(self) -> Optional[bytes]:
+        """获取写数据
+
+        Returns:
+            写数据 (bytes) 或 None
+        """
+        return self.data
+
     def __repr__(self) -> str:
         op = "READ" if self.is_read else "WRITE"
         return (f"HBMRequest(id={self.request_id}, {op}, "

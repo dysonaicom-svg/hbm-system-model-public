@@ -7,6 +7,8 @@
 `ifndef HBM_TYPES_SVH
 `define HBM_TYPES_SVH
 
+// verilator lint_off SYMRSVDWORD
+
 // -----------------------------------------------------------------------------
 // Address Structure
 // -----------------------------------------------------------------------------
@@ -118,25 +120,23 @@ typedef struct packed {
 // -----------------------------------------------------------------------------
 // System Configuration Constants
 // -----------------------------------------------------------------------------
-localparam int NUM_STACKS      = 8;  // Number of HBM stacks
-localparam int NUM_CHANNELS    = 8;  // Number of channels per stack
-localparam int NUM_BANK_GROUPS = 8;  // Number of bank groups per channel
-localparam int NUM_BANKS       = 16; // Number of banks per bank group
+// Number of HBM stacks
+`define NUM_STACKS      8
+// Number of channels per stack
+`define NUM_CHANNELS    8
+// Number of bank groups per channel
+`define NUM_BANK_GROUPS 8
+// Number of banks per bank group
+`define NUM_BANKS       16
 
 // -----------------------------------------------------------------------------
 // Default Timing Parameters
 // -----------------------------------------------------------------------------
 // Standard HBM2 timing at 1GHz (1ns cycle time)
-localparam hbm_timing_t HBM_TIMING_DEFAULT = '{
-    tRCD:  8'd4,    // tRCD = 4 cycles @ 1GHz
-    tRP:   8'd4,    // tRP  = 4 cycles
-    tRAS:  8'd16,   // tRAS = 16 cycles
-    tRC:   8'd20,   // tRC  = 20 cycles
-    tCCD:  8'd4,    // tCCD = 4 cycles (BL4 operation)
-    tRRD:  8'd4,    // tRRD = 4 cycles
-    tFAW:  8'd16,   // tFAW = 16 cycles
-    tRFC:  8'd80,   // tRFC = 80 cycles (full bank refresh)
-    tREFI: 16'd3120 // tREFI = 3.12us @ 1GHz
-};
+// tRCD, tRP, tRAS, tRC, tCCD, tRRD, tFAW, tRFC, tREFI
+`define HBM_TIMING_DEFAULT  4,4,16,20,4,4,16,80,3120
 
 `endif // HBM_TYPES_SVH
+// verilator lint_on SYMRSVDWORD
+
+

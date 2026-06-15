@@ -7,7 +7,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.0491946243330026,
-    "wall_clock_time_ms": 1070.5208778381348
+    "wall_clock_time_ms": 1066.5185451507568
   },
   {
     "pattern": "random",
@@ -17,7 +17,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.0815775973249791,
-    "wall_clock_time_ms": 1316.0018920898438
+    "wall_clock_time_ms": 1301.9318580627441
   },
   {
     "pattern": "random",
@@ -27,7 +27,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999902240644429,
     "throughput_gbps": 0.13093478292799163,
-    "wall_clock_time_ms": 1581.1285972595215
+    "wall_clock_time_ms": 1675.1503944396973
   },
   {
     "pattern": "random",
@@ -37,7 +37,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "wall_clock_time_ms": 1924.0765571594238
+    "wall_clock_time_ms": 1990.962266921997
   },
   {
     "pattern": "sequential",
@@ -47,7 +47,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.049325185353010566,
-    "wall_clock_time_ms": 955.9917449951172
+    "wall_clock_time_ms": 992.0699596405029
   },
   {
     "pattern": "sequential",
@@ -57,7 +57,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.08200128063500495,
-    "wall_clock_time_ms": 1167.5422191619873
+    "wall_clock_time_ms": 1195.4784393310547
   },
   {
     "pattern": "sequential",
@@ -67,7 +67,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999902385693648,
     "throughput_gbps": 0.13112934444800348,
-    "wall_clock_time_ms": 1724.4343757629395
+    "wall_clock_time_ms": 1561.6073608398438
   },
   {
     "pattern": "sequential",
@@ -77,7 +77,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "wall_clock_time_ms": 1875.823736190796
+    "wall_clock_time_ms": 1718.9960479736328
   },
   {
     "pattern": "stride",
@@ -87,7 +87,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.049325185353010566,
-    "wall_clock_time_ms": 959.4254493713379
+    "wall_clock_time_ms": 898.0753421783447
   },
   {
     "pattern": "stride",
@@ -97,7 +97,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.08200128063500495,
-    "wall_clock_time_ms": 1196.5663433074951
+    "wall_clock_time_ms": 1138.5529041290283
   },
   {
     "pattern": "stride",
@@ -107,7 +107,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999902385693648,
     "throughput_gbps": 0.13112934444800348,
-    "wall_clock_time_ms": 1564.9876594543457
+    "wall_clock_time_ms": 1525.6083011627197
   },
   {
     "pattern": "stride",
@@ -117,7 +117,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "wall_clock_time_ms": 1898.871660232544
+    "wall_clock_time_ms": 1827.608346939087
   },
   {
     "pattern": "hot_spot",
@@ -127,7 +127,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.04912294377299822,
-    "wall_clock_time_ms": 1073.066234588623
+    "wall_clock_time_ms": 964.3130302429199
   },
   {
     "pattern": "hot_spot",
@@ -137,7 +137,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 1.0,
     "throughput_gbps": 0.0818579195149962,
-    "wall_clock_time_ms": 1301.6862869262695
+    "wall_clock_time_ms": 1215.1243686676025
   },
   {
     "pattern": "hot_spot",
@@ -147,7 +147,7 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999902390457691,
     "throughput_gbps": 0.1311357444980039,
-    "wall_clock_time_ms": 1737.3294830322266
+    "wall_clock_time_ms": 1560.5072975158691
   },
   {
     "pattern": "hot_spot",
@@ -157,6 +157,6 @@
     "row_hit_rate": 0.0,
     "avg_latency": 0.9999921874389643,
     "throughput_gbps": 0.16384,
-    "wall_clock_time_ms": 2178.6983013153076
+    "wall_clock_time_ms": 1877.2990703582764
   }
 ]

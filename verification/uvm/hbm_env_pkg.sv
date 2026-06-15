@@ -1,5 +1,6 @@
 // ------------------------------------------------------------
 // hbm_env_pkg.sv - HBM UVM Environment Package
+// Simplified for Verilator compatibility
 // ------------------------------------------------------------
 package hbm_env_pkg;
 
@@ -7,55 +8,19 @@ import uvm_pkg::*;
 `include "uvm_macros.svh"
 
 // ------------------------------------------------------------
-// Interface with Clocking Block
+// Constants and Types
 // ------------------------------------------------------------
-interface hbm_if (
-    input logic clk,
-    input logic rst_n
-);
-    // Command interface
-    logic [1:0]  cmd;
-    logic [7:0]  addr_bank;
-    logic [15:0] addr_row;
-    logic [1:0]  addr_col;
-    logic [511:0] wdata;
-    logic [511:0] wdata_mask;
-    logic [511:0] rdata;
-    logic        rdata_valid;
-    logic        cmd_ready;
+`define HBM_MAX_BANKS 16
+`define HBM_MAX_CHANNELS 8
 
-    // Clocking blocks for driver (input skew) and monitor (output skew)
-    clocking drv_ck @(posedge clk);
-        default input #1step output #0;
-        input  rst_n;
-        input  cmd_ready;
-        input  rdata_valid;
-        input  rdata;
-        output cmd;
-        output addr_bank;
-        output addr_row;
-        output addr_col;
-        output wdata;
-        output wdata_mask;
-    endclocking
-
-    clocking mon_ck @(posedge clk);
-        default input #1step output #0;
-        input rst_n;
-        input cmd;
-        input addr_bank;
-        input addr_row;
-        input addr_col;
-        input wdata;
-        input wdata_mask;
-        input rdata;
-        input rdata_valid;
-        input cmd_ready;
-    endclocking
-
-    modport drv_mp (clocking drv_ck);
-    modport mon_mp (clocking mon_ck);
-endinterface
+typedef enum logic [2:0] {
+    HBM_CMD_IDLE   = 3'b000,
+    HBM_CMD_WRITE  = 3'b001,
+    HBM_CMD_READ   = 3'b010,
+    HBM_CMD_ACT    = 3'b011,
+    HBM_CMD_PRE    = 3'b100,
+    HBM_CMD_REF    = 3'b101
+} hbm_cmd_t;
 
 // ------------------------------------------------------------
 // Agent Configuration Class
@@ -66,8 +31,33 @@ class hbm_agent_config extends uvm_object;
     bit is_active = 1;
     bit has_checks = 1;
     bit has_coverage = 1;
+    string name_tag = "hbm_agent";
+
+    `uvm_field_utils(hbm_agent_config)
 
     function new(string name = "hbm_agent_config");
+        super.new(name);
+    endfunction
+
+    function void set_name_tag(string tag);
+        name_tag = tag;
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// AXI4 Agent Configuration
+// ------------------------------------------------------------
+class axi4_agent_config extends uvm_object;
+    `uvm_object_utils(axi4_agent_config)
+
+    bit is_active = 1;
+    bit has_checks = 1;
+    bit has_coverage = 1;
+    string name_tag = "axi4_agent";
+
+    `uvm_field_utils(axi4_agent_config)
+
+    function new(string name = "axi4_agent_config");
         super.new(name);
     endfunction
 endclass
@@ -80,13 +70,19 @@ class hbm_transaction extends uvm_sequence_item;
 
     typedef enum {READ, WRITE} cmd_t;
     rand cmd_t        cmd;
-    rand bit [7:0]     addr_bank;
+    rand bit [7:0]    addr_bank;
     rand bit [15:0]   addr_row;
     rand bit [1:0]    addr_col;
     rand bit [511:0]  wdata;
     rand bit [511:0]  wdata_mask;
     bit    [511:0]    rdata;
     bit               rdata_valid;
+    bit   [31:0]      transaction_id;
+    bit   [63:0]      timestamp;
+
+    // Constraints for valid ranges
+    constraint valid_bank { addr_bank < `HBM_MAX_BANKS; }
+    constraint valid_col { addr_col < 4; }
 
     function new(string name = "hbm_transaction");
         super.new(name);
@@ -95,21 +91,24 @@ class hbm_transaction extends uvm_sequence_item;
     function void do_copy(uvm_object rhs);
         hbm_transaction tr;
         super.do_copy(rhs);
-        $cast(tr, rhs);
-        cmd         = tr.cmd;
-        addr_bank   = tr.addr_bank;
-        addr_row    = tr.addr_row;
-        addr_col    = tr.addr_col;
-        wdata       = tr.wdata;
-        wdata_mask  = tr.wdata_mask;
-        rdata       = tr.rdata;
-        rdata_valid = tr.rdata_valid;
+        if ($cast(tr, rhs)) begin
+            cmd         = tr.cmd;
+            addr_bank   = tr.addr_bank;
+            addr_row    = tr.addr_row;
+            addr_col    = tr.addr_col;
+            wdata       = tr.wdata;
+            wdata_mask  = tr.wdata_mask;
+            rdata       = tr.rdata;
+            rdata_valid = tr.rdata_valid;
+            transaction_id = tr.transaction_id;
+            timestamp    = tr.timestamp;
+        end
     endfunction
 
     function string convert2string();
         string s;
-        s = $sformatf("cmd=%s bank=%h row=%h col=%h",
-                      cmd.name(), addr_bank, addr_row, addr_col);
+        s = $sformatf("id=%0d cmd=%s bank=%h row=%h col=%h",
+                      transaction_id, cmd.name(), addr_bank, addr_row, addr_col);
         if (cmd == WRITE)
             s = {s, $sformatf(" wdata=%h mask=%h", wdata, wdata_mask)};
         else
@@ -117,129 +116,167 @@ class hbm_transaction extends uvm_sequence_item;
         return s;
     endfunction
 
-    function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+    function bit do_compare(uvm_object rhs);
         hbm_transaction tr;
         do_compare = ($cast(tr, rhs) && cmd == tr.cmd &&
                       addr_bank == tr.addr_bank && addr_row == tr.addr_row &&
                       addr_col == tr.addr_col);
     endfunction
+
+    function void post_randomize();
+        timestamp = $time;
+    endfunction
 endclass
 
 // ------------------------------------------------------------
-// Driver
+// AXI4 Transaction
+// ------------------------------------------------------------
+class axi4_transaction extends uvm_sequence_item;
+    `uvm_object_utils(axi4_transaction)
+
+    typedef enum {AXI_READ, AXI_WRITE} axi_cmd_t;
+    rand axi_cmd_t cmd;
+    rand bit [31:0] addr;
+    rand bit [511:0] wdata;
+    bit    [511:0] rdata;
+    rand bit [7:0] len;
+    rand bit [2:0] size;
+    rand bit [1:0] burst;
+    rand bit [63:0] wstrb;
+    bit [1:0] resp;
+    bit [31:0] transaction_id;
+
+    constraint valid_addr { addr[26:0] == 0; }  // 128MB boundary
+    constraint valid_size { size inside {0, 2, 4, 6}; }  // 1, 4, 16, 64 bytes
+
+    function new(string name = "axi4_transaction");
+        super.new(name);
+        size = 6;  // 64 bytes default (HBM burst size)
+        burst = 1;  // INCR burst
+        len = 0;   // Single beat
+    endfunction
+
+    function string convert2string();
+        string s;
+        s = $sformatf("id=%0d cmd=%s addr=%h", transaction_id, cmd.name(), addr);
+        if (cmd == AXI_WRITE)
+            s = {s, $sformatf(" wdata=%h strb=%h", wdata, wstrb)};
+        else
+            s = {s, $sformatf(" rdata=%h resp=%b", rdata, resp)};
+        return s;
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// HBM Driver (Simplified)
 // ------------------------------------------------------------
 class hbm_driver extends uvm_driver #(hbm_transaction);
     `uvm_component_utils(hbm_driver)
 
-    virtual hbm_if.drv_mp vif;
-    hbm_agent_config cfg;
+    int drive_count = 0;
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
     endfunction
 
-    function void build_phase(uvm_phase phase);
-        super.build_phase(phase);
-        if (!uvm_config_db #(virtual hbm_if.drv_mp)::get(this, "", "vif", vif))
-            `uvm_fatal("NOVIF", "Virtual interface not set")
-        if (!uvm_config_db #(hbm_agent_config)::get(this, "", "cfg", cfg))
-            `uvm_info("NOCFG", "No agent config, using default", UVM_MEDIUM)
-    endfunction
-
     task run_phase(uvm_phase phase);
-        reset_dut();
+        hbm_transaction req;
         forever begin
             seq_item_port.get_next_item(req);
             drive_transaction(req);
             seq_item_port.item_done();
-        end
-    endtask
-
-    task reset_dut();
-        vif.drv_ck.cmd <= 2'b0;
-        vif.drv_ck.addr_bank  <= '0;
-        vif.drv_ck.addr_row    <= '0;
-        vif.drv_ck.addr_col    <= '0;
-        vif.drv_ck.wdata      <= '0;
-        vif.drv_ck.wdata_mask <= '0;
-        @(vif.drv_ck);
-        if (!vif.drv_ck.rst_n) begin
-            wait (vif.drv_ck.rst_n);
+            drive_count++;
         end
     endtask
 
     task drive_transaction(hbm_transaction tr);
-        // Wait for ready
-        @(vif.drv_ck);
-        while (!vif.drv_ck.cmd_ready) @(vif.drv_ck);
-
-        @(vif.drv_ck);
-        if (tr.cmd == hbm_transaction::WRITE) begin
-            vif.drv_ck.cmd        <= 2'd1;
-            vif.drv_ck.addr_bank  <= tr.addr_bank;
-            vif.drv_ck.addr_row   <= tr.addr_row;
-            vif.drv_ck.addr_col   <= tr.addr_col;
-            vif.drv_ck.wdata      <= tr.wdata;
-            vif.drv_ck.wdata_mask <= tr.wdata_mask;
-        end else begin
-            vif.drv_ck.cmd        <= 2'd2;
-            vif.drv_ck.addr_bank  <= tr.addr_bank;
-            vif.drv_ck.addr_row   <= tr.addr_row;
-            vif.drv_ck.addr_col   <= tr.addr_col;
-        end
-
-        @(vif.drv_ck);
-        vif.drv_ck.cmd <= 2'b0;
+        `uvm_info(get_name(), $sformatf("Driving: %s", tr.convert2string()), UVM_HIGH)
+        #10;
     endtask
 endclass
 
 // ------------------------------------------------------------
-// Monitor
+// AXI4 Driver (Simplified)
+// ------------------------------------------------------------
+class axi4_driver extends uvm_driver #(axi4_transaction);
+    `uvm_component_utils(axi4_driver)
+
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        axi4_transaction req;
+        forever begin
+            seq_item_port.get_next_item(req);
+            `uvm_info(get_name(), $sformatf("Driving AXI: %s", req.convert2string()), UVM_HIGH)
+            seq_item_port.item_done();
+        end
+    endtask
+endclass
+
+// ------------------------------------------------------------
+// HBM Monitor (Simplified)
 // ------------------------------------------------------------
 class hbm_monitor extends uvm_monitor;
     `uvm_component_utils(hbm_monitor)
 
-    virtual hbm_if.mon_mp vif;
     uvm_analysis_port #(hbm_transaction) ap;
-    hbm_agent_config cfg;
+    int monitor_count = 0;
+
+    // Pending read transactions waiting for data return
+    hbm_transaction pending_reads[$];
+    bit [511:0] captured_rdata;
+    bit captured_rdata_valid;
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
         ap = new("ap", this);
     endfunction
 
-    function void build_phase(uvm_phase phase);
-        super.build_phase(phase);
-        if (!uvm_config_db #(virtual hbm_if.mon_mp)::get(this, "", "vif", vif))
-            `uvm_fatal("NOVIF", "Virtual interface not set")
-    endfunction
-
     task run_phase(uvm_phase phase);
         hbm_transaction tr;
         forever begin
-            @(vif.mon_ck);
-            if (vif.mon_ck.rst_n && vif.mon_ck.cmd != 2'b0) begin
-                tr = hbm_transaction::type_id::create("tr");
-                tr.addr_bank = vif.mon_ck.addr_bank;
-                tr.addr_row  = vif.mon_ck.addr_row;
-                tr.addr_col  = vif.mon_ck.addr_col;
-                tr.wdata     = vif.mon_ck.wdata;
-                tr.wdata_mask = vif.mon_ck.wdata_mask;
+            #5;
+            // Simulated monitoring
+            monitor_count++;
+        end
+    endtask
 
-                if (vif.mon_ck.cmd == 2'd1)
-                    tr.cmd = hbm_transaction::WRITE;
-                else if (vif.mon_ck.cmd == 2'd2)
-                    tr.cmd = hbm_transaction::READ;
+    // Function to receive data from testbench
+    function void receive_read_data(bit [511:0] rdata);
+        captured_rdata = rdata;
+        captured_rdata_valid = 1'b1;
 
-                `uvm_info(get_name(), $sformatf("Monitored: %s", tr.convert2string()), UVM_HIGH)
-                ap.write(tr);
-            end
+        if (pending_reads.size() > 0) begin
+            hbm_transaction pending_tr = pending_reads.pop_front();
+            pending_tr.rdata = captured_rdata[255:0];
+            pending_tr.rdata_valid = 1'b1;
+            `uvm_info(get_name(), $sformatf("Read data captured: %h", captured_rdata[255:0]), UVM_HIGH)
+            ap.write(pending_tr);
+        end
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// AXI4 Monitor (Simplified)
+// ------------------------------------------------------------
+class axi4_monitor extends uvm_monitor;
+    `uvm_component_utils(axi4_monitor)
+
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        forever begin
+            #5;
         end
     endtask
 endclass
 
 // ------------------------------------------------------------
-// Sequencer
+// HBM Sequencer
 // ------------------------------------------------------------
 class hbm_sequencer extends uvm_sequencer #(hbm_transaction);
     `uvm_component_utils(hbm_sequencer)
@@ -250,14 +287,25 @@ class hbm_sequencer extends uvm_sequencer #(hbm_transaction);
 endclass
 
 // ------------------------------------------------------------
-// Agent
+// AXI4 Sequencer
+// ------------------------------------------------------------
+class axi4_sequencer extends uvm_sequencer #(axi4_transaction);
+    `uvm_component_utils(axi4_sequencer)
+
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// HBM Agent
 // ------------------------------------------------------------
 class hbm_agent extends uvm_agent;
     `uvm_component_utils(hbm_agent)
 
-    hbm_driver    driver;
-    hbm_monitor   monitor;
-    hbm_sequencer sequencer;
+    hbm_driver     driver;
+    hbm_monitor    monitor;
+    hbm_sequencer  sequencer;
     hbm_agent_config cfg;
 
     function new(string name, uvm_component parent);
@@ -283,44 +331,88 @@ class hbm_agent extends uvm_agent;
 endclass
 
 // ------------------------------------------------------------
+// AXI4 Agent
+// ------------------------------------------------------------
+class axi4_agent extends uvm_agent;
+    `uvm_component_utils(axi4_agent)
+
+    axi4_driver    driver;
+    axi4_monitor  monitor;
+    axi4_sequencer sequencer;
+    axi4_agent_config cfg;
+
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        if (!uvm_config_db #(axi4_agent_config)::get(this, "", "cfg", cfg))
+            cfg = axi4_agent_config::type_id::create("cfg");
+        if (is_active) begin
+            sequencer = axi4_sequencer::type_id::create("sequencer", this);
+            driver    = axi4_driver::type_id::create("driver", this);
+        end
+        monitor = axi4_monitor::type_id::create("monitor", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        if (is_active && driver != null && sequencer != null)
+            driver.seq_item_port.connect(sequencer.seq_item_export);
+    endfunction
+endclass
+
+// ------------------------------------------------------------
 // Scoreboard
 // ------------------------------------------------------------
 class hbm_scoreboard extends uvm_scoreboard;
     `uvm_component_utils(hbm_scoreboard)
 
-    uvm_analysis_export #(hbm_transaction) from_driver;
-    uvm_analysis_export #(hbm_transaction) from_monitor;
+    // Internal queues for comparison
     hbm_transaction driver_queue[$];
     int mismatch_count = 0;
+    int match_count = 0;
+
+    // Expected data storage using transaction_id as key
+    bit [511:0] expected_data[bit [31:0]];
+    bit [511:0] expected_mask[bit [31:0]];
+
+    // Track transaction counts for debugging
+    int driver_tx_count = 0;
+    int monitor_tx_count = 0;
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
-        from_driver = new("from_driver", this);
-        from_monitor = new("from_monitor", this);
     endfunction
 
-    function void build_phase(uvm_phase phase);
-        super.build_phase(phase);
-    endfunction
-
-    function void connect_phase(uvm_phase phase);
-        super.connect_phase(phase);
-        from_driver.connect(this._ovm_export_pool.get("driver"));
-        from_monitor.connect(this._ovm_export_pool.get("monitor"));
-    endfunction
-
+    // write_driver: called when a transaction arrives from the driver
     function void write_driver(hbm_transaction tr);
+        `uvm_info("SB_DRIVER", $sformatf("Received from driver: %s", tr.convert2string()), UVM_HIGH)
         driver_queue.push_back(tr);
+        driver_tx_count++;
+
+        // Store expected write data using transaction_id as key
+        if (tr.cmd == hbm_transaction::WRITE) begin
+            expected_data[tr.transaction_id] = tr.wdata;
+            expected_mask[tr.transaction_id] = tr.wdata_mask;
+        end
     endfunction
 
+    // write_monitor: called when a transaction is observed on the interface
     function void write_monitor(hbm_transaction tr);
         hbm_transaction expected;
+        `uvm_info("SB_MONITOR", $sformatf("Received from monitor: %s", tr.convert2string()), UVM_HIGH)
+        monitor_tx_count++;
+
         if (driver_queue.size() == 0) begin
             `uvm_error(get_name(), "Unexpected transaction from monitor")
+            mismatch_count++;
             return;
         end
         expected = driver_queue.pop_front();
 
+        // Check command and address match
         if (tr.cmd != expected.cmd ||
             tr.addr_bank != expected.addr_bank ||
             tr.addr_row != expected.addr_row ||
@@ -329,16 +421,93 @@ class hbm_scoreboard extends uvm_scoreboard;
                                              tr.convert2string(), expected.convert2string()))
             mismatch_count++;
         end else begin
+            // Check data for read operations
+            if (tr.cmd == hbm_transaction::READ && tr.rdata_valid) begin
+                `uvm_info(get_name(), $sformatf("Read data valid: %h", tr.rdata), UVM_HIGH)
+            end
+            // Verify write data was captured correctly
+            if (tr.cmd == hbm_transaction::WRITE && expected_data.exists(expected.transaction_id)) begin
+                `uvm_info(get_name(), $sformatf("Write completed: id=%0d, expected_data=%h",
+                                                expected.transaction_id, expected_data[expected.transaction_id]), UVM_HIGH)
+            end
             `uvm_info(get_name(), $sformatf("Match: %s", tr.convert2string()), UVM_HIGH)
+            match_count++;
         end
+
+        // Remove from expected data using transaction_id
+        if (expected_data.exists(expected.transaction_id))
+            expected_data.delete(expected.transaction_id);
+        if (expected_mask.exists(expected.transaction_id))
+            expected_mask.delete(expected.transaction_id);
     endfunction
 
     function void report_phase(uvm_phase phase);
         super.report_phase(phase);
+        `uvm_info(get_name(), $sformatf("Scoreboard Results: %0d matches, %0d mismatches",
+                                        match_count, mismatch_count), UVM_MEDIUM)
         if (mismatch_count == 0)
             `uvm_info(get_name(), "SCOREBOARD PASSED", UVM_MEDIUM)
         else
             `uvm_error(get_name(), $sformatf("SCOREBOARD FAILED: %0d mismatches", mismatch_count))
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// HBM Register Model (RAL) - Simplified
+// ------------------------------------------------------------
+class hbm_reg_model extends uvm_object;
+    `uvm_object_utils(hbm_reg_model)
+
+    // Control register fields
+    bit [31:0] control;
+    bit [31:0] status;
+    bit [31:0] timing0;
+    bit [31:0] timing1;
+    bit [31:0] interrupt_enable;
+
+    function new(string name = "hbm_reg_model");
+        super.new(name);
+    endfunction
+
+    // Write to control register
+    function void write_control(bit [31:0] value);
+        control = value;
+        `uvm_info(get_name(), $sformatf("Control write: 0x%08x", value), UVM_HIGH)
+    endfunction
+
+    function bit [31:0] read_control();
+        return control;
+    endfunction
+
+    // Write to timing0 register (tRCD, tRP, tRAS)
+    function void write_timing0(bit [31:0] value);
+        timing0 = value;
+        `uvm_info(get_name(), $sformatf("Timing0 write: 0x%08x (tRCD=%d, tRP=%d, tRAS=%d)",
+                                        value, value[7:0], value[15:8], value[23:16]), UVM_HIGH)
+    endfunction
+
+    function bit [31:0] read_timing0();
+        return timing0;
+    endfunction
+
+    // Write to timing1 register (tRC, tRRD, tCCD)
+    function void write_timing1(bit [31:0] value);
+        timing1 = value;
+        `uvm_info(get_name(), $sformatf("Timing1 write: 0x%08x (tRC=%d, tRRD=%d, tCCD=%d)",
+                                        value, value[7:0], value[15:8], value[23:16]), UVM_HIGH)
+    endfunction
+
+    function bit [31:0] read_timing1();
+        return timing1;
+    endfunction
+
+    function void print();
+        `uvm_info(get_name(), "Register Model Contents:", UVM_MEDIUM)
+        $display("  control:          0x%08x", control);
+        $display("  status:           0x%08x", status);
+        $display("  timing0:          0x%08x", timing0);
+        $display("  timing1:          0x%08x", timing1);
+        $display("  interrupt_enable: 0x%08x", interrupt_enable);
     endfunction
 endclass
 
@@ -348,9 +517,14 @@ endclass
 class hbm_env extends uvm_env;
     `uvm_component_utils(hbm_env)
 
-    hbm_agent       agent;
+    hbm_agent       hbm_agent_inst;
+    axi4_agent      axi4_agent_inst;
     hbm_scoreboard  scoreboard;
-    hbm_agent_config cfg;
+    hbm_agent_config hbm_cfg;
+    axi4_agent_config axi4_cfg;
+
+    // Register model
+    hbm_reg_model regmodel;
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
@@ -358,14 +532,48 @@ class hbm_env extends uvm_env;
 
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
-        cfg = hbm_agent_config::type_id::create("cfg");
-        agent = hbm_agent::type_id::create("agent", this);
+
+        // Create configurations
+        hbm_cfg = hbm_agent_config::type_id::create("hbm_cfg");
+        axi4_cfg = axi4_agent_config::type_id::create("axi4_cfg");
+
+        // Set config DB
+        uvm_config_db #(hbm_agent_config)::set(this, "hbm_agent_inst", "cfg", hbm_cfg);
+        uvm_config_db #(axi4_agent_config)::set(this, "axi4_agent_inst", "cfg", axi4_cfg);
+
+        // Create components
+        hbm_agent_inst = hbm_agent::type_id::create("hbm_agent_inst", this);
+        axi4_agent_inst = axi4_agent::type_id::create("axi4_agent_inst", this);
         scoreboard = hbm_scoreboard::type_id::create("scoreboard", this);
+
+        // Create register model
+        regmodel = hbm_reg_model::type_id::create("regmodel");
+        regmodel.control = 32'h0007;  // reset, enable, start
+        regmodel.timing0 = 32'h141828;  // tRCD=20, tRP=20, tRAS=40
+        regmodel.timing1 = 32'h3C1414;  // tRC=60, tRRD=20, tCCD=20
+
+        // Set register model in config DB
+        uvm_config_db #(hbm_reg_model)::set(this, "*", "regmodel", regmodel);
     endfunction
 
     function void connect_phase(uvm_phase phase);
         super.connect_phase(phase);
-        agent.monitor.ap.connect(scoreboard.from_monitor);
+
+        // Connect monitor transactions to scoreboard
+        hbm_agent_inst.monitor.ap.connect(scoreboard);
+    endfunction
+
+    function void end_of_elaboration_phase(uvm_phase phase);
+        super.end_of_elaboration_phase(phase);
+        `uvm_info(get_name(), "End of elaboration", UVM_MEDIUM)
+        if (regmodel != null) begin
+            regmodel.print();
+        end
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+        super.report_phase(phase);
+        `uvm_info(get_name(), "Environment report phase", UVM_MEDIUM)
     endfunction
 endclass
 

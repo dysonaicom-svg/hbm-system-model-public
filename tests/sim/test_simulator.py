@@ -70,6 +70,31 @@ class TestSimulationStats:
         # 1000 req * 32 bytes * 4 burst / (100000 * 781.25ns)
         assert stats.throughput_gbps > 0
 
+    def test_efficiency(self):
+        stats = SimulationStats()
+        stats.total_cycles = 1000
+        stats.busy_cycles = 800
+        assert abs(stats.efficiency - 0.8) < 0.001
+
+    def test_bandwidth_efficiency(self):
+        stats = SimulationStats()
+        stats.total_cycles = 100000
+        stats.completed_requests = 1000
+        # HBM3 2-stack peak: 819.2 * 2 = 1638.4 GB/s
+        # At 1000 requests: 1000 * 32 * 4 = 128000 bytes
+        # Throughput should be > 0
+        assert stats.bandwidth_efficiency >= 0
+
+    def test_to_dict(self):
+        stats = SimulationStats()
+        stats.total_cycles = 1000
+        stats.completed_requests = 100
+        d = stats.to_dict()
+        assert 'total_cycles' in d
+        assert 'completed_requests' in d
+        assert 'bandwidth_efficiency' in d
+        assert 'efficiency' in d
+
 
 class TestTrafficGenerator:
     """测试流量生成器"""
@@ -183,6 +208,28 @@ class TestHBMSimulator:
 
         stats = sim.get_stats()
         assert stats.total_cycles == 2
+
+    def test_get_completion_jitter(self):
+        """测试完成抖动分析"""
+        config = SimulationConfig(simulation_time_us=50.0, request_rate=1.0, seed=42)
+        sim = HBMSimulator(config)
+        sim.run()
+
+        jitter = sim.get_completion_jitter()
+        assert 'mean' in jitter
+        assert 'std' in jitter
+        assert 'max' in jitter
+        assert 'count' in jitter
+
+    def test_run_verbose(self):
+        """测试详细运行模式"""
+        config = SimulationConfig(simulation_time_us=10.0, seed=42)
+        sim = HBMSimulator(config)
+        stats = sim.run_verbose()
+
+        assert stats.total_cycles > 0
+        assert stats.max_latency_cycles >= 0
+        assert stats.min_latency_cycles >= 0
 
 
 class TestRunSimulation:

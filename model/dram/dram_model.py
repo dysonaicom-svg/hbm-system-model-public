@@ -3,6 +3,11 @@ HBM DRAM Model - 完整 DRAM 模型接口
 集成 bank 状态机、channel 模型、stack 模型
 
 参考设计文档 2026-06-15-hbm-system-model-design.md 的 5.2 节
+
+Multi-channel HBM3 支持:
+- 8 channels per stack (JEDEC HBM3 spec)
+- Per-channel statistics tracking
+- Channel-aware command execution
 """
 
 from dataclasses import dataclass, field
@@ -59,14 +64,40 @@ class DRAMStats:
     row_conflicts: int = 0
     bank_busy_cycles: int = 0
 
+    # Per-channel statistics (for multi-channel HBM3)
+    per_channel_activations: Dict[int, int] = field(default_factory=dict)
+    per_channel_reads: Dict[int, int] = field(default_factory=dict)
+    per_channel_writes: Dict[int, int] = field(default_factory=dict)
+
     def add_activation(self):
         self.total_activations += 1
+
+    def add_activation_to_channel(self, channel_id: int):
+        """Add activation to specific channel"""
+        self.total_activations += 1
+        if channel_id not in self.per_channel_activations:
+            self.per_channel_activations[channel_id] = 0
+        self.per_channel_activations[channel_id] += 1
 
     def add_read(self):
         self.total_reads += 1
 
+    def add_read_to_channel(self, channel_id: int):
+        """Add read to specific channel"""
+        self.total_reads += 1
+        if channel_id not in self.per_channel_reads:
+            self.per_channel_reads[channel_id] = 0
+        self.per_channel_reads[channel_id] += 1
+
     def add_write(self):
         self.total_writes += 1
+
+    def add_write_to_channel(self, channel_id: int):
+        """Add write to specific channel"""
+        self.total_writes += 1
+        if channel_id not in self.per_channel_writes:
+            self.per_channel_writes[channel_id] = 0
+        self.per_channel_writes[channel_id] += 1
 
     def add_hit(self):
         self.row_hits += 1
@@ -76,6 +107,14 @@ class DRAMStats:
 
     def add_conflict(self):
         self.row_conflicts += 1
+
+    def get_channel_stats(self, channel_id: int) -> Dict[str, int]:
+        """Get statistics for a specific channel"""
+        return {
+            'activations': self.per_channel_activations.get(channel_id, 0),
+            'reads': self.per_channel_reads.get(channel_id, 0),
+            'writes': self.per_channel_writes.get(channel_id, 0),
+        }
 
     def __repr__(self) -> str:
         total = self.row_hits + self.row_misses + self.row_conflicts
@@ -245,7 +284,7 @@ class DRAMModel:
             success = bank.activate(row_id)
 
             if success:
-                self.stats.add_activation()
+                self.stats.add_activation_to_channel(channel_id)
                 return DRAMResponse(success=True, latency_cycles=self.timing.tRCD)
             else:
                 return DRAMResponse(success=False, error="Activation failed")
@@ -290,8 +329,8 @@ class DRAMModel:
             # 读取数据
             data = self._read_memory(stack_id, channel_id, bank_id, bank.bank.open_row, col_id, length)
 
-            # 更新统计
-            self.stats.add_read()
+            # 更新统计 (per-channel)
+            self.stats.add_read_to_channel(channel_id)
             if bank.is_row_hit(col_id):
                 self.stats.add_hit()
             else:
@@ -346,8 +385,8 @@ class DRAMModel:
             # 写入数据
             self._write_memory(stack_id, channel_id, bank_id, bank.bank.open_row, col_id, data)
 
-            # 更新统计
-            self.stats.add_write()
+            # 更新统计 (per-channel)
+            self.stats.add_write_to_channel(channel_id)
 
             return DRAMResponse(success=True, latency_cycles=self.timing.tCCD)
 
@@ -421,6 +460,134 @@ class DRAMModel:
 
         except Exception as e:
             return DRAMResponse(success=False, error=str(e))
+
+    def execute_request(
+        self,
+        stack_id: int,
+        ch_id: int,
+        ps_id: int,
+        bg_id: int,
+        bank_id: int,
+        row: int,
+        cmd: str,
+        data: Optional[bytes] = None,
+        col: int = 0,
+        length: int = 32,
+        current_time: Optional[int] = None,
+    ) -> bool:
+        """Execute a read or write request on DRAM
+
+        This is the unified interface for the command pipeline.
+
+        Args:
+            stack_id: Stack ID
+            ch_id: Channel ID
+            ps_id: Pseudo-channel ID
+            bg_id: Bank group ID
+            bank_id: Bank ID (local within bank group)
+            row: Row ID
+            cmd: Command type ("READ" or "WRITE")
+            data: Write data (bytes, for WRITE commands)
+            col: Column ID (default 0)
+            length: Transfer length in bytes (default 32)
+            current_time: Current time in cycles (optional, uses internal state if None)
+
+        Returns:
+            True if command was accepted
+        """
+        # Calculate global bank_id for internal methods
+        global_bank_id = (ps_id * 16) + (bg_id * 2) + bank_id
+
+        if current_time is None:
+            current_time = 0
+
+        if cmd.upper() == "READ":
+            resp = self.execute_read(
+                stack_id=stack_id,
+                channel_id=ch_id,
+                bank_id=global_bank_id,
+                col_id=col,
+                current_time=current_time,
+                length=length,
+            )
+            return resp.success
+        elif cmd.upper() == "WRITE":
+            if data is None:
+                # Generate dummy data for write
+                data = bytes(length)
+            resp = self.execute_write(
+                stack_id=stack_id,
+                channel_id=ch_id,
+                bank_id=global_bank_id,
+                col_id=col,
+                data=data,
+                current_time=current_time,
+            )
+            return resp.success
+        else:
+            return False
+
+    def write(
+        self,
+        stack_id: int,
+        channel_id: int,
+        bank_id: int,
+        row_id: int,
+        col_id: int,
+        data: bytes,
+    ) -> bool:
+        """Direct write to DRAM memory
+
+        This bypasses timing checks for direct data write access.
+
+        Args:
+            stack_id: Stack ID
+            channel_id: Channel ID
+            bank_id: Bank ID
+            row_id: Row ID
+            col_id: Column ID
+            data: Data to write
+
+        Returns:
+            True if write succeeded
+        """
+        try:
+            self._write_memory(stack_id, channel_id, bank_id, row_id, col_id, data)
+            self.stats.add_write()
+            return True
+        except Exception:
+            return False
+
+    def read(
+        self,
+        stack_id: int,
+        channel_id: int,
+        bank_id: int,
+        row_id: int,
+        col_id: int,
+        length: int,
+    ) -> bytes:
+        """Direct read from DRAM memory
+
+        This bypasses timing checks for direct data read access.
+
+        Args:
+            stack_id: Stack ID
+            channel_id: Channel ID
+            bank_id: Bank ID
+            row_id: Row ID
+            col_id: Column ID
+            length: Number of bytes to read
+
+        Returns:
+            Data read from memory
+        """
+        try:
+            data = self._read_memory(stack_id, channel_id, bank_id, row_id, col_id, length)
+            self.stats.add_read()
+            return data
+        except Exception:
+            return bytes(length)
 
     def tick(self, current_time: int):
         """更新所有 bank 状态
@@ -504,6 +671,31 @@ class DRAMModel:
         self.stats = DRAMStats()
         if self._memory:
             self._memory = {}
+
+    def get_all_channel_stats(self) -> Dict[int, Dict[str, int]]:
+        """Get statistics for all channels
+
+        Returns:
+            Dict mapping channel_id to stats dict
+        """
+        result = {}
+        for ch_id in range(self.config['channels_per_stack']):
+            result[ch_id] = self.stats.get_channel_stats(ch_id)
+        return result
+
+    def get_channel_utilization(self, channel_id: int, window: int = 10000) -> float:
+        """Calculate utilization for a specific channel
+
+        Args:
+            channel_id: Channel ID
+            window: Statistics window (cycles)
+
+        Returns:
+            Utilization (0-1)
+        """
+        ch_stats = self.stats.get_channel_stats(channel_id)
+        busy_cycles = ch_stats['activations'] * self.timing.tRAS
+        return min(1.0, busy_cycles / window)
 
     def __repr__(self) -> str:
         return (f"DRAMModel(v={self.hbm_version}, stacks={len(self.stacks)}, "

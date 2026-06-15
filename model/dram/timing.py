@@ -116,25 +116,114 @@ class HBM2Timing:
 
 @dataclass
 class HBM4Timing:
-    """HBM4 时序参数 (计划值)"""
-    tCK_ps: float = 625.0  # 1.6 GHz (预估)
-    tRCD: int = 20  # 预估
-    tRP: int = 20
-    tRAS: int = 48
-    tRC: int = 68
-    tCCD: int = 6
-    tRRD: int = 6
-    tFAW: int = 30
-    tRFC: int = 350  # 预估
-    tREFI: int = 5000
-    
+    """HBM4 时序参数 (基于 JEDEC JESD270-4A)
+
+    使用 n-prefix 命名 (nRCD, nRP 等) 与 HBM4Spec 对齐。
+    基于 tCK = 125 ps (8 GHz DDR)。
+
+    Reference: JEDEC JESD270-4A HBM4 specification
+    """
+    tCK_ps: float = 125.0  # 125 ps = 8 GHz DDR
+
+    # Row command timing
+    nRCD: int = 8       # RAS to CAS delay (激活到读写)
+    nRP: int = 8        # Precharge time
+    nRAS: int = 20      # Row active time minimum
+    nRC: int = 22       # Row cycle time (same bank)
+
+    # Column command timing
+    nCL: int = 8        # CAS latency
+    nCWL: int = 3       # CAS write latency
+    nCCD: int = 4       # CAS to CAS delay
+    nCCDS: int = 2      # CAS to CAS delay (same BG)
+    nCCDL: int = 3      # CAS to CAS delay (different BG)
+
+    # Write recovery
+    nWR: int = 8        # Write recovery
+    nRTPS: int = 2      # Read to precharge
+    nRTPL: int = 3      # Read to precharge (last data)
+
+    # Bank timing
+    nRRD: int = 4       # RAS to RAS delay
+    nRRDS: int = 3      # RAS to RAS delay (same BG)
+    nRRDL: int = 4      # RAS to RAS delay (different BG)
+    nFAW: int = 16      # Four-activate window
+
+    # Turnaround timing
+    nWTRS: int = 4      # Write to read (same BG)
+    nWTRL: int = 5      # Write to read (different BG)
+    nRTW: int = 4       # Read to write
+
+    # Refresh timing
+    nRFC: int = 180     # Refresh cycle time
+    nREFI: int = 3900   # Refresh interval
+
     @property
     def clock_freq(self) -> float:
+        """时钟频率 (Hz)"""
         return 1e12 / self.tCK_ps
-    
+
     @property
     def clock_period_ns(self) -> float:
+        """时钟周期 (ns)"""
         return self.tCK_ps / 1000.0
+
+    def cycles_to_ns(self, cycles: int) -> float:
+        """Cycles 转换为 ns"""
+        return cycles * self.clock_period_ns
+
+    def cycles_to_seconds(self, cycles: int) -> float:
+        """Cycles 转换为 seconds"""
+        return self.cycles_to_ns(cycles) * 1e-9
+
+    def cycles_to_s(self, cycles: int) -> float:
+        """Cycles 转换为 seconds"""
+        return self.cycles_to_seconds(cycles)
+
+    def ns_to_cycles(self, ns: float) -> int:
+        """ns 转换为 cycles"""
+        return int(ns * 1000 / self.tCK_ps + 0.5)
+
+    # Aliases for backward compatibility with HBM3 naming
+    @property
+    def tRCD(self) -> int:
+        return self.nRCD
+
+    @property
+    def tRP(self) -> int:
+        return self.nRP
+
+    @property
+    def tRAS(self) -> int:
+        return self.nRAS
+
+    @property
+    def tRC(self) -> int:
+        return self.nRC
+
+    @property
+    def tCCD(self) -> int:
+        return self.nCCD
+
+    @property
+    def tRRD(self) -> int:
+        return self.nRRD
+
+    @property
+    def tFAW(self) -> int:
+        return self.nFAW
+
+    @property
+    def tRFC(self) -> int:
+        return self.nRFC
+
+    @property
+    def tREFI(self) -> int:
+        return self.nREFI
+
+    def __repr__(self) -> str:
+        return (f"HBM4Timing(tCK={self.tCK_ps}ps, "
+                f"nRCD={self.nRCD}, nRP={self.nRP}, nRAS={self.nRAS}, nRC={self.nRC})")
 
 
 def get_timing_for_hbm_version(version: str):

@@ -60,6 +60,12 @@ class HBMController:
         
         # 调度统计
         self.scheduler_stats = SchedulerStats()
+
+        # 最近调度的请求 (用于 CommandSequencer 集成)
+        self._last_scheduled_request: Optional[HBMRequest] = None
+
+        # 最近调度的命令类型
+        self._last_cmd_type: str = "READ"
     
     def submit_request(self, request: HBMRequest) -> bool:
         """提交请求
@@ -108,11 +114,16 @@ class HBMController:
         
         return success
     
-    def tick(self) -> Optional[HBMResponse]:
+    def tick(self) -> Tuple[Optional[HBMRequest], Optional[HBMResponse]]:
         """执行一个时钟周期
 
         Returns:
-            如果有请求完成，返回响应
+            Tuple of (scheduled_request, response).
+            scheduled_request is the request being scheduled this cycle.
+            response is None if no request completed, or HBMResponse if completed.
+            Note: In the current model, the scheduled request IS completed
+            immediately (simplified model). For cycle-accurate timing,
+            use tick_advanced() instead.
         """
         self.current_time += 1  # 使用周期作为时间单位
 
@@ -122,18 +133,21 @@ class HBMController:
                 cmd = self.refresh_manager.schedule_refresh(stack_id, self.current_time, self.bank_states)
                 if cmd:
                     self.stats['refresh_count'] += 1
-        
+
         # 调度请求
-        last_cmd = "READ"  # 假设上次是读
         scheduled = self.scheduler.schedule(
             self.queue_manager.read_queue,
             self.queue_manager.write_queue,
             self.bank_states,
             self.current_time,
-            last_cmd
+            self._last_cmd_type
         )
-        
+
         if scheduled:
+            # 更新 last command type
+            self._last_cmd_type = "READ" if scheduled.is_read else "WRITE"
+            self._last_scheduled_request = scheduled
+
             # 更新 bank 状态
             bank_key = (scheduled.channel_id, scheduled.pseudo_channel_id, scheduled.bank_id)
             if scheduled in self.queue_manager.read_queue._queue or                scheduled in self.queue_manager.write_queue._queue:
@@ -146,7 +160,7 @@ class HBMController:
                     bank_state.is_open = True
                     bank_state.open_row = scheduled.row_id
                     bank_state.last_access_time = self.current_time
-            
+
             # 标记完成
             scheduled.mark_completed(self.current_time)
 
@@ -157,13 +171,13 @@ class HBMController:
             latency_cycles = scheduled.get_latency_cycles()
             latency_ns = latency_cycles * self.config.timing.clock_period_ns
 
-            return HBMResponse(
+            return (scheduled, HBMResponse(
                 request_id=scheduled.request_id,
                 status="OK",
                 latency=latency_ns,
-            )
-        
-        return None
+            ))
+
+        return (None, None)
     
     def get_bandwidth(self) -> float:
         """计算当前有效带宽"""

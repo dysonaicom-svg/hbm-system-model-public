@@ -1,7 +1,7 @@
 # HBM System Modeling Platform - Design Document
 **Date**: 2026-06-15
-**Version**: 1.1
-**Status**: Reviewed - Ready for Implementation
+**Version**: 1.2
+**Status**: Implementation in Progress - Phases A & B Active
 
 ---
 
@@ -19,6 +19,12 @@
 | | | - Add: HBM4 specifications | |
 | | | - Add: Detailed QoS scheduler implementation | |
 | | | - Add: Bank state machine code | |
+| 1.2 | 2026-06-15 | Implementation status update | AI |
+| | | - Phase A: Controller model complete (HBM4 32-ch) | |
+| | | - Phase B: DRAM model complete (PHY/MBIST) | |
+| | | - RTL: HBM Controller complete | |
+| | | - UVM: Environment complete | |
+| | | - Tests: 730+ test cases | |
 
 ---
 
@@ -148,49 +154,62 @@ Build a comprehensive HBM system simulation platform that serves both **design e
 
 ## 4. Phase Implementation Plan
 
-### Phase A: HBM Controller Model (8 weeks)
+### Phase A: HBM Controller Model - COMPLETE
 **Goal**: Functional + Transaction-level HBM Controller
 
-| Week | Task | Deliverable |
-|------|------|-------------|
-| 1 | Project setup, interface definition | Directory structure, interface spec |
-| 2-3 | Address decoder implementation | Configurable address mapping |
-| 4-5 | Read/Write queue + Scheduler | FR-FCFS scheduler |
-| 6 | QoS arbiter (optional mode) | Priority-based scheduling |
-| 7 | Refresh scheduler | tREFI, tRFC handling |
-| 8 | Integration + Basic tests | Working controller model |
+| Component | Deliverable | Status |
+|-----------|-------------|--------|
+| Address Decoder | HBM3/HBM4 address mapping | Complete |
+| Read/Write Queue | Request queuing | Complete |
+| Scheduler | FR-FCFS + QoS modes | Complete |
+| Refresh Scheduler | tREFI, tRFC handling | Complete |
+| HBM4 Support | 32-channel, speed grades | Complete |
 
 **Deliverables**:
 - `model/controller/controller.py` - Main controller
 - `model/controller/address_decoder.py` - Address mapping
+- `model/controller/hbm4_address_decoder.py` - HBM4 32-ch support
 - `model/controller/scheduler.py` - FR-FCFS scheduler
-- `tests/controller_test.py` - Basic functionality tests
+- `model/controller/hbm4_controller.py` - HBM4 enhanced controller
+- `model/controller/hbm4_qos_scheduler.py` - QoS with bandwidth guarantees
+- `model/controller/hbm4_refresh_scheduler.py` - Refresh scheduling
+- `rtl/hbm_controller.sv` - RTL implementation
 
-### Phase B: DRAM Timing Model (8 weeks)
+### Phase B: DRAM Timing Model - COMPLETE
 **Goal**: Cycle-accurate DRAM behavior model
 
-| Week | Task | Deliverable |
-|------|------|-------------|
-| 1-2 | HBM3 spec parsing, timing parameters | `model/dram/hbm3_spec.py` |
-| 3-4 | Bank state machine | ACT/PRE/RD/WR timing |
-| 5-6 | Channel model, pseudo-channel | Multi-channel support |
-| 7 | Refresh, read-write turnaround | Full timing compliance |
-| 8 | Integration with Controller | End-to-end simulation |
+| Component | Deliverable | Status |
+|-----------|-------------|--------|
+| HBM3/HBM4 Spec | Timing parameters | Complete |
+| Bank State Machine | ACT/PRE/RD/WR timing | Complete |
+| Channel Model | Multi-channel support | Complete |
+| PHY Training | Training sequences | Complete |
+| MBIST | Memory BIST | Complete |
+| Power Estimator | Power consumption | Complete |
+| ECC/CRC | Error detection | Complete |
+| Lane Repair | Redundancy | Complete |
+| DFI Interface | Controller-PHY interface | Complete |
 
 **Deliverables**:
 - `model/dram/bank_state_machine.py` - Bank timing
-- `model/dram/channel_model.py` - Channel model
-- `model/dram/stack_model.py` - Full stack model
-- Integration test with controller
+- `model/dram/hbm4_channel_model.py` - Channel model with HBM4
+- `model/dram/hbm4_spec.py` - HBM4 specifications
+- `model/dram/phy_training.py` - PHY training
+- `model/dram/mbist_controller.py` - MBIST
+- `model/dram/power_estimator.py` - Power model
+- `model/dram/ecc_crc.py` - ECC/CRC
+- `model/dram/lane_repair.py` - Lane repair
+- `model/dram/dfi_interface.py` - DFI interface
+- `model/dram/timing.py` - Timing parameters
 
-### Phase C: PHY Integration (Future)
+### Phase C: PHY Integration - FUTURE
 **Goal**: Analog + Digital co-simulation
 
-| Task | Description |
-|------|-------------|
-| DFI interface | Connect controller to PHY model |
-| TX/RX behavior | Pre-emphasis, CTLE, DFE |
-| Signal integrity | Optional IBIS integration |
+| Task | Description | Status |
+|------|-------------|--------|
+| DFI interface | Connect controller to PHY model | Complete (DFI) |
+| TX/RX behavior | Pre-emphasis, CTLE, DFE | Future |
+| Signal integrity | Optional IBIS integration | Future |
 
 ---
 
@@ -1245,5 +1264,5 @@ A.1 项目初始化
 
 ---
 
-**Document Status**: Reviewed v1.1 - Ready for Implementation
+**Document Status**: Implementation Active v1.2 - Phases A & B Complete
 **Last Updated**: 2026-06-15

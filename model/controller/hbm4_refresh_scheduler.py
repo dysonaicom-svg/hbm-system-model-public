@@ -160,10 +160,12 @@ class HBM4RefreshScheduler:
             self.stats['total_refreshes'] += 1
             self.stats['per_bank_refreshes'] += 1
 
-            # Update bank status
-            self.mark_bank_refreshed(pch_idx, bank_idx, self.current_cycle)
+            # Update bank status - use actual channel_id derived from pch_idx
+            # Each real channel has 2 pseudo-channels (pch_idx // 2 gives channel 0-31)
+            actual_channel_id = pch_idx // 2
+            self.mark_bank_refreshed(actual_channel_id, bank_idx, self.current_cycle)
 
-            return ('REFsb', pch_idx, bank_idx)
+            return ('REFsb', actual_channel_id, bank_idx)
 
         elif self.mode == RefreshMode.BANK_GROUP:
             # Refresh one bank group per interval

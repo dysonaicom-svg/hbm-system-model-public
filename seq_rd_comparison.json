@@ -1,0 +1,28 @@
+{
+  "trace_name": "seq_rd.trace",
+  "trace_file": "research/hbm-modeling/traces/seq_rd.trace",
+  "model": {
+    "total_requests": 100000,
+    "row_hit_rate": 0.0,
+    "avg_latency": 81.87321873218733,
+    "row_hits": 0,
+    "row_misses": 99999,
+    "row_conflicts": 1561
+  },
+  "simulation": {
+    "total_requests": 2465058,
+    "row_hit_rate": 0.6250100032010243,
+    "avg_latency": 12.9252501,
+    "row_hits": 62481,
+    "row_misses": 24992,
+    "row_conflicts": 12495,
+    "memory_cycles": 924397
+  },
+  "errors": {
+    "hit_rate_error_pp": 62.50100032010243,
+    "latency_error_pct": 533.4362437767245,
+    "row_hit_error_pct": 100.0,
+    "row_miss_error_pct": 300.1240396927017,
+    "row_conflict_error_pct": 87.50700280112045
+  }
+}

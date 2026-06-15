@@ -1,18 +1,42 @@
 """
-HBM4 Lane Repair Model
+HBM4 Lane Repair (Redundancy) Model
 
-Implements lane repair functionality for HBM4 channels.
+Implements lane repair functionality for HBM4 channels, providing redundancy
+to mitigate DRAM manufacturing defects and improve overall system yield.
 
-Key features:
-- Lane failure tracking and remapping
-- Spare lane allocation
-- Repair state management
-- Integration with PHY training
+LANE ARCHITECTURE:
+================
+Each HBM4 channel contains N data lanes plus S spare lanes:
+  - Data lanes: indices 0 to (lanes_per_channel - 1)
+  - Spare lanes: indices lanes_per_channel to (lanes_per_channel + total_spares - 1)
+
+For example, with 64 data lanes and 4 spares:
+  - Data lane indices: 0-63
+  - Spare lane indices: 64-67
+
+REPAIR TYPES:
+============
+  - "bit": Single bit repair within a lane (granularity: individual bit)
+  - "byte": Byte-level repair (8 bits repaired as a unit)
+  - "channel": Full lane/channel repair (entire lane replaced)
+
+REPAIR WORKFLOW:
+===============
+1. During manufacturing test or PHY training, failed lanes are detected
+2. add_failed_lane() or perform_repair() registers the failure
+3. Spare lanes are allocated from the available pool
+4. Traffic is transparently remapped via get_remapped_lane()
+
+REPAIR LIMITS:
+=============
+Each channel has a fixed number of spare lanes (typical: 2-4 for HBM4).
+When all spares are exhausted, the channel is marked UNREPAIRABLE.
+The system tracks repair status per-channel and globally.
 
 Based on:
-- JEDEC JESD270-4A HBM4 specification
-- Cadence HBM4E documentation
-- Synopsys HBM4 Controller IP
+  - JEDEC JESD270-4A HBM4 specification
+  - Cadence HBM4E documentation
+  - Synopsys HBM4 Controller IP
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -22,7 +46,13 @@ import random
 
 
 class RepairStatus(Enum):
-    """Lane repair status"""
+    """Lane repair status indicating repair coverage level.
+
+    NO_REPAIR:      No failures detected in this channel
+    PARTIAL_REPAIR: Some failures repaired, spares remain available
+    FULL_REPAIR:    All spares used, channel fully repaired
+    UNREPAIRABLE:  Failures exceed spare capacity
+    """
     NO_REPAIR = "no_repair"
     PARTIAL_REPAIR = "partial_repair"
     FULL_REPAIR = "full_repair"
@@ -31,7 +61,14 @@ class RepairStatus(Enum):
 
 @dataclass
 class LaneRepairEntry:
-    """Single lane repair entry"""
+    """Single lane repair mapping entry.
+
+    Attributes:
+        failed_lane: Index of the defective data lane (0 to lanes-1)
+        spare_lane: Index of the replacement spare lane (lanes to lanes+spares-1)
+        repair_type: Granularity of repair ("bit", "byte", "channel")
+        channel_id: HBM4 channel this repair applies to
+    """
     failed_lane: int
     spare_lane: int
     repair_type: str  # "bit", "byte", "channel"
@@ -40,7 +77,18 @@ class LaneRepairEntry:
 
 @dataclass
 class LaneRepairMap:
-    """Lane repair map for one channel"""
+    """Lane repair map for one HBM4 channel.
+
+    Maintains the complete repair state for a single channel including:
+      - List of failed lanes (detected defects)
+      - List of allocated spare lanes (in use)
+      - Repair entries (failed -> spare mappings)
+      - Repair capacity tracking
+
+    Lane Indexing Convention:
+      - Data lanes: indices 0 to (total_lanes - 1)
+      - Spare lanes: indices total_lanes to (total_lanes + total_spares - 1)
+    """
     channel_id: int
     total_lanes: int
     total_spares: int
@@ -58,17 +106,22 @@ class LaneRepairMap:
 
     @property
     def available_spares(self) -> int:
-        """Number of spare lanes available"""
+        """Number of spare lanes still available for repair."""
         return self.total_spares - len(self.repair_entries)
 
     @property
     def is_repairable(self) -> bool:
-        """Check if more repairs are possible"""
+        """Check if channel can accept more repairs.
+
+        A channel is repairable if:
+          - Failed lane count does not exceed total spares
+          - Repair count is below maximum (spares available)
+        """
         return len(self.failed_lanes) <= self.total_spares and self.repair_count < self.max_repair_count
 
     @property
     def status(self) -> RepairStatus:
-        """Get current repair status"""
+        """Get current repair status based on failed lane count vs spares."""
         if len(self.failed_lanes) == 0:
             return RepairStatus.NO_REPAIR
         if len(self.failed_lanes) < self.total_spares:
@@ -79,16 +132,46 @@ class LaneRepairMap:
 
 
 class HBM4LaneRepairModel:
-    """HBM4 Lane Repair Model
+    """HBM4 Lane Repair (Redundancy) Model
 
-    Manages lane repair for all channels in the HBM4 stack.
+    Manages lane repair for all channels in the HBM4 stack. This model
+    implements the redundancy mechanism used in HBM devices to improve
+    manufacturing yield by providing spare lanes to replace defective ones.
 
-    Key capabilities:
-    - Per-channel repair maps
-    - Lane failure detection simulation
-    - Spare lane allocation
-    - Repair state tracking
-    - Integration with training state machine
+    KEY CAPABILITIES:
+    =================
+    - Per-channel repair maps: Each of N channels has independent repair tracking
+    - Spare lane allocation: Automatic selection from available spare pool
+    - Lane remapping: Transparent traffic redirection via get_remapped_lane()
+    - Repair status tracking: NO_REPAIR -> PARTIAL_REPAIR -> FULL_REPAIR -> UNREPAIRABLE
+    - Yield simulation: Simulate random failures to analyze system-level impact
+
+    USAGE EXAMPLE:
+    ==============
+    ```python
+    # Create model for 32-channel HBM4 (64 DQ lanes + 4 spare per channel)
+    model = HBM4LaneRepairModel(num_channels=32, lanes_per_channel=64, spare_lanes_per_channel=4)
+
+    # Detect and repair a failed lane
+    spare = model.perform_repair(channel_id=0, failed_lane=42)
+    if spare is not None:
+        print(f"Remapped lane 42 -> spare {spare}")
+
+    # Check remapping for data traffic
+    actual_lane = model.get_remapped_lane(channel_id=0, lane_id=42)  # Returns spare index
+    actual_lane = model.get_remapped_lane(channel_id=0, lane_id=10)  # Returns 10 (no remap)
+
+    # Query system health
+    stats = model.get_stats()
+    print(f"Total repairs: {stats['total_repairs']}, Unrepairable channels: {stats['unrepairable_channels']}")
+    ```
+
+    INTEGRATION POINTS:
+    ===================
+    - PHY Training: Report failed lanes detected during margin testing
+    - Memory BIST: Register defects found during manufacturing test
+    - Traffic Monitor: Use get_remapped_lane() to redirect traffic through spares
+    - System Simulation: simulate_yield_loss() for statistical analysis
     """
 
     def __init__(
@@ -100,9 +183,9 @@ class HBM4LaneRepairModel:
         """Initialize Lane Repair Model
 
         Args:
-            num_channels: Number of HBM4 channels (default 32)
-            lanes_per_channel: Data lanes per channel (default 64 for x64 DQ)
-            spare_lanes_per_channel: Number of spare lanes (typical: 2-4)
+            num_channels: Number of HBM4 channels (default 32 for full HBM4 stack)
+            lanes_per_channel: Data lanes per channel (default 64 for x64 DQ interface)
+            spare_lanes_per_channel: Number of spare lanes (typical: 2-4 per JEDEC)
         """
         self.num_channels = num_channels
         self.lanes_per_channel = lanes_per_channel
@@ -232,15 +315,20 @@ class HBM4LaneRepairModel:
         failed_lane: int,
         repair_type: str = "bit",
     ) -> Optional[int]:
-        """Perform repair by allocating first available spare
+        """Perform repair by allocating first available spare lane.
+
+        This is the main repair operation - it:
+          1. Adds the failed lane to the track list (if not already tracked)
+          2. Finds the first available spare lane
+          3. Creates the repair mapping entry
 
         Args:
             channel_id: Channel to repair
-            failed_lane: Failed lane index
-            repair_type: Type of repair
+            failed_lane: Failed lane index (0 to lanes_per_channel-1)
+            repair_type: Granularity of repair ("bit", "byte", "channel")
 
         Returns:
-            Spare lane allocated, or None if repair failed
+            Spare lane index allocated, or None if repair failed (no spares available)
         """
         if channel_id not in self._repair_maps:
             return None
@@ -263,14 +351,16 @@ class HBM4LaneRepairModel:
         return None
 
     def is_lane_remapped(self, channel_id: int, lane_id: int) -> bool:
-        """Check if a lane has been remapped to a spare
+        """Check if a lane has been remapped to a spare.
+
+        Use this to determine if traffic for a given lane should be redirected.
 
         Args:
             channel_id: Channel to check
-            lane_id: Lane index
+            lane_id: Lane index to query
 
         Returns:
-            True if lane has been remapped
+            True if lane has been remapped to a spare lane
         """
         if channel_id not in self._repair_maps:
             return False
@@ -278,14 +368,17 @@ class HBM4LaneRepairModel:
         return any(e.failed_lane == lane_id for e in rm.repair_entries)
 
     def get_remapped_lane(self, channel_id: int, lane_id: int) -> int:
-        """Get the spare lane that replaces a failed lane
+        """Get the spare lane that replaces a failed lane.
+
+        This is the primary interface for traffic redirection - use in the data path
+        to transparently route traffic through spare lanes.
 
         Args:
             channel_id: Channel to check
-            lane_id: Original lane index
+            lane_id: Original (failed) lane index
 
         Returns:
-            Remapped spare lane index, or original lane if not remapped
+            Spare lane index if remapped, otherwise returns original lane_id
         """
         if channel_id not in self._repair_maps:
             return lane_id
@@ -384,14 +477,18 @@ class HBM4LaneRepairModel:
         channel_id: int,
         failure_rate: float = 0.01,
     ) -> int:
-        """Simulate random lane failures for yield analysis
+        """Simulate random lane failures for yield analysis.
+
+        Used for statistical analysis of system yield. Each lane has an independent
+        probability of failure based on failure_rate.
 
         Args:
-            channel_id: Channel to simulate
-            failure_rate: Probability of each lane failing (0.0-1.0)
+            channel_id: Channel to simulate failures on
+            failure_rate: Probability of each lane failing (0.0 to 1.0).
+                          Default 0.01 (1% per lane).
 
         Returns:
-            Number of lanes that failed
+            Number of lanes that failed in this simulation run
         """
         if channel_id not in self._repair_maps:
             return 0
@@ -409,7 +506,10 @@ class HBM4LaneRepairModel:
         return failed_count
 
     def reset_channel(self, channel_id: int) -> None:
-        """Reset repair state for a channel
+        """Reset repair state for a channel (e.g., for new test scenario).
+
+        Clears all repair entries, failed lanes, and statistics for the channel.
+        Does not affect other channels.
 
         Args:
             channel_id: Channel to reset
@@ -425,7 +525,11 @@ class HBM4LaneRepairModel:
                 self._unrepairable_channels.remove(channel_id)
 
     def reset_all(self) -> None:
-        """Reset all repair state"""
+        """Reset all repair state across all channels.
+
+        Clears all repair maps, failed lanes, and global statistics.
+        Useful for running multiple independent test scenarios.
+        """
         for ch in self._repair_maps:
             self.reset_channel(ch)
         self._total_repairs = 0

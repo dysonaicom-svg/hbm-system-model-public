@@ -1,307 +1,304 @@
 # HBM4 Logic Base Die Architecture
 
-**Date:** 2026-06-15
-**Purpose:** High-level architecture documentation
+## Overview
 
-## 1. Layer Model Overview
+The HBM4 Logic Base Die serves as the intelligent control layer for High Bandwidth Memory Gen 4, integrating the memory controller, PHY interface, and thermal management within a single advanced package. This document describes the architecture of the Logic Base Die, which sits beneath the DRAM stacks in a 2.5D configuration.
 
-The HBM4 logic base die system is organized into 5 layers:
+## 1. Package Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 5: Power, Thermal, and Package                       │
-│  ├── PowerEstimator                                         │
-│  ├── ThermalModel                                          │
-│  └── PDN modeling                                           │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 4: PHY, TSV, and Repair                             │
-│  ├── TSV PHY                                               │
-│  ├── D2D PHY (Host-facing)                                 │
-│  ├── LaneRepair                                            │
-│  └── Training state machine                                │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 3: Logic Base Die Controller                        │
-│  ├── HBM4Controller                                        │
-│  ├── HBM4QoSScheduler                                     │
-│  ├── HBM4RefreshScheduler                                 │
-│  └── HBM4ChannelScheduler                                 │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 2: Transaction and Workload                         │
-│  ├── TrafficGenerator                                     │
-│  ├── Address mapping                                      │
-│  └── QoS classes                                           │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 1: Public Configuration                             │
-│  ├── HBM4Spec (JEDEC parameters)                         │
-│  ├── HBM4Config (runtime config)                          │
-│  └── Speed bin selection                                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## 2. Module Hierarchy
+### 1.1 2.5D Integration
 
 ```
-HBM4System
-├── HBM4Spec (configuration)
-├── HBM4Controller (integration)
-│   ├── HBM4AddressDecoder
-│   ├── HBM4QoSScheduler
-│   ├── HBM4RefreshScheduler
-│   ├── QueueManager
-│   │   ├── ReadQueue (per channel)
-│   │   └── WriteQueue (per channel)
-│   └── ChannelScheduler (per channel)
-│       └── CommandQueue
-├── DFIInterface
-│   ├── PhyController
-│   └── FrequencyManager
-├── TSVPHY
-│   ├── TSVGroup
-│   ├── TrainingFSM
-│   └── LaneMapper
-├── LaneRepair
-├── HBM4ChannelModel (per channel)
-│   ├── BankState[]
-│   └── TimingEngine
-├── PowerEstimator
-│   ├── CommandEnergy
-│   ├── PhyPower
-│   └── ControllerPower
-└── ThermalModel
-    ├── HotspotTracker
-    └── ThrottlingPolicy
++------------------+     +------------------+
+|   Host Interposer|     | Host Interposer  |
++------------------+     +------------------+
+         |                        |
+    +----v----+             +----v----+
+    | HBM4    |             | HBM4    |
+    | Stack 0 |             | Stack 1 |
+    +----+----+             +----+----+
+         |                        |
+         |   +-----------+        |
+         +---+Logic Base+---------+
+             |   Die    |
+             +----------+
 ```
 
-## 3. Key Interfaces
+### 1.2 Key Parameters
 
-### 3.1 Host to Controller Interface
+| Parameter | Value |
+|-----------|-------|
+| Number of HBM Stacks | 4-8 |
+| Channels per Stack | 16 |
+| Total Channels | 64-128 |
+| Data Width per Channel | 256 bits (DQ128 + ECC) |
+| Total IO Bandwidth | 2.5 TB/s @ 12.8 Gb/s/pin |
+| PHY Interface | PAM3 (3-level signaling) |
+| DFI Interface Version | 5.0 |
 
-```python
-class HBM4Controller:
-    def submit_request(addr, is_read, qos_level, size_bytes) -> request_id
-    def tick() -> List[HBMResponse]
-    def get_stats() -> HBM4ControllerStats
-```
+## 2. Functional Blocks
 
-### 3.2 Controller to DRAM Interface
-
-```python
-class DFIInterface:
-    def send_command(cmd, channel, bank, row, col)
-    def send_data(data, channel)
-    def receive_data(channel) -> data
-    def get_phy_status(channel) -> PhyStatus
-```
-
-### 3.3 Configuration Interface
-
-```python
-class HBM4Spec:
-    channels: int = 32
-    pseudo_channels: int = 64
-    data_width_per_channel: int = 64
-    speed_bin_gbps: float = 8.0
-    tCK_ps: float = 125.0
-    # ... timing parameters
-```
-
-## 4. Data Flow
-
-### 4.1 Read Request Flow
+### 2.1 Controller Subsystem
 
 ```
-1. Host issues read request
-       ↓
-2. HBM4AddressDecoder maps address
-   (channel, pseudo_channel, bank, row, col)
-       ↓
-3. HBM4QoSScheduler assigns priority
-       ↓
-4. QueueManager enqueues to channel queue
-       ↓
-5. ChannelScheduler selects next request
-       ↓
-6. DFIInterface sends ACT command
-       ↓
-7. DFIInterface sends RD command
-       ↓
-8. DFIInterface receives data
-       ↓
-9. LaneRepair checks ECC/CRC
-       ↓
-10. HBMResponse returned to host
++------------------------------------------------------------------+
+|                        CONTROLLER SUBSYSTEM                       |
++------------------------------------------------------------------+
+|  +------------------+  +------------------+  +------------------+ |
+|  | AXI4 Master      |  | Address Decoder  |  | QoS Scheduler    | |
+|  | Interface       |  |                  |  |                  | |
+|  | (16/32 ports)   |  | Channel/Bank/Row  |  | Priority Queue   | |
+|  |                  |  | Mapping          |  | Arbitration      | |
+|  +--------+---------+  +--------+---------+  +--------+---------+ |
+|           |                       |                       |      |
+|           +----------+-------------+-----------------------+      |
+|                      |              |                              |
+|               +------v------+ +-----v------+                       |
+|               | Request     | | Transaction |                       |
+|               | Queue       | | Scheduler  |                       |
+|               | (per-ch)    | |            |                       |
+|               +-------------+ +------------+                       |
++------------------------------------------------------------------+
+
++------------------------------------------------------------------+
+|                        DFI BRIDGE                                 |
++------------------------------------------------------------------+
+|  +------------------+  +------------------+  +------------------+ |
+|  | DFI Write Data   |  | DFI Read Data    |  | DFI Control      | |
+|  | Packing         |  | Unpacking        |  | State Machine   | |
+|  +------------------+  +------------------+  +------------------+ |
++------------------------------------------------------------------+
 ```
 
-### 4.2 Write Request Flow
+### 2.2 Address Mapping
+
+The address decoder maps host addresses to HBM4 channel/bank/row structures:
 
 ```
-1. Host issues write request + data
-       ↓
-2. HBM4AddressDecoder maps address
-       ↓
-3. LaneRepair adds ECC/CRC
-       ↓
-4. QueueManager enqueues to channel queue
-       ↓
-5. ChannelScheduler selects next request
-       ↓
-6. DFIInterface sends ACT command
-       ↓
-7. DFIInterface sends WR command + data
-       ↓
-8. HBMResponse returned to host
+Address[47:0] Layout (Host Physical Address):
+
+Bits 47:42   - Reserved (64TB address space)
+Bits 41:36   - Channel Select [5:0]    (64 channels max)
+Bits 35:29   - Bank Group [6:0]        (8 bank groups per channel)
+Bits 28:26   - Bank [2:0]              (8 banks per group)
+Bits 25:17   - Row [8:0]               (16K rows per bank)
+Bits 16:6    - Column [10:0]           (2K columns per row)
+Bits 5:0     - Byte Select [5:0]       (64 bytes per beat)
 ```
 
-### 4.3 Refresh Flow
+**Key Characteristics:**
+- Channel interleaving: 128B or 256B aligned
+- Bank group parallelism: 2 bank groups active per channel
+- Row buffer hit optimization: sequential access patterns preferred
+
+### 2.3 QoS Scheduler
+
+The Quality of Service scheduler implements multiple priority classes:
+
+| Priority Class | Description | Latency Target |
+|----------------|-------------|----------------|
+| 0 (Critical) | Real-time, GPU compute | < 50 ns |
+| 1 (High) | Accelerator DMA | < 200 ns |
+| 2 (Medium) | General compute | < 500 ns |
+| 3 (Low) | Background traffic | Best effort |
+
+**Arbitration Policy:**
+- Strict priority within class
+- Round-robin among requests of same priority
+- Bank conflict avoidance with look-ahead
+- Starvation prevention via aging counters
+
+## 3. PHY Subsystem
+
+### 3.1 DFI 5.0 Interface
 
 ```
-1. HBM4RefreshScheduler timer expires
-       ↓
-2. Scheduler selects refresh mode
-   (REFpb or REFab)
-       ↓
-3. ChannelScheduler pauses traffic
-       ↓
-4. DFIInterface sends REF command
-       ↓
-5. DRAM performs refresh
-       ↓
-6. Traffic resumes
-       ↓
-7. ThermalModel updates temperature
+DFI Interface Signals:
++------------------+----------------------------------------+
+| Signal Group     | Description                            |
++------------------+----------------------------------------+
+| dfi_wrdata_cs[3] | Write data chip select (PAM3 levels)  |
+| dfi_rddata_cs[3] | Read data chip select                  |
+| dfi_addr[17:0]   | Row/column address                    |
+| dfi_bankaddr[6:0]| Bank group/bank selection              |
+| dfi_cs[3:0]      | Chip select per pseudo-channel         |
+| dfi_cke[3:0]    | Clock enable                           |
+| dfi_odt[3:0]    | On-die termination control              |
+| dfi_reset_n     | DRAM reset                             |
+| dfi_parity      | Address/command parity                 |
++------------------+----------------------------------------+
 ```
 
-## 5. Configuration Options
+### 3.2 PAM3 Signaling
 
-### 5.1 Speed Bin Selection
+HBM4 introduces 3-level Pulse Amplitude Modulation (PAM3):
 
-| Speed Bin | Data Rate | tCK | Notes |
-|-----------|-----------|-----|-------|
-| JEDEC Base | 8 Gb/s | 125 ps | Standard |
-| Over-speed 1 | 10 Gb/s | 100 ps | Vendor |
-| Over-speed 2 | 11 Gb/s | 91 ps | Vendor |
-| Over-speed 3 | 12 Gb/s | 83 ps | Vendor |
+| Level | Voltage | Usage |
+|-------|---------|-------|
+| -1 | -V | Low data |
+| 0 | 0V | Mid data |
+| +1 | +V | High data |
 
-### 5.2 Queue Depths
+**Encoding:** 2 PAM3 symbols = 3 bits (00, 01, 10, 11 encoded as -1/-1, -1/+1, +1/-1, +1/+1)
 
-| Queue | Default | Min | Max |
-|-------|---------|-----|-----|
-| Read Queue | 32 | 8 | 128 |
-| Write Queue | 32 | 8 | 128 |
-| Command Queue | 16 | 4 | 64 |
-| Response Queue | 64 | 16 | 256 |
+**Benefits:**
+- 50% higher bandwidth per pin vs NRZ
+- Reduced I/O power at 12.8 Gb/s
+- Compatible with existing interposer channels
 
-### 5.3 QoS Levels
+### 3.3 Channel PHY
 
-| Level | Priority | Use Case |
-|-------|----------|----------|
-| 0 | Highest | Critical interrupt |
-| 1-3 | High | Real-time |
-| 4-7 | Medium | Normal traffic |
-| 8-11 | Low | Background |
-| 12-15 | Lowest | Background |
-
-## 6. State Machines
-
-### 6.1 Controller State Machine
+Each HBM stack channel has dedicated PHY:
 
 ```
-        ┌──────────┐
-        │   IDLE   │
-        └────┬─────┘
-             │ init_complete
-        ┌────▼─────┐
-        │  READY   │◄─────────────────┐
-        └────┬─────┘                  │
-             │                        │
-    ┌────────┼────────┐               │
-    │        │        │               │
-┌───▼──┐ ┌───▼──┐ ┌───▼──┐           │
-│ READ │ │WRITE │ │REFRESH│           │
-└──┬──┘ └──┬──┘ └───┬───┘           │
-   │       │        │                │
-   └───────┴────────┘               │
-        │ process_complete          │
-        └───────────────────────────┘
+Per-Channel PHY:
++------------------+
+| TX Elastic       |  +--------+
+| Buffer           +-->+ Serializer +--> +--+  +--------+
++------------------+  +--------+       |PHY|  |  TSV   |
+                                        |Pad|  |  Array |
++------------------+  +--------+       |   |  +--------+
+| RX Elastic       |<--+Deserializer+<--+---+<--------+
+| Buffer           |  +--------+
++------------------+
 ```
 
-### 6.2 Channel Scheduler State
+## 4. Refresh Management
+
+### 4.1 Auto-Refresh
+
+HBM4 refresh timing per JEDEC JESD335:
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| tREFI | 1.95 us | Average refresh interval |
+| tREFIpb | 3.9 us | Per-bank refresh interval |
+| tRFC | 130 ns | Refresh-to-active delay |
+| tREFW | 32 ms | Full array refresh window |
+
+### 4.2 Self-Refresh
+
+Enter self-refresh during low-power states:
 
 ```
-┌────────┐    ┌──────────┐    ┌──────────┐
-│  IDLE  │───▶│ SCHEDULING│───▶│ ACTIVE   │
-└────────┘    └──────────┘    └──────────┘
-                   ▲               │
-                   │               │ done
-                   └───────────────┘
+State Machine:
++-------------+    +---------------+    +-------------+
+| ACTIVE      +--->+ POWER_DOWN    +--->+ SELF_REFRESH|
+| (Normal)    |    | (Fast exit)   |    | (Slow exit) |
++-------------+    +---------------+    +-------------+
+      ^                  |                    |
+      +------------------+--------------------+
 ```
 
-### 6.3 TSV PHY Training State
+**Self-Refresh Entry Conditions:**
+- All channels idle for tCKE (min 5 cycles)
+- No pending transactions
+- DRAM temperature within operating range
+
+## 5. Error Handling
+
+### 5.1 ECC Support
+
+Each 256-bit channel includes 32-bit ECC (single-error correct, double-error detect):
+
+| ECC Mode | Data Width | Correction |
+|----------|------------|------------|
+| SECDED | 288b (256+32) | 1-bit correct, 2-bit detect |
+| DECTED | 272b (256+16) | 2-bit detect only (reduced redundancy) |
+
+### 5.2 Retry Mechanism
+
+Transaction retry for uncorrectable errors:
 
 ```
-IDLE → WCK_CAL → DQ_CAL → RDDQ_CAL → WR_DQ_CAL → MARGIN → COMPLETE
-                  │           │         │          │
-                  └───────────┴─────────┴──────────┘
-                              │ error
-                              ▼
-                           FAILED
++----------------+     +----------------+     +----------------+
+| Error Detected |<----+ Log Error      +----->+ Notify Host    |
+| (SECDED fail)  |     | (FIFO)         |     | (AXI DECERR)   |
++----------------+     +----------------+     +----------------+
+                            |
+                            +-----> +----------------+
+                                    | Retry Queue   |
+                                    | (max 4 retry) |
+                                    +---------------+
 ```
 
-## 7. Statistics Collection Points
+## 6. Power Management
 
-| Module | Statistics |
-|--------|------------|
-| HBM4Controller | Total requests, latency histogram, throughput |
-| QueueManager | Queue fill levels, overflow count |
-| ChannelScheduler | Command count per type, row hit rate |
-| HBM4QoSScheduler | Request count per QoS level |
-| HBM4RefreshScheduler | Refresh count, refresh overhead |
-| DFIInterface | PHY state time, frequency change count |
-| TSVPHY | Training count, BER estimate |
-| LaneRepair | Spare usage, remap count |
-| PowerEstimator | Total power, per-component power |
-| ThermalModel | Temperature, throttle events |
+### 6.1 Power Domains
 
-## 8. File Structure
+| Domain | Description | Typical Power |
+|--------|-------------|---------------|
+| PD_CONTROLLER | Controller logic | 50-100 mW |
+| PD_PHY_TX | Transmit PHY | 200-400 mW |
+| PD_PHY_RX | Receive PHY | 150-300 mW |
+| PD_DRAM | DRAM arrays | 1-2 W per stack |
+
+### 6.2 Clock Gating
+
+- Fine-grained clock gating on idle logic
+- PHY clock frequency scaling (0.5x to 1x)
+- Retention registers in sleep state
+
+## 7. Thermal Considerations
+
+### 7.1 Thermal Throttling
+
+The Logic Base Die operates in thermal proximity to DRAM stacks:
 
 ```
-model/hbm4/
-├── __init__.py
-├── power/
-│   ├── __init__.py
-│   ├── power_estimator.py
-│   └── thermal_model.py
-├── phy/
-│   ├── __init__.py
-│   └── tsv_phy.py
-└── (controller modules in model/controller/)
-
-model/dram/
-├── hbm4_spec.py
-├── hbm4_channel_model.py
-├── dfi_interface.py
-└── lane_repair.py
-
-model/controller/
-├── hbm4_controller.py
-├── hbm4_address_decoder.py
-├── hbm4_qos_scheduler.py
-└── hbm4_refresh_scheduler.py
+Temperature Zones:
++------------------+--------------------+--------------------+
+| Zone             | Temperature        | Action             |
++------------------+--------------------+--------------------+
+| Normal           | < 85C              | Full performance   |
+| Throttle         | 85-100C            | Reduce bandwidth   |
+| Critical         | > 100C             | Emergency throttle |
++------------------+--------------------+--------------------+
 ```
 
-## 9. Integration Points
+### 7.2 Thermal Sensors
 
-### 9.1 With Host Traffic Generator
-- Interface: `submit_request()` API
-- Protocol: Request/Response
-- Synchronization: `tick()` driven
+- Per-channel thermal sensors (16 per stack)
+- Aggregate temperature for throttle decision
+- Thermal history for predictive throttling
 
-### 9.2 With DRAM Model
-- Interface: DFI 5.1
-- Protocol: DDR command/address/data
-- Timing: HBM4 specification
+## 8. Performance Monitoring
 
-### 9.3 With System Power/Thermal
-- Interface: Observer pattern
-- Updates: Per-cycle power, periodic thermal
-- Control: Throttling signals
+### 8.1 Counters
+
+| Counter | Description | Width |
+|---------|-------------|-------|
+| tx_beat_cnt | Write beats transmitted | 48-bit |
+| rx_beat_cnt | Read beats received | 48-bit |
+| bank_conflict_cnt | Bank conflict stalls | 32-bit |
+| refresh_overhead | Cycles spent in refresh | 32-bit |
+| thermal_throttle_cycles | Throttle cycles | 16-bit |
+
+### 8.2 Latency Measurement
+
+- Per-transaction latency tracking
+- Histogram bins: <100ns, 100-200ns, 200-500ns, >500ns
+- Moving average and peak detection
+
+## 9. Integration Checklist
+
+- [ ] AXI4 interface integration
+- [ ] DFI 5.0 compliance verification
+- [ ] PAM3 eye diagram characterization
+- [ ] Thermal throttling validation
+- [ ] ECC correction verification
+- [ ] Refresh timing compliance
+- [ ] Power state transition verification
+- [ ] Performance counter accuracy
+
+## 10. References
+
+- JEDEC JESD335: HBM4 Specification
+- DFI 5.0 Specification
+- HBM3 Compatibility Mode Requirements
+- HBM4 Address Mapping Standard
+
+---
+
+*Document Version: 1.0*
+*Last Updated: 2026-06-15*

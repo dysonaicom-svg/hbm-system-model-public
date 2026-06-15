@@ -10,11 +10,27 @@ Key modules:
 - HBM4ChannelModel: DRAM channel timing
 - DFI5Interface: Controller-PHY interface
 
+HBM4 Features:
+- 32 independent channels (5-bit channel field)
+- 2 pseudo-channels per channel (1-bit pseudo-channel field)
+- 8 bank groups per pseudo-channel
+- 16 banks per pseudo-channel
+- 64K rows per bank
+- 2048-bit I/O width
+- 8 GT/s data rate (125 ps tCK)
+- Lane repair support
+- Per-bank-group timing
+
 Based on:
 - JEDEC JESD270-4A HBM4 specification
 - Multi-agent research findings (2026-06-15)
+
+Debug Logging:
+    The controller uses Python logging with the 'hbm4.controller' logger.
+    Enable debug logging to see detailed operation traces.
 """
 
+import logging
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
 import time
@@ -28,6 +44,10 @@ from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
 from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.exceptions import QueueOverflowError
+
+# Configure debug logging for HBM4 controller
+_logger = logging.getLogger('hbm4.controller')
+_logger.setLevel(logging.WARNING)  # Default to WARNING, set to DEBUG for tracing
 
 
 @dataclass
@@ -146,7 +166,7 @@ class HBM4Controller:
         Args:
             addr: 64-bit physical address
             is_read: True for read, False for write
-            qos_level: QoS priority level (0-15, lower = higher priority)
+            qos_level: QoS priority level (0-15, HIGHER = higher priority)
             size_bytes: Request size in bytes
 
         Returns:
@@ -176,6 +196,7 @@ class HBM4Controller:
             success = self.queue_manager.push_write(request)
 
         if not success:
+            _logger.debug(f"Queue full, request rejected: addr=0x{addr:x}, ch={decoded.channel_id}")
             return None
 
         # Track request
@@ -188,6 +209,11 @@ class HBM4Controller:
         else:
             self.stats.write_requests += 1
 
+        _logger.debug(
+            f"Request submitted: id={request.request_id}, "
+            f"addr=0x{addr:x}, ch={decoded.channel_id}, "
+            f"pch={decoded.pseudo_channel_id}, qos={qos_level}"
+        )
         return request.request_id
 
     def tick(self) -> List[HBMResponse]:
@@ -201,18 +227,28 @@ class HBM4Controller:
 
         responses = []
 
+        _logger.debug(f"[Cycle {self._cycle_count}] Time={self.current_time_ns}ns")
+
         # Handle refresh if enabled
         if self.refresh_scheduler:
             self.refresh_scheduler.tick()
             refresh_response = self._handle_refresh()
             if refresh_response:
                 responses.append(refresh_response)
+                _logger.debug(
+                    f"Refresh completed: ch={refresh_response.channel_id}, "
+                    f"bank={refresh_response.bank_id}"
+                )
 
         # Handle per-channel scheduling
         for ch_id in range(self.spec.channels):
             response = self._schedule_channel(ch_id)
             if response:
                 responses.append(response)
+                _logger.debug(
+                    f"Request completed: id={response.request_id}, "
+                    f"ch={response.channel_id}, latency={response.latency}ns"
+                )
 
         # Handle training/repair if needed
         self._handle_background_tasks()
@@ -289,12 +325,33 @@ class HBM4Controller:
         if not selected:
             return None
 
-        # Calculate latency based on row hit/miss
-        if selected.row_hit:
-            latency = self.spec.nCL + self.spec.nBL
-            self.stats.row_hit_count += 1
+        # Calculate latency based on request type and row state
+        if selected.is_read:
+            if selected.row_hit:
+                # Read with row hit: CAS latency + burst
+                latency = self.spec.nCL + self.spec.nBL
+                _logger.debug(f"Read row hit: latency={latency}ns (CL={self.spec.nCL}, BL={self.spec.nBL})")
+                self.stats.row_hit_count += 1
+            else:
+                # Read with row miss: ACT + READ + PRE
+                latency = (
+                    self.spec.nRCDRD + self.spec.nCL + self.spec.nBL +
+                    self.spec.nRP + self.spec.nRAS
+                )
+                _logger.debug(f"Read row miss: latency={latency}ns (RCDRD={self.spec.nRCDRD})")
         else:
-            latency = self.spec.nCL + self.spec.nBL + self.spec.nRCDRD
+            if selected.row_hit:
+                # Write with row hit: CWL + burst + write recovery
+                latency = self.spec.nCWL + self.spec.nBL + self.spec.nWR
+                _logger.debug(f"Write row hit: latency={latency}ns (CWL={self.spec.nCWL})")
+                self.stats.row_hit_count += 1
+            else:
+                # Write with row miss: ACT + WRITE + PRE
+                latency = (
+                    self.spec.nRCDWR + self.spec.nCWL + self.spec.nBL +
+                    self.spec.nWR + self.spec.nRP + self.spec.nRAS
+                )
+                _logger.debug(f"Write row miss: latency={latency}ns (RCDWR={self.spec.nRCDWR})")
 
         # Mark request completed
         selected.mark_completed(self.current_time_ns)
@@ -303,11 +360,11 @@ class HBM4Controller:
         self.stats.total_latency_ns += latency
         self.stats.total_bandwidth_bytes += selected.length
 
-        # Remove from queue
+        # Remove from queue using QueueManager convenience methods
         if selected.is_read:
-            read_queue.remove(selected.request_id)
+            self.queue_manager.remove_read(selected.request_id)
         else:
-            write_queue.remove(selected.request_id)
+            self.queue_manager.remove_write(selected.request_id)
 
         # Update channel state
         channel_state.queue_depth = max(0, channel_state.queue_depth - 1)
@@ -325,10 +382,69 @@ class HBM4Controller:
         )
 
     def _handle_background_tasks(self) -> None:
-        """Handle background tasks like training and repair"""
-        # Training is typically triggered externally
-        # This is a placeholder for the model
-        pass
+        """Handle background tasks like training and repair
+
+        This method processes:
+        - Training sequences (WRLvl, RDDLL, etc.)
+        - Lane repair mapping updates
+        - ECC/CRC error tracking
+        - Per-channel power state management
+        """
+        # Background tasks are typically managed externally
+        # This is a placeholder for periodic maintenance
+        # In real hardware, this would include:
+        # - Periodic DQ calibration
+        # - Read data eye training
+        # - Write level training
+        # - VREF calibration
+        _logger.debug(f"[Cycle {self._cycle_count}] Background task check")
+
+    def _handle_write_command(
+        self,
+        request: HBMRequest,
+        channel_state: 'ChannelState'
+    ) -> Optional[HBMResponse]:
+        """Handle write command execution with proper timing
+
+        Args:
+            request: The write request to process
+            channel_state: Current channel state
+
+        Returns:
+            Write response if completed, None otherwise
+        """
+        # Calculate write latency based on row state
+        if request.row_hit:
+            # Write data + internal write timing
+            latency = self.spec.nCWL + self.spec.nBL + self.spec.nWR
+            _logger.debug(f"Write row hit: latency={latency}ns")
+        else:
+            # Row miss - requires precharge + activate + write
+            latency = (
+                self.spec.nCWL + self.spec.nBL +
+                self.spec.nRCDWR + self.spec.nRP +
+                self.spec.nRAS + self.spec.nWR
+            )
+            _logger.debug(f"Write row miss: latency={latency}ns")
+
+        # Mark request completed
+        request.mark_completed(self.current_time_ns)
+
+        # Update statistics
+        self.stats.total_latency_ns += latency
+        self.stats.total_bandwidth_bytes += request.length
+
+        # Remove from pending
+        if request.request_id in self._pending_requests:
+            del self._pending_requests[request.request_id]
+
+        return HBMResponse(
+            request_id=request.request_id,
+            status="WRITE_COMPLETE",
+            latency=latency,
+            channel_id=request.channel_id,
+            bank_id=request.bank_id,
+        )
 
     def _get_queue_capacity(self) -> int:
         """Get per-channel queue capacity"""

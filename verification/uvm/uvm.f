@@ -1,15 +1,20 @@
 # ------------------------------------------------------------
-# uvm.f - File list for HBM UVM verification
+# uvm.f - File list for HBM RTL simulation (Verilator)
 # ------------------------------------------------------------
 
-# UVM Library
-+incdir+/usr/share/verilator/uvm/src
-/usr/share/verilator/uvm/src/uvm.svh
+# Reference model files
++incdir+/home/ic/JXTF/HBM/verification/reference_model
+/home/ic/JXTF/HBM/verification/reference_model/dram_ref_model.sv
+/home/ic/JXTF/HBM/verification/reference_model/timing_checker.sv
+/home/ic/JXTF/HBM/verification/reference_model/bandwidth_calc.sv
+/home/ic/JXTF/HBM/verification/reference_model/addr_decoder_ref.sv
 
-# Local packages
-+incdir+.
-./hbm_env_pkg.sv
-./hbm_test_pkg.sv
+# RTL controller
++incdir+/home/ic/JXTF/HBM/rtl
+/home/ic/JXTF/HBM/rtl/hbm_controller.sv
 
 # Testbench top
-./hbm_tb.sv
+/home/ic/JXTF/HBM/verification/uvm/hbm_tb.sv
+
+# Main entry point
+/home/ic/JXTF/HBM/verification/uvm/build/main.cpp

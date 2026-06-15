@@ -46,8 +46,8 @@ class TestControllerDRAMIntegration:
 
         # 运行仿真循环
         for cycle in range(100):
-            # Controller tick
-            response = controller.tick()
+            # Controller tick - returns (scheduled_request, response)
+            scheduled, response = controller.tick()
 
             # DRAM tick (如果有激活的命令)
             dram.tick(cycle)
@@ -73,7 +73,7 @@ class TestControllerDRAMIntegration:
         # 运行仿真
         completed = 0
         for _ in range(500):
-            response = controller.tick()
+            scheduled, response = controller.tick()
             if response:
                 completed += 1
                 if completed >= len(addrs):
@@ -100,7 +100,7 @@ class TestControllerDRAMIntegration:
         read_completed = 0
         write_completed = 0
         for _ in range(500):
-            response = controller.tick()
+            scheduled, response = controller.tick()
             if response:
                 # 查找对应的请求
                 pass

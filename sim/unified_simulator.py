@@ -19,6 +19,7 @@ from model.controller.config import HBMConfig, HBM3_DEFAULT
 from model.controller.controller import HBMController
 from model.controller.request import HBMRequest
 from model.dram.dram_model import DRAMModel
+from model.dram.timing import get_timing_for_hbm_version
 from sim.simulator import SimulationConfig, SimulationStats, TrafficGenerator, TrafficPattern
 
 
@@ -49,6 +50,13 @@ class UnifiedSimulatorStats:
     total_latency_cycles: int = 0
     latency_histogram: List[int] = field(default_factory=list)
 
+    # Extended cycle-accurate statistics
+    max_latency_cycles: int = 0
+    min_latency_cycles: int = 0
+    total_dram_activations: int = 0
+    total_dram_reads: int = 0
+    total_dram_writes: int = 0
+
     @property
     def avg_latency(self) -> float:
         if self.completed_requests == 0:
@@ -64,6 +72,21 @@ class UnifiedSimulatorStats:
         total_ns = self.total_cycles * ns_per_cycle
         return (bytes_transferred / (total_ns * 1e-9)) / 1e9
 
+    @property
+    def bandwidth_efficiency(self) -> float:
+        """计算带宽效率 (实际带宽 / 理论峰值)"""
+        # HBM3 单 stack 理论峰值: 819.2 GB/s
+        peak_bandwidth = 819.2 * 2  # 2 stacks
+        actual = self.throughput_gbps
+        return actual / peak_bandwidth if peak_bandwidth > 0 else 0.0
+
+    @property
+    def row_hit_rate(self) -> float:
+        total = self.row_hits + self.row_misses
+        if total == 0:
+            return 0.0
+        return self.row_hits / total
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'total_cycles': self.total_cycles,
@@ -78,8 +101,14 @@ class UnifiedSimulatorStats:
                 'w_beats': self.axi_w_beats,
             },
             'row_hits': self.row_hits,
+            'row_misses': self.row_misses,
+            'row_hit_rate': self.row_hit_rate,
             'avg_latency': self.avg_latency,
+            'max_latency': self.max_latency_cycles,
+            'min_latency': self.min_latency_cycles,
             'throughput_gbps': self.throughput_gbps,
+            'bandwidth_efficiency': self.bandwidth_efficiency,
+            'total_dram_activations': self.total_dram_activations,
         }
 
 
@@ -93,6 +122,7 @@ class UnifiedSimulator:
     - HBM Controller 调度
     - DRAM 时序模拟
     - 统一统计收集
+    - Cycle-accurate 统计
     """
 
     def __init__(
@@ -115,6 +145,10 @@ class UnifiedSimulator:
         self.clock_freq_hz = sim_config.clock_freq_hz
         self.current_cycle = 0
         self.max_cycles = int(sim_config.simulation_time_us * 1e-6 * sim_config.clock_freq_hz)
+
+        # 时序参数
+        self.tCK_ps = 781.25  # HBM3 tCK
+        self.timing = get_timing_for_hbm_version("hbm3")
 
         # 创建流量生成器
         self.traffic_gen = TrafficGenerator(sim_config)
@@ -211,8 +245,14 @@ class UnifiedSimulator:
             self.stats.completed_requests += 1
             # latency 是纳秒，转换为 cycles
             latency_ns = response.latency if hasattr(response, 'latency') else 0.0
-            latency_cycles = int(latency_ns / 0.78125)
+            latency_cycles = int(latency_ns / 0.78125) if latency_ns > 0 else 0
             self.stats.total_latency_cycles += latency_cycles
+
+            # Track max/min latency
+            if self.stats.max_latency_cycles == 0 or latency_cycles > self.stats.max_latency_cycles:
+                self.stats.max_latency_cycles = latency_cycles
+            if self.stats.min_latency_cycles == 0 or latency_cycles < self.stats.min_latency_cycles:
+                self.stats.min_latency_cycles = latency_cycles
 
             if len(self.stats.latency_histogram) < 1000:
                 self.stats.latency_histogram.append(latency_cycles)
@@ -220,11 +260,14 @@ class UnifiedSimulator:
         # 4. DRAM tick
         self.dram.tick(self.current_cycle)
 
-        # 5. 更新 DRAM 统计
+        # 5. Update DRAM statistics
         dram_stats = self.dram.stats
         self.stats.row_hits = dram_stats.row_hits
         self.stats.row_misses = dram_stats.row_misses
         self.stats.refresh_count = dram_stats.total_refreshes
+        self.stats.total_dram_activations = dram_stats.total_activations
+        self.stats.total_dram_reads = dram_stats.total_reads
+        self.stats.total_dram_writes = dram_stats.total_writes
 
         return response
 

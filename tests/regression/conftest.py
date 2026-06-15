@@ -154,3 +154,100 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "performance: marks tests as performance tests"
     )
+    config.addinivalue_line(
+        "markers", "stress: marks tests as stress tests"
+    )
+
+
+# ============ Additional Fixtures ============
+
+@pytest.fixture
+def high_load_simulator():
+    """高负载仿真器 fixture (100% 请求率)"""
+    config = SimulationConfig(
+        simulation_time_us=100.0,
+        traffic_pattern=TrafficPattern.RANDOM,
+        request_rate=1.0,
+        read_ratio=0.7,
+        seed=42,
+    )
+    return HBMSimulator(config)
+
+
+@pytest.fixture
+def overflow_simulator():
+    """队列溢出测试仿真器 fixture"""
+    config = SimulationConfig(
+        simulation_time_us=50.0,
+        traffic_pattern=TrafficPattern.SEQUENTIAL,
+        request_rate=1.0,
+        seed=42,
+    )
+    # 设置小队列深度
+    config.hbm_config.queue_depth = 4
+    return HBMSimulator(config)
+
+
+@pytest.fixture
+def mixed_traffic_simulator():
+    """混合流量仿真器 fixture (50/50 读写)"""
+    config = SimulationConfig(
+        simulation_time_us=100.0,
+        traffic_pattern=TrafficPattern.RANDOM,
+        request_rate=0.8,
+        read_ratio=0.5,
+        seed=42,
+    )
+    return HBMSimulator(config)
+
+
+@pytest.fixture
+def write_heavy_simulator():
+    """写密集仿真器 fixture"""
+    config = SimulationConfig(
+        simulation_time_us=50.0,
+        traffic_pattern=TrafficPattern.RANDOM,
+        request_rate=0.8,
+        read_ratio=0.1,  # 90% 写
+        seed=42,
+    )
+    return HBMSimulator(config)
+
+
+@pytest.fixture
+def read_heavy_simulator():
+    """读密集仿真器 fixture"""
+    config = SimulationConfig(
+        simulation_time_us=50.0,
+        traffic_pattern=TrafficPattern.RANDOM,
+        request_rate=0.8,
+        read_ratio=0.9,  # 90% 读
+        seed=42,
+    )
+    return HBMSimulator(config)
+
+
+# ============ Additional Thresholds ============
+
+# 压力测试阈值
+STRESS_THRESHOLDS = {
+    'max_queue_depth': 64,
+    'min_completion_rate': 0.0,  # 允许队列满导致的低完成率
+    'max_latency_p99': 10000.0,  # cycles
+}
+
+# Row hit rate 预期范围
+ROW_HIT_RANGES = {
+    'random': (0.0, 0.35),      # 随机访问通常 0-35%
+    'sequential': (0.0, 1.0),   # 顺序访问可以很高
+    'hot_spot': (0.0, 1.0),     # 热点访问通常 40-90%
+    'stride': (0.0, 0.5),       # Stride 访问通常较低
+}
+
+# 延迟阈值 (cycles)
+LATENCY_RANGES = {
+    'random_max': 2000.0,       # 随机访问最大平均延迟
+    'sequential_max': 1500.0,   # 顺序访问最大平均延迟
+    'hot_spot_max': 1500.0,     # 热点访问最大平均延迟
+    'any_max': 5000.0,          # 任何情况下最大平均延迟
+}

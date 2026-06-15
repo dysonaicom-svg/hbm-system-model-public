@@ -173,13 +173,13 @@ class TestHBM4SpeedGrades:
         """8 Gbps grade should have correct parameters"""
         grade = HBM4_SPEED_GRADES["8Gbps"]
         assert grade["data_rate_gtps"] == 8.0
-        assert grade["tCK_ps"] == 1250.0
+        assert grade["tCK_ps"] == 125.0  # 1000/8 = 125 ps for 8 GT/s DDR
 
     def test_speed_grade_12gbps(self):
         """12 Gbps grade should have correct parameters"""
         grade = HBM4_SPEED_GRADES["12Gbps"]
         assert grade["data_rate_gtps"] == 12.0
-        assert abs(grade["tCK_ps"] - 833.33) < 0.1
+        assert abs(grade["tCK_ps"] - 83.33) < 0.1  # 1000/12 = 83.33 ps for 12 GT/s DDR
 
     def test_speed_grade_16gbps(self):
         """16 Gbps grade should have correct parameters"""

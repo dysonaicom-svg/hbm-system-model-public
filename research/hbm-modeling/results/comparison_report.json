@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-06-15 17:56:34",
+  "comparisons": {
+    "seq_rd": {
+      "trace_name": "seq_rd",
+      "model": {
+        "row_hit_rate": 0.0,
+        "avg_latency": 81.87218721872188,
+        "row_hits": 0,
+        "row_misses": 9999,
+        "row_conflicts": 156
+      },
+      "simulation": {
+        "row_hit_rate": 0.6248996789727127,
+        "avg_latency": 12.9045172,
+        "row_hits": 6229,
+        "row_misses": 2493,
+        "row_conflicts": 1246
+      },
+      "errors": {
+        "hit_rate_error_pp": 62.48996789727127,
+        "latency_error_pct": 534.4459536907113,
+        "row_hit_error_pct": 100.0,
+        "row_miss_error_pct": 301.08303249097474,
+        "row_conflict_error_pct": 87.47993579454254
+      }
+    }
+  }
+}

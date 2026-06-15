@@ -276,11 +276,19 @@ class QueueManager:
     def push_read(self, request: HBMRequest, timeout: float = 0.0) -> bool:
         """入队读请求"""
         return self.read_queue.push(request, timeout)
-    
+
     def push_write(self, request: HBMRequest, timeout: float = 0.0) -> bool:
         """入队写请求"""
         return self.write_queue.push(request, timeout)
-    
+
+    def remove_read(self, request_id: int) -> bool:
+        """从读队列移除请求"""
+        return self.read_queue.remove(request_id)
+
+    def remove_write(self, request_id: int) -> bool:
+        """从写队列移除请求"""
+        return self.write_queue.remove(request_id)
+
     def total_size(self) -> int:
         """总队列大小"""
         return self.read_queue.size() + self.write_queue.size()

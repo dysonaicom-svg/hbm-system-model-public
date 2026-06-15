@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
 import pytest
-from sim.benchmark import HBMBenchmark, BenchmarkResult, TrafficPattern
+from sim.benchmark import HBMBenchmark, BenchmarkResult, PerformanceMetrics, TrafficPattern
 
 
 class TestHBMBenchmark:
@@ -176,14 +176,43 @@ class TestHBMBenchmark:
         assert isinstance(result.completed, int)
         assert isinstance(result.row_hit_rate, float)
         assert isinstance(result.avg_latency, float)
+        assert isinstance(result.max_latency, int)  # Latency in cycles
+        assert isinstance(result.min_latency, int)
         assert isinstance(result.throughput_gbps, float)
+        assert isinstance(result.bandwidth_efficiency, float)
         assert isinstance(result.wall_clock_time_ms, float)
+        assert isinstance(result.efficiency, float)
 
         # 检查数值范围
         assert 0 <= result.row_hit_rate <= 1.0
         assert result.avg_latency >= 0.0
         assert result.throughput_gbps >= 0.0
         assert result.wall_clock_time_ms >= 0.0
+        assert 0.0 <= result.bandwidth_efficiency <= 1.0
+
+    def test_stress_test(self):
+        """测试压力测试"""
+        bench = HBMBenchmark()
+        result = bench.run_stress_test(duration_us=50.0, seed=42)
+
+        assert result.pattern == "random"
+        assert result.request_rate == 1.0
+        assert result.efficiency >= 0.0
+
+    def test_calculate_metrics(self):
+        """测试性能指标计算"""
+        bench = HBMBenchmark()
+        result = bench.run_single(
+            pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            time_us=10.0,
+            seed=42
+        )
+
+        metrics = bench.calculate_metrics(result)
+        assert isinstance(metrics, PerformanceMetrics)
+        assert metrics.theoretical_bandwidth_gbps == 819.2 * 2
+        assert metrics.actual_bandwidth_gbps == result.throughput_gbps
 
     def test_save_results(self, tmp_path):
         """测试保存结果到文件"""
@@ -205,6 +234,22 @@ class TestHBMBenchmark:
 
         captured = capsys.readouterr()
         assert "random" in captured.out
+        # 验证新的列标题存在
+        assert "Max Lat" in captured.out or "TPut" in captured.out
+
+    def test_unified_simulator_benchmark(self):
+        """测试统一仿真器基准测试"""
+        bench = HBMBenchmark()
+        result = bench.run_unified_single(
+            pattern=TrafficPattern.RANDOM,
+            request_rate=0.3,
+            time_us=10.0,
+            seed=42,
+            num_masters=2,
+        )
+
+        assert "multi" in result.pattern
+        assert result.bandwidth_efficiency >= 0.0
 
 
 if __name__ == "__main__":

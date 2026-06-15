@@ -169,13 +169,13 @@ HBM4_SPEED_GRADES = {
     # JEDEC baseline
     "8Gbps": {
         "data_rate_gtps": 8.0,
-        "tCK_ps": 1250.0,
+        "tCK_ps": 125.0,  # 1000/8 = 125 ps for 8 GT/s DDR
         "description": "JEDEC HBM4 baseline"
     },
     # Extended rate (e.g., Cadence HBM4E)
     "12Gbps": {
         "data_rate_gtps": 12.0,
-        "tCK_ps": 833.33,
+        "tCK_ps": 83.33,   # 1000/12 = 83.33 ps for 12 GT/s DDR
         "description": "12 GT/s extended rate"
     },
     # Maximum rate (e.g., Synopsys/Rambus HBM4E)

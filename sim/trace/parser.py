@@ -99,6 +99,97 @@ class TraceStats:
     estimated_row_hit_rate: float = 0.0
     estimated_avg_latency: float = 0.0  # cycles
 
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON serialization"""
+        return {
+            "total_requests": self.total_requests,
+            "read_requests": self.read_requests,
+            "write_requests": self.write_requests,
+            "unique_addresses": self.unique_addresses,
+            "sequential_count": self.sequential_count,
+            "stride_count": self.stride_count,
+            "random_count": self.random_count,
+            "same_bank_conflicts": self.same_bank_conflicts,
+            "same_row_accesses": self.same_row_accesses,
+            "estimated_row_hit_rate": self.estimated_row_hit_rate,
+            "estimated_avg_latency": self.estimated_avg_latency,
+            "channel_distribution": {str(k): v for k, v in self.channel_distribution.items()},
+        }
+
+
+@dataclass
+class ComparisonReport:
+    """Model vs Simulation comparison report"""
+    trace_name: str = ""
+    trace_file: str = ""
+
+    # Model predictions (from TraceParser)
+    model_total_requests: int = 0
+    model_row_hit_rate: float = 0.0
+    model_avg_latency: float = 0.0
+    model_row_hits: int = 0
+    model_row_misses: int = 0
+    model_row_conflicts: int = 0
+
+    # Simulation results (from RamulatorLogResult)
+    sim_total_requests: int = 0
+    sim_row_hit_rate: float = 0.0
+    sim_avg_latency: float = 0.0
+    sim_row_hits: int = 0
+    sim_row_misses: int = 0
+    sim_row_conflicts: int = 0
+    sim_memory_cycles: int = 0
+
+    # Error metrics
+    hit_rate_error_pp: float = 0.0
+    latency_error_pct: float = 0.0
+    row_hit_error_pct: float = 0.0
+    row_miss_error_pct: float = 0.0
+    row_conflict_error_pct: float = 0.0
+
+    def compute_errors(self) -> None:
+        """Compute error metrics from differences"""
+        self.hit_rate_error_pp = abs(self.model_row_hit_rate - self.sim_row_hit_rate) * 100
+        if self.sim_avg_latency > 0:
+            self.latency_error_pct = abs(self.model_avg_latency - self.sim_avg_latency) / self.sim_avg_latency * 100
+        if self.sim_row_hits > 0:
+            self.row_hit_error_pct = abs(self.model_row_hits - self.sim_row_hits) / self.sim_row_hits * 100
+        if self.sim_row_misses > 0:
+            self.row_miss_error_pct = abs(self.model_row_misses - self.sim_row_misses) / self.sim_row_misses * 100
+        if self.sim_row_conflicts > 0:
+            self.row_conflict_error_pct = abs(self.model_row_conflicts - self.sim_row_conflicts) / self.sim_row_conflicts * 100
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        return {
+            "trace_name": self.trace_name,
+            "trace_file": self.trace_file,
+            "model": {
+                "total_requests": self.model_total_requests,
+                "row_hit_rate": self.model_row_hit_rate,
+                "avg_latency": self.model_avg_latency,
+                "row_hits": self.model_row_hits,
+                "row_misses": self.model_row_misses,
+                "row_conflicts": self.model_row_conflicts,
+            },
+            "simulation": {
+                "total_requests": self.sim_total_requests,
+                "row_hit_rate": self.sim_row_hit_rate,
+                "avg_latency": self.sim_avg_latency,
+                "row_hits": self.sim_row_hits,
+                "row_misses": self.sim_row_misses,
+                "row_conflicts": self.sim_row_conflicts,
+                "memory_cycles": self.sim_memory_cycles,
+            },
+            "errors": {
+                "hit_rate_error_pp": self.hit_rate_error_pp,
+                "latency_error_pct": self.latency_error_pct,
+                "row_hit_error_pct": self.row_hit_error_pct,
+                "row_miss_error_pct": self.row_miss_error_pct,
+                "row_conflict_error_pct": self.row_conflict_error_pct,
+            }
+        }
+
 
 class TraceParser:
     """Trace Parser 实现"""
@@ -172,10 +263,15 @@ class TraceParser:
         parts = line.split()
 
         if self.config.format == TraceFormat.RAMULATOR:
-            # Ramulator 格式: "R addr" 或 "W addr"
+            # Ramulator 格式: "R addr", "W addr", "LD addr", "ST addr"
             if len(parts) < 2:
                 return None
             op = parts[0].upper()
+            # Support both R/W and LD/ST formats
+            if op == "LD":
+                op = "R"
+            elif op == "ST":
+                op = "W"
             try:
                 addr = int(parts[1], 0)
             except ValueError:
@@ -364,6 +460,127 @@ class TraceParser:
             s(f"  Channel {ch:2d}: {count:8,} ({pct:5.2f}%)")
 
         s("\n" + "=" * 70)
+
+    # ------------------------------------------------------------------
+    # Comparison methods
+    # ------------------------------------------------------------------
+
+    def compare_with_ramulator(self, ramulator_result) -> ComparisonReport:
+        """Compare model predictions with Ramulator2 simulation results.
+
+        Args:
+            ramulator_result: RamulatorLogResult from parse_ramulator_log.py
+
+        Returns:
+            ComparisonReport with error metrics
+        """
+        report = ComparisonReport(
+            trace_name=os.path.basename(self.config.trace_file),
+            trace_file=self.config.trace_file,
+        )
+
+        # Model predictions from TraceParser stats
+        report.model_total_requests = self.stats.total_requests
+        report.model_row_hit_rate = self.stats.estimated_row_hit_rate
+        report.model_avg_latency = self.stats.estimated_avg_latency
+        report.model_row_hits = self.stats.same_row_accesses
+        report.model_row_misses = self.stats.stride_count + self.stats.sequential_count - self.stats.same_row_accesses
+        report.model_row_conflicts = self.stats.same_bank_conflicts
+
+        # Simulation results from Ramulator2
+        # Use the original trace request count (not HBM internal bursts)
+        report.sim_total_requests = ramulator_result.get_trace_request_count()
+
+        # Get first channel stats for row buffer performance
+        ch_stats = ramulator_result.get_per_channel_stats(0)
+        if ch_stats:
+            report.sim_row_hit_rate = ch_stats.row_hit_rate
+            report.sim_avg_latency = ch_stats.avg_read_latency
+            report.sim_row_hits = ch_stats.row_hits
+            report.sim_row_misses = ch_stats.row_misses
+            report.sim_row_conflicts = ch_stats.row_conflicts
+        else:
+            # Fallback to aggregated stats
+            report.sim_row_hit_rate = ramulator_result.aggregated_hit_rate
+            report.sim_avg_latency = ramulator_result.total_avg_latency
+            report.sim_row_hits = ramulator_result.total_row_hits
+            report.sim_row_misses = ramulator_result.total_row_misses
+            report.sim_row_conflicts = ramulator_result.total_row_conflicts
+
+        report.sim_memory_cycles = ramulator_result.memory_system_cycles
+
+        # Compute error metrics
+        report.compute_errors()
+
+        return report
+
+    def print_comparison(self, ramulator_result) -> None:
+        """Print comparison between model and simulation.
+
+        Args:
+            ramulator_result: RamulatorLogResult from parse_ramulator_log.py
+        """
+        report = self.compare_with_ramulator(ramulator_result)
+
+        print("\n" + "=" * 70)
+        print(f"Model vs Simulation Comparison: {report.trace_name}")
+        print("=" * 70)
+
+        print("\n[Model Predictions (TraceParser)]")
+        print(f"  Total requests:   {report.model_total_requests:,}")
+        print(f"  Row hit rate:       {report.model_row_hit_rate*100:.2f}%")
+        print(f"  Avg latency:        {report.model_avg_latency:.1f} cycles")
+        print(f"  Row hits:           {report.model_row_hits:,}")
+        print(f"  Row misses:         {report.model_row_misses:,}")
+        print(f"  Row conflicts:      {report.model_row_conflicts:,}")
+
+        print("\n[Simulation Results (Ramulator2)]")
+        print(f"  Total requests:   {report.sim_total_requests:,}")
+        print(f"  Row hit rate:       {report.sim_row_hit_rate*100:.2f}%")
+        print(f"  Avg latency:        {report.sim_avg_latency:.2f} cycles")
+        print(f"  Row hits:           {report.sim_row_hits:,}")
+        print(f"  Row misses:         {report.sim_row_misses:,}")
+        print(f"  Row conflicts:      {report.sim_row_conflicts:,}")
+        print(f"  Memory cycles:      {report.sim_memory_cycles:,}")
+
+        print("\n[Error Metrics]")
+        print(f"  Hit rate error:     {report.hit_rate_error_pp:.2f} pp")
+        print(f"  Latency error:      {report.latency_error_pct:.1f}%")
+        print(f"  Row hit error:      {report.row_hit_error_pct:.1f}%")
+        print(f"  Row miss error:     {report.row_miss_error_pct:.1f}%")
+        print(f"  Row conflict error: {report.row_conflict_error_pct:.1f}%")
+
+        print("\n" + "=" * 70)
+
+    def save_comparison_report(
+        self,
+        ramulator_result,
+        output_file: str = None,
+    ) -> str:
+        """Save comparison report to JSON file.
+
+        Args:
+            ramulator_result: RamulatorLogResult from parse_ramulator_log.py
+            output_file: Output file path (default: {trace_name}_comparison.json)
+
+        Returns:
+            Path to saved report file
+        """
+        import json
+
+        report = self.compare_with_ramulator(ramulator_result)
+
+        if output_file is None:
+            trace_name = os.path.splitext(os.path.basename(self.config.trace_file))[0]
+            output_file = f"{trace_name}_comparison.json"
+
+        report_dict = report.to_dict()
+
+        with open(output_file, 'w') as f:
+            json.dump(report_dict, f, indent=2)
+
+        logger.info(f"Comparison report saved to {output_file}")
+        return output_file
 
     def save_summary(self, filename: str = None) -> str:
         """保存 summary 到文件"""

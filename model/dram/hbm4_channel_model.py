@@ -17,12 +17,13 @@ Reference:
 """
 
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 import time
 
 from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
 from model.dram.hbm4_spec import HBM4Spec
+from model.dram.timing import HBM4Timing
 
 
 class HBM4ChannelState(Enum):
@@ -55,6 +56,7 @@ class PseudoChannel:
     channel_id: int
     pseudo_channel_id: int  # 0 or 1
     spec: HBM4Spec
+    timing: HBM4Timing
 
     # Bank state machines (16 banks per pseudo-channel)
     banks: List[BankStateMachine]
@@ -64,24 +66,22 @@ class PseudoChannel:
     open_row: int = -1
     current_time: float = 0.0
 
-    def __init__(self, channel_id: int, pseudo_channel_id: int, spec: HBM4Spec):
+    def __init__(self, channel_id: int, pseudo_channel_id: int, spec: HBM4Spec, timing: Optional[HBM4Timing] = None):
         """Initialize pseudo-channel
 
         Args:
             channel_id: Channel this pseudo-channel belongs to
             pseudo_channel_id: Pseudo-channel index (0 or 1)
             spec: HBM4 specification
+            timing: HBM4 timing parameters (uses default if None)
         """
         self.channel_id = channel_id
         self.pseudo_channel_id = pseudo_channel_id
         self.spec = spec
-
-        # Create timing object for bank state machines
-        from model.dram.timing import HBM3Timing
-        timing = HBM3Timing()
+        self.timing = timing if timing is not None else HBM4Timing()
 
         self.banks = [
-            BankStateMachine(bank_id, timing)
+            BankStateMachine(bank_id, self.timing)
             for bank_id in range(spec.banks_per_pseudo_channel)
         ]
 
@@ -192,23 +192,27 @@ class HBM4Channel:
         'RFMab', 'RFMsb'  # Row flash memory (refresh) commands
     ]
 
-    def __init__(self, channel_id: int, spec: Optional[HBM4Spec] = None):
+    def __init__(self, channel_id: int, spec: Optional[HBM4Spec] = None, timing: Optional[HBM4Timing] = None):
         """Initialize HBM4 channel
 
         Args:
             channel_id: Channel index (0-31)
             spec: HBM4 specification (uses default if None)
+            timing: HBM4 timing parameters (uses default if None)
         """
         if spec is None:
             spec = HBM4Spec()
+        if timing is None:
+            timing = HBM4Timing()
 
         self.channel_id = channel_id
         self.spec = spec
+        self.timing = timing
         self.current_cycle = 0
 
         # Create 2 pseudo-channels per channel
         self.pseudo_channels = [
-            PseudoChannel(channel_id, pch_id, spec)
+            PseudoChannel(channel_id, pch_id, spec, timing)
             for pch_id in range(2)
         ]
 
@@ -220,8 +224,12 @@ class HBM4Channel:
         """Peak bandwidth per channel in GB/s
 
         Each channel has 64-bit @ 8 GT/s = 64 GB/s
+        Note: 8 GT/s × 64 bits / 8 = 64 GB/s per channel
+        Total: 32 channels × 64 GB/s = 2048 GB/s
         """
-        return self.spec.data_rate_gtps * 64 / 8 / 1e9 * 1e9
+        # Per-channel: data_rate × (io_width/32) / 8 = GB/s
+        channel_width = self.spec.io_width // self.spec.channels
+        return self.spec.data_rate_gtps * channel_width / 8
 
     @property
     def peak_bandwidth_tbs(self) -> float:

@@ -308,6 +308,44 @@ class HBM4QoSScheduler:
             }
         }
 
+    def select_next(self, requests: List) -> Optional[Any]:
+        """Select next request from a list using QoS priority + FR-FCFS
+
+        This method accepts a list of HBMRequest objects and selects
+        the highest priority one based on QoS level and row hit status.
+
+        Args:
+            requests: List of HBMRequest objects to select from
+
+        Returns:
+            Selected request or None if list is empty
+        """
+        if not requests:
+            return None
+
+        # Group requests by QoS level
+        by_qos: Dict[int, List] = defaultdict(list)
+        for req in requests:
+            qos = getattr(req, 'qos', 8)  # Default to level 8
+            by_qos[qos].append(req)
+
+        # Select from highest QoS level that has requests
+        for qos_level in range(self.priority_levels - 1, -1, -1):
+            if qos_level not in by_qos or not by_qos[qos_level]:
+                continue
+
+            candidates = by_qos[qos_level]
+
+            # FR-FCFS: row hits first, then oldest
+            row_hits = [r for r in candidates if getattr(r, 'row_hit', False)]
+            if row_hits:
+                return min(row_hits, key=lambda r: getattr(r, 'arrival_time', 0))
+
+            # No row hits, select oldest
+            return min(candidates, key=lambda r: getattr(r, 'arrival_time', 0))
+
+        return None
+
     def set_bandwidth_guarantee(self, qos_level: int, guarantee_gbs: float):
         """Set bandwidth guarantee for a QoS level
 
