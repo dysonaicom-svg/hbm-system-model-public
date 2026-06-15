@@ -7,6 +7,7 @@ Tests the HBM4 channel state machine with 32 channels and pseudo-channel support
 import pytest
 from model.dram.hbm4_channel_model import HBM4Channel, PseudoChannel, HBM4ChannelState, PseudoChannelState
 from model.dram.hbm4_spec import HBM4Spec
+from model.dram.bank_state_machine import BankStateEnum
 
 
 class TestHBM4ChannelCreation:
@@ -76,6 +77,10 @@ class TestHBM4ChannelCommands:
 
         # First activate
         ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        # Advance time past tRAS (20 cycles for HBM4)
+        for _ in range(25):
+            ch.tick()
 
         # Then precharge
         result = ch.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
@@ -403,3 +408,208 @@ class TestHBM4TimingParameters:
 
         # In TB/s: 2048 / 1000 = 2.048 TB/s
         assert abs(spec.bandwidth - 2.048) < 0.001
+
+
+class TestHBM4BankSpecificOperations:
+    """Test bank-specific operations for proper per-bank control"""
+
+    def test_activate_specific_bank(self):
+        """ACT command must activate the specified bank, not any idle bank"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate bank 5 specifically
+        result = ch.issue_command('ACT', pseudo_channel=0, bank=5, row=100)
+
+        assert result is True
+        # Only bank 5 should be active
+        assert pc0.banks[5].bank.state.value == 1  # ACTIVE
+        # Other banks should still be IDLE
+        for i in range(16):
+            if i != 5:
+                assert pc0.banks[i].bank.state.value == 0  # IDLE
+
+    def test_activate_different_banks(self):
+        """Multiple activations must go to specific banks"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate bank 0
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        # Activate bank 8
+        ch.issue_command('ACT', pseudo_channel=0, bank=8, row=200)
+
+        assert pc0.banks[0].bank.open_row == 100
+        assert pc0.banks[8].bank.open_row == 200
+
+    def test_precharge_specific_bank(self):
+        """PRE command must precharge only the specified bank"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate two banks
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        # Advance time past tRAS
+        for _ in range(25):
+            ch.tick()
+        ch.issue_command('ACT', pseudo_channel=0, bank=8, row=200)
+        for _ in range(25):
+            ch.tick()
+
+        # Precharge only bank 0
+        result = ch.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
+
+        assert result is True
+        # Bank 0 should now be IDLE
+        assert pc0.banks[0].bank.state.value == 0
+        # Bank 8 should still be ACTIVE
+        assert pc0.banks[8].bank.state.value == 1
+
+    def test_read_from_specific_bank(self):
+        """RD command must work on the specified bank"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate bank 3
+        ch.issue_command('ACT', pseudo_channel=0, bank=3, row=100)
+
+        # Read from bank 3
+        result = ch.issue_command('RD', pseudo_channel=0, bank=3, row=100, col=0)
+
+        assert result is True
+        assert pc0.banks[3].bank.open_row == 100
+
+    def test_write_to_specific_bank(self):
+        """WR command must work on the specified bank"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate bank 7
+        ch.issue_command('ACT', pseudo_channel=0, bank=7, row=100)
+
+        # Write to bank 7
+        result = ch.issue_command('WR', pseudo_channel=0, bank=7, row=100, col=0)
+
+        assert result is True
+        assert pc0.banks[7].bank.open_row == 100
+
+    def test_per_bank_refresh(self):
+        """REFsb must refresh only the specified bank"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Refresh bank 2
+        result = ch.issue_command('REFsb', pseudo_channel=0, bank=2, row=0)
+
+        assert result is True
+        # Bank 2 should be in REFRESHING state
+        assert pc0.banks[2].bank.state.value == 3  # REFRESHING
+
+        # Other banks should be IDLE (not refreshing)
+        for i in range(16):
+            if i != 2:
+                assert pc0.banks[i].bank.state.value == 0  # IDLE
+
+    def test_per_bank_refresh_completion(self):
+        """Per-bank refresh must complete and transition bank back to IDLE"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Refresh bank 5
+        ch.issue_command('REFsb', pseudo_channel=0, bank=5, row=0)
+
+        # Verify bank is refreshing
+        assert pc0.banks[5].bank.state.value == 3  # REFRESHING
+
+        # Advance time past nRFC (180 cycles for HBM4)
+        # This simulates the refresh operation completing
+        for _ in range(spec.nRFC):
+            ch.tick()
+
+        # Bank should return to IDLE after nRFC cycles
+        assert pc0.banks[5].bank.state.value == 0  # IDLE
+
+    def test_all_bank_refresh(self):
+        """REFab must refresh all banks when all are IDLE"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # All banks should be IDLE initially
+        all_idle = all(b.bank.state.value == 0 for b in pc0.banks)
+        assert all_idle
+
+        # Refresh all banks
+        result = ch.issue_command('REFab', pseudo_channel=0, bank=0, row=0)
+
+        assert result is True
+        # All banks should be refreshing
+        for i in range(16):
+            assert pc0.banks[i].bank.state.value == 3  # REFRESHING
+
+    def test_refresh_requires_idle_banks(self):
+        """Refresh must fail if banks are not IDLE"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate bank 0
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        # All-bank refresh should fail because bank 0 is active
+        result = ch.issue_command('REFab', pseudo_channel=0, bank=0, row=0)
+
+        assert result is False
+
+    def test_bank_activation_respects_timing(self):
+        """Activating same bank twice must respect tRC timing"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # First activation
+        result1 = ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        assert result1 is True
+
+        # Immediate second activation should fail (bank still active)
+        result2 = ch.issue_command('ACT', pseudo_channel=0, bank=0, row=200)
+        assert result2 is False
+
+        # Advance time past tRAS (20 cycles)
+        for _ in range(25):
+            ch.tick()
+
+        # Precharge the bank first
+        result_pre = ch.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
+        assert result_pre is True
+
+        # Advance time past tRP (8 cycles)
+        for _ in range(10):
+            ch.tick()
+
+        # Now re-activation should succeed
+        result3 = ch.issue_command('ACT', pseudo_channel=0, bank=0, row=200)
+        assert result3 is True
+
+    def test_row_open_detection_per_bank(self):
+        """is_row_open must check the specific bank, not any bank"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+        pc0 = ch.pseudo_channels[0]
+
+        # Activate bank 3, row 100
+        ch.issue_command('ACT', pseudo_channel=0, bank=3, row=100)
+
+        # Bank 3 should report row 100 open
+        assert pc0.banks[3].is_row_hit(100)
+        # Bank 3 should NOT report row 200 open
+        assert not pc0.banks[3].is_row_hit(200)
+        # Bank 7 should not have any row open
+        assert not pc0.banks[7].is_row_hit(100)

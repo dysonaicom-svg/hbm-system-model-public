@@ -20,6 +20,7 @@ HBM4 Features:
 - 8 GT/s data rate (125 ps tCK)
 - Lane repair support
 - Per-bank-group timing
+- DFI 5.0 protocol support
 
 Based on:
 - JEDEC JESD270-4A HBM4 specification
@@ -31,12 +32,16 @@ Debug Logging:
 """
 
 import logging
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass, field
 import time
 import uuid
 
 from model.dram.hbm4_spec import HBM4Spec
+from model.dram.dfi_interface import (
+    DFI5Interface, DFICommand, DFILowPowerState,
+    DFIRequest, DFIResponse as DFIPhyResponse
+)
 from model.controller.config import HBMConfig
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.queue import ReadQueue, WriteQueue, QueueManager
@@ -44,6 +49,7 @@ from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
 from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.exceptions import QueueOverflowError
+from model.dram.hbm4_channel_model import HBM4ChannelArray
 
 # Configure debug logging for HBM4 controller
 _logger = logging.getLogger('hbm4.controller')
@@ -84,8 +90,9 @@ class HBM4Controller:
     - Per-channel and pseudo-channel scheduling
     - QoS-based request prioritization
     - Per-bank and autonomous refresh
-    - DFI-like PHY interface abstraction
+    - DFI 5.0 PHY interface
     - Lane repair and training support
+    - Command generation and scheduling
     """
 
     def __init__(
@@ -94,6 +101,7 @@ class HBM4Controller:
         config: Optional[HBMConfig] = None,
         enable_qos: bool = True,
         enable_refresh: bool = True,
+        enable_dfi: bool = True,
     ):
         """Initialize HBM4 Controller
 
@@ -102,6 +110,7 @@ class HBM4Controller:
             config: Optional HBMConfig for base class compatibility
             enable_qos: Enable QoS scheduling
             enable_refresh: Enable refresh scheduling
+            enable_dfi: Enable DFI 5.0 interface
         """
         self.spec = spec or HBM4Spec()
         self.current_time_ns = 0
@@ -110,6 +119,7 @@ class HBM4Controller:
         # Configuration
         self._enable_qos = enable_qos
         self._enable_refresh = enable_refresh
+        self._enable_dfi = enable_dfi
 
         # Initialize HBM4-specific address decoder
         self.decoder = HBM4AddressDecoder(spec=self.spec)
@@ -132,10 +142,22 @@ class HBM4Controller:
         else:
             self.refresh_scheduler = None
 
+        # Initialize DFI 5.0 interface
+        if self._enable_dfi:
+            self.dfi = DFI5Interface()
+        else:
+            self.dfi = None
+
+        # Initialize HBM4 DRAM channel model for refresh integration
+        self.channel_model = HBM4ChannelArray(spec=self.spec)
+
         # Per-channel state tracking
         self._channel_states: Dict[int, 'ChannelState'] = {}
         for ch in range(self.spec.channels):
             self._channel_states[ch] = ChannelState(channel_id=ch)
+
+        # Command generation state
+        self._pending_commands: Dict[str, DFIRequest] = {}
 
         # Statistics
         self.stats = HBM4ControllerStats()
@@ -153,6 +175,13 @@ class HBM4Controller:
     def pseudo_channels(self) -> int:
         """Total pseudo-channels"""
         return self.spec.pseudo_channels
+
+    @property
+    def dfi_ready(self) -> bool:
+        """Check if DFI interface is ready"""
+        if not self.dfi:
+            return True
+        return self.dfi.is_ready()
 
     def submit_request(
         self,
@@ -202,6 +231,10 @@ class HBM4Controller:
         # Track request
         self._pending_requests[request.request_id] = request
 
+        # Generate DFI command if DFI is enabled
+        if self.dfi:
+            self._generate_dfi_command(request, decoded)
+
         # Update statistics
         self.stats.total_requests += 1
         if is_read:
@@ -216,6 +249,49 @@ class HBM4Controller:
         )
         return request.request_id
 
+    def _generate_dfi_command(self, request: HBMRequest, decoded) -> None:
+        """Generate DFI command for a request
+
+        Args:
+            request: The HBM request
+            decoded: Decoded address fields
+        """
+        if not self.dfi:
+            return
+
+        # Map request type to DFI command
+        if request.is_read:
+            cmd_type = 'RD'
+        else:
+            cmd_type = 'WR'
+
+        # Create DFI request with address components
+        addr_vec = {
+            'row': request.row_id,
+            'bank': request.bank_id,
+            'pseudo_channel': request.pseudo_channel_id,
+            'channel': request.channel_id,
+            'address': request.addr,
+        }
+
+        # Encode command
+        dfi_req = self.dfi.encode_command(
+            cmd=cmd_type,
+            addr_vec=addr_vec,
+            priority=request.qos,
+        )
+        dfi_req.request_id = request.request_id
+
+        # Queue the DFI request
+        self.dfi.queue_request(dfi_req)
+        self._pending_commands[request.request_id] = dfi_req
+
+        _logger.debug(
+            f"DFI command generated: req_id={request.request_id}, "
+            f"cmd={cmd_type}, ch={request.channel_id}, "
+            f"pch={request.pseudo_channel_id}, row={request.row_id}"
+        )
+
     def tick(self) -> List[HBMResponse]:
         """Execute one clock cycle
 
@@ -228,6 +304,10 @@ class HBM4Controller:
         responses = []
 
         _logger.debug(f"[Cycle {self._cycle_count}] Time={self.current_time_ns}ns")
+
+        # Tick DFI interface if enabled
+        if self.dfi:
+            self.dfi.tick()
 
         # Handle refresh if enabled
         if self.refresh_scheduler:
@@ -256,7 +336,7 @@ class HBM4Controller:
         return responses
 
     def _handle_refresh(self) -> Optional[HBMResponse]:
-        """Handle refresh scheduling
+        """Handle refresh scheduling and execute on channel model
 
         Returns:
             Refresh response if refresh completed
@@ -266,19 +346,29 @@ class HBM4Controller:
 
         # Check if refresh is needed
         if self.refresh_scheduler.can_refresh():
-            # Get next bank to refresh
-            bank_info = self.refresh_scheduler.get_next_refresh_bank()
-            if bank_info:
-                channel_id, bank_id = bank_info
+            # Get next refresh command (returns 4-tuple: cmd, channel_id, pch, bank_id)
+            refresh_cmd = self.refresh_scheduler.get_refresh_command()
+            if refresh_cmd:
+                cmd_name, channel_id, pseudo_channel_id, bank_id = refresh_cmd
 
-                # Execute refresh
+                # Execute refresh on the channel model
+                if cmd_name == 'REFab':
+                    # All-bank refresh
+                    self.channel_model.get_channel(channel_id).execute_refresh('REFab')
+                elif cmd_name == 'REFsb':
+                    # Per-bank refresh
+                    ch = self.channel_model.get_channel(channel_id)
+                    if ch:
+                        ch.execute_refresh('REFsb', pseudo_channel=pseudo_channel_id, bank=bank_id)
+
+                # Mark bank as refreshed in scheduler
                 self.refresh_scheduler.mark_bank_refreshed(
-                    channel_id, bank_id, self._cycle_count
+                    channel_id, pseudo_channel_id, bank_id, self._cycle_count
                 )
                 self.stats.refresh_count += 1
 
                 return HBMResponse(
-                    request_id=f"refresh_ch{channel_id}_bank{bank_id}",
+                    request_id=f"refresh_ch{channel_id}_pch{pseudo_channel_id}_bank{bank_id}",
                     status="REFRESH_COMPLETE",
                     latency=self.spec.nRFC,
                     channel_id=channel_id,
@@ -450,22 +540,6 @@ class HBM4Controller:
         """Get per-channel queue capacity"""
         return 8  # 8 requests per channel
 
-    def trigger_training(self, channel_id: Optional[int] = None) -> str:
-        """Trigger training for a channel or all channels
-
-        Args:
-            channel_id: Specific channel to train, or None for all
-
-        Returns:
-            Training command ID
-        """
-        training_id = f"train_{uuid.uuid4().hex[:8]}"
-        self.stats.training_count += 1
-
-        # Training is modeled as a blocking operation
-        # In real hardware, this would take many cycles
-        return training_id
-
     def trigger_repair(self, channel_id: int, lane_mask: int) -> bool:
         """Trigger lane repair for a channel
 
@@ -491,7 +565,7 @@ class HBM4Controller:
         Returns:
             Dictionary of all statistics
         """
-        return {
+        stats = {
             'controller': {
                 'total_requests': self.stats.total_requests,
                 'read_requests': self.stats.read_requests,
@@ -522,7 +596,14 @@ class HBM4Controller:
                 'enabled': self._enable_refresh,
                 'mode': str(self.refresh_scheduler.mode) if self.refresh_scheduler else None,
             } if self.refresh_scheduler else None,
+            'dfi': {
+                'enabled': self._enable_dfi,
+                'ready': self.dfi_ready,
+                'lp_state': str(self.dfi.lp_state.name) if self.dfi else None,
+                'pending_commands': len(self._pending_commands),
+            } if self.dfi else None,
         }
+        return stats
 
     def get_bandwidth_gbs(self) -> float:
         """Calculate current effective bandwidth in GB/s
@@ -548,6 +629,109 @@ class HBM4Controller:
         """
         gbs = self.get_bandwidth_gbs()
         return gbs / 1000  # Convert to TB/s
+
+    # === DFI 5.0 Interface Methods ===
+
+    def dfi_request_ctrlupd(self) -> bool:
+        """Request a DFI control update
+
+        Returns:
+            True if request was accepted
+        """
+        if not self.dfi:
+            return False
+        return self.dfi.request_ctrlupd()
+
+    def dfi_set_frequency(self, freq_mhz: int) -> bool:
+        """Set DFI interface frequency
+
+        Args:
+            freq_mhz: Target frequency in MHz
+
+        Returns:
+            True if frequency change was accepted
+        """
+        if not self.dfi:
+            return False
+        return self.dfi.request_freq_change(freq_mhz)
+
+    def dfi_enter_freq_change(self) -> bool:
+        """Enter frequency change sequence
+
+        Returns:
+            True if transition was successful
+        """
+        if not self.dfi:
+            return False
+        return self.dfi.enter_freq_change()
+
+    def dfi_exit_freq_change(self) -> bool:
+        """Exit frequency change sequence
+
+        Returns:
+            True if transition was successful
+        """
+        if not self.dfi:
+            return False
+        return self.dfi.exit_freq_change()
+
+    def dfi_set_low_power(self, state: DFILowPowerState) -> bool:
+        """Set DFI low power state
+
+        Args:
+            state: Target low power state
+
+        Returns:
+            True if transition was successful
+        """
+        if not self.dfi:
+            return False
+        return self.dfi.request_low_power(state)
+
+    def dfi_wakeup(self) -> None:
+        """Wakeup from low power state"""
+        if self.dfi:
+            self.dfi.wakeup_from_low_power()
+
+    def dfi_get_signals(self):
+        """Get current DFI signal states
+
+        Returns:
+            DFISignals object or None if DFI disabled
+        """
+        if not self.dfi:
+            return None
+        return self.dfi.get_dfi_signals()
+
+    def dfi_get_statistics(self) -> Dict[str, Any]:
+        """Get DFI interface statistics
+
+        Returns:
+            Dictionary with DFI statistics
+        """
+        if not self.dfi:
+            return {}
+        return self.dfi.get_statistics()
+
+    def trigger_training(self, channel_id: Optional[int] = None) -> str:
+        """Trigger training for a channel or all channels
+
+        Args:
+            channel_id: Specific channel to train, or None for all
+
+        Returns:
+            Training command ID
+        """
+        training_id = f"train_{uuid.uuid4().hex[:8]}"
+        self.stats.training_count += 1
+
+        # Start DFI training if enabled
+        if self.dfi:
+            self.dfi.start_training()
+
+        # Training is modeled as a blocking operation
+        # In real hardware, this would take many cycles
+        return training_id
 
 
 @dataclass

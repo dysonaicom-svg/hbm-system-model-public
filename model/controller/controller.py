@@ -176,9 +176,10 @@ class HBMController:
             )
             cmd_sequence = self._generate_command_sequence(scheduled, self.current_time)
 
-            # 通过 CommandPipeline 提交命令 (用于跟踪实际 DRAM 延迟)
-            # 注意: 实际 DRAMModel 在 HBMSimulator 中, 这里记录命令序列供后续使用
-            pending_cmd = self.pipeline.submit_command(scheduled, None)
+            # 通过 CommandPipeline 跟踪命令 (用于延迟估算)
+            # 注意: 实际 DRAMModel 在 HBMSimulator 中, 这里只记录命令供延迟计算使用
+            # 延迟已通过 cmd_sequence.total_cycles 计算，不需要实际提交到 pipeline
+            # (tick() 是简化模型，tick_advanced() 会使用完整的 pipeline)
 
             # 计算实际延迟 (基于命令序列)
             # Row hit: RD/WR + PRE = ~5 cycles

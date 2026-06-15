@@ -117,9 +117,9 @@ class TestHBM4SpecAddressBits:
         assert spec.ADDR_BANK_BITS == 4
 
     def test_row_bits(self):
-        """Row field should be 16 bits (64K rows)"""
+        """Row field should be 19 bits (512K rows for 4TB capacity)"""
         spec = HBM4Spec()
-        assert spec.ADDR_ROW_BITS == 16
+        assert spec.ADDR_ROW_BITS == 19
 
     def test_col_bits(self):
         """Column field should be 6 bits (64 columns)"""
@@ -163,7 +163,7 @@ class TestHBM4SpecBitFieldExtraction:
         spec = HBM4Spec()
         start, num = spec.get_row_bits()
         assert start == 13  # After channel + pch + bg + bank
-        assert num == 16
+        assert num == 19  # 512K rows for 4TB capacity
 
 
 class TestHBM4SpeedGrades:

@@ -60,9 +60,11 @@ class TestDRAMModel:
         assert response1.success is True
 
         # 立即第二次激活 (违反 tRC)
+        # tRC = 59 cycles = 59 * 0.78125e-9 s = 46.1 ns = 4.61e-8 s
+        # 使用 1 ns (远小于 tRC) 来触发违规
         response2 = model.execute_activate(
             stack_id=0, channel_id=0, bank_id=0,
-            row_id=200, current_time=10  # 不足 tRC=59 cycles
+            row_id=200, current_time=1e-9  # 不足 tRC=46.1ns
         )
         assert response2.success is False
 

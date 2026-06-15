@@ -29,23 +29,30 @@ typedef enum logic [3:0] {
 // Address Structure - HBM4 RBC (Row-Bank-Channel) Mapping
 // -----------------------------------------------------------------------------
 // HBM4 address breakdown (42-bit effective):
-// - stack:       2 bits (4 stacks)
-// - channel:     5 bits (32 channels per stack)
-// - pseudo_ch:   1 bit (2 pseudo-channels per channel)
-// - bank_group:  3 bits (8 bank groups per pseudo-channel)
-// - bank:         4 bits (16 banks per bank group)
-// - row:         16 bits (64K rows per bank)
-// - col:          6 bits (64 columns per row)
-// - burst/offset: 8 bits (4-beat burst, 8 bytes per beat)
+// Bit positions from MSB (matching Python hbm4_address_decoder.py RBC mapping):
+// - stack:       bits [47:46] (2 bits, 4 stacks)
+// - channel:     bits [45:41] (5 bits, 32 channels per stack)
+// - pseudo_ch:   bit  [40]    (1 bit, 2 pseudo-channels per channel)
+// - bank_group:  bits [39:37] (3 bits, 8 bank groups per pseudo-channel)
+// - bank:        bits [36:33] (4 bits, 16 banks per bank group)
+// - row:         bits [32:17] (16 bits, 64K rows per bank)
+// - col:         bits [16:11] (6 bits, 64 columns per row)
+// - burst:       bits [10:9]  (2 bits, 4-beat burst alignment)
+// - offset:      bits [8:6]   (3 bits, 8-byte offset within burst)
+//
+// Note: Fields are declared in MSB-first order for packed struct.
+// Total: 2+5+1+3+4+16+6+2+3 = 42 bits
 
 typedef struct packed {
-    logic [5:0]   col;         // Column address (6 bits = 64 columns)
-    logic [15:0] row;         // Row address (16 bits = 64K rows)
-    logic [3:0]  bank;        // Bank address (4 bits = 16 banks)
-    logic [2:0]  bank_group;   // Bank group address (3 bits = 8 groups)
-    logic [0:0]  pseudo_ch;    // Pseudo-channel (1 bit = 2 per channel)
-    logic [4:0]  channel;      // Channel address (5 bits = 32 channels)
-    logic [1:0]  stack;        // Stack identifier (2 bits = 4 stacks)
+    logic [1:0]   stack;           // Stack identifier (2 bits = 4 stacks)
+    logic [4:0]   channel;         // Channel address (5 bits = 32 channels)
+    logic         pseudo_ch;       // Pseudo-channel (1 bit = 2 per channel)
+    logic [2:0]   bank_group;      // Bank group address (3 bits = 8 groups)
+    logic [3:0]   bank;            // Bank address (4 bits = 16 banks)
+    logic [15:0]  row;             // Row address (16 bits = 64K rows)
+    logic [5:0]   col;             // Column address (6 bits = 64 columns)
+    logic [1:0]   burst;           // Burst beat (2 bits = 4-beat alignment)
+    logic [2:0]   offset;          // Byte offset within burst (3 bits = 8 bytes)
 } hbm_addr_t;
 
 // -----------------------------------------------------------------------------

@@ -97,7 +97,7 @@ class hbm_coverage extends uvm_component;
             bins idle6_10 = {[6:10]};
             bins idle_gte10 = {[10:]} with (this >= 10);
         }
-    endcase
+    endgroup
 
     function new(string name, uvm_component parent);
         super.new(name, parent);

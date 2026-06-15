@@ -116,24 +116,29 @@ class HBM4RefreshScheduler:
         """
         return self.cycles_since_refresh >= self.tREFI
 
-    def get_next_refresh_bank(self) -> Optional[Tuple[int, int]]:
+    def get_next_refresh_bank(self) -> Optional[Tuple[int, int, int]]:
         """Get next bank to refresh (wrapper for backward compatibility)
 
         Returns:
-            Tuple of (channel_id, bank_id) or None if no refresh needed
+            Tuple of (channel_id, pseudo_channel_id, bank_id) or None if no refresh needed
         """
         result = self.get_refresh_command()
         if result is None:
             return None
 
-        command_name, channel_id, bank_id = result
-        return (channel_id, bank_id)
+        command_name, channel_id, pseudo_channel_id, bank_id = result
+        return (channel_id, pseudo_channel_id, bank_id)
 
     def get_refresh_command(self) -> Optional[tuple]:
         """Get the next refresh command to execute
 
         Returns:
-            Tuple of (command_name, channel_id, bank_id) or None
+            Tuple of (command_name, channel_id, pseudo_channel_id, bank_id) or None
+
+        Note:
+            - channel_id: 0-31 for 32 channels
+            - pseudo_channel_id: 0 or 1 (within channel)
+            - bank_id: 0-15 (within pseudo-channel)
         """
         if not self.can_refresh():
             return None
@@ -143,16 +148,22 @@ class HBM4RefreshScheduler:
             self.cycles_since_refresh = 0
             self.stats['total_refreshes'] += 1
             self.stats['all_bank_refreshes'] += 1
-            return ('REFab', None, None)
+            return ('REFab', None, None, None)
 
         elif self.mode == RefreshMode.PER_BANK:
-            # Rotate through banks
+            # Rotate through banks (global bank index 0-511 for HBM4)
+            # 32 channels × 2 pseudo-channels × 16 banks = 1024 global banks (but spec uses 512)
             bank_to_refresh = self.current_refresh_bank
 
-            # Calculate channel and bank within channel
-            banks_per_pch = self.spec.banks_per_pseudo_channel
-            pch_idx = bank_to_refresh // banks_per_pch
-            bank_idx = bank_to_refresh % banks_per_pch
+            # Calculate channel, pseudo-channel, and bank indices
+            banks_per_pch = self.spec.banks_per_pseudo_channel  # 16
+            pch_idx = bank_to_refresh // banks_per_pch  # 0-63 (pseudo-channel within array)
+            bank_idx = bank_to_refresh % banks_per_pch  # 0-15
+
+            # Map pseudo-channel index to channel and pseudo-channel
+            # Each physical channel has 2 pseudo-channels
+            channel_id = pch_idx // 2  # 0-31
+            pseudo_channel_id = pch_idx % 2  # 0 or 1
 
             self.current_refresh_bank = (self.current_refresh_bank + 1) % self.spec.total_banks
             self.cycles_since_refresh = 0
@@ -160,12 +171,10 @@ class HBM4RefreshScheduler:
             self.stats['total_refreshes'] += 1
             self.stats['per_bank_refreshes'] += 1
 
-            # Update bank status - use actual channel_id derived from pch_idx
-            # Each real channel has 2 pseudo-channels (pch_idx // 2 gives channel 0-31)
-            actual_channel_id = pch_idx // 2
-            self.mark_bank_refreshed(actual_channel_id, bank_idx, self.current_cycle)
+            # Update bank status using global bank index for channel model integration
+            self.mark_bank_refreshed(channel_id, pseudo_channel_id, bank_idx, self.current_cycle)
 
-            return ('REFsb', actual_channel_id, bank_idx)
+            return ('REFsb', channel_id, pseudo_channel_id, bank_idx)
 
         elif self.mode == RefreshMode.BANK_GROUP:
             # Refresh one bank group per interval
@@ -176,7 +185,8 @@ class HBM4RefreshScheduler:
             self.stats['total_refreshes'] += 1
             self.stats['bank_group_refreshes'] += 1
 
-            return ('REFsb', 0, group_to_refresh * self.spec.banks_per_pseudo_channel)
+            # Bank group refresh targets pseudo-channel 0, starting bank of the group
+            return ('REFsb', 0, 0, group_to_refresh * self.spec.banks_per_pseudo_channel)
 
         return None
 
@@ -189,16 +199,22 @@ class HBM4RefreshScheduler:
         if mode in self.supported_modes:
             self.mode = mode
 
-    def mark_bank_refreshed(self, channel_id: int, bank_id: int, cycle: int):
+    def mark_bank_refreshed(self, channel_id: int, pseudo_channel_id: int, bank_id: int, cycle: int):
         """Mark a specific bank as refreshed
 
         Args:
-            channel_id: Pseudo-channel index
-            bank_id: Bank index within the pseudo-channel
+            channel_id: Channel index (0-31)
+            pseudo_channel_id: Pseudo-channel index (0 or 1)
+            bank_id: Bank index within pseudo-channel (0-15)
             cycle: Current cycle when refresh occurred
         """
-        # Convert to global bank index: banks are organized as [pch][bank]
-        global_bank_id = channel_id * self.spec.banks_per_pseudo_channel + bank_id
+        # Convert to global bank index: channels have 2 pseudo-channels each
+        # Global bank index = channel_id * (2 * banks_per_pch) + pseudo_channel_id * banks_per_pch + bank_id
+        global_bank_id = (
+            channel_id * self.spec.pseudo_channels_per_channel * self.spec.banks_per_pseudo_channel +
+            pseudo_channel_id * self.spec.banks_per_pseudo_channel +
+            bank_id
+        )
         if 0 <= global_bank_id < len(self.bank_status):
             self.bank_status[global_bank_id].last_refresh_cycle = cycle
             self.bank_status[global_bank_id].needs_refresh = False

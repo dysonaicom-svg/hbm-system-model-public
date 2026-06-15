@@ -37,17 +37,25 @@ class TestHBM4AddressDecoder:
         spec = HBM4Spec()
         decoder = HBM4AddressDecoder(spec)
 
-        # Test pseudo-channel 0
-        addr_pch0 = 0x10000000
+        # Test pseudo-channel 0 (bit 40 in RBC mapping)
+        addr_pch0 = 0x0000_0000_0000_0000
         decoded0 = decoder.decode(addr_pch0)
         assert hasattr(decoded0, 'pseudo_channel_id')
+        assert decoded0.pseudo_channel_id == 0
 
-        # Test pseudo-channel 1 (toggle the pseudo-channel bit)
-        addr_pch1 = addr_pch0 | (1 << spec.ADDR_CHANNEL_BITS)
+        # Test pseudo-channel 1 (bit 40 = 1)
+        # In RBC mapping, pseudo-channel is at bit 40 (0x1_0000_0000_00)
+        addr_pch1 = 0x0010_0000_0000_0000  # Wait, that's still wrong
+        addr_pch1 = (1 << 40)  # Correct: bit 40 = 0x1_0000_0000_00
         decoded1 = decoder.decode(addr_pch1)
-
-        # They should potentially be different pseudo-channels
         assert hasattr(decoded1, 'pseudo_channel_id')
+        assert decoded1.pseudo_channel_id == 1
+
+        # Test both channel and pseudo-channel together
+        addr_both = (31 << 41) | (1 << 40)  # Channel 31, PCH 1
+        decoded_both = decoder.decode(addr_both)
+        assert decoded_both.channel_id == 31
+        assert decoded_both.pseudo_channel_id == 1
 
     def test_decoder_row_extraction(self):
         """Row address must be extracted correctly"""

@@ -8,6 +8,7 @@ Test coverage:
 - Multi-channel scheduling
 - QoS scheduling
 - Refresh scheduling
+- DFI 5.0 interface integration
 - Bandwidth and latency measurements
 - Address decoding across all channels
 """
@@ -15,6 +16,7 @@ Test coverage:
 import pytest
 import time
 from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.dfi_interface import DFILowPowerState, DFICommand
 from model.controller.hbm4_controller import HBM4Controller, ChannelState
 from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 
@@ -527,6 +529,117 @@ class TestChannelState:
         state = ChannelState(channel_id=0)
         state.power_state = "POWER_DOWN"
         assert state.is_available() is False
+
+
+class TestHBM4ControllerDFI:
+    """Test DFI 5.0 interface integration"""
+
+    def test_dfi_enabled_by_default(self):
+        """Test that DFI interface is enabled by default"""
+        controller = HBM4Controller()
+        assert controller.dfi is not None
+        assert controller._enable_dfi is True
+
+    def test_dfi_disabled(self):
+        """Test creating controller with DFI disabled"""
+        controller = HBM4Controller(enable_dfi=False)
+        assert controller.dfi is None
+        assert controller.dfi_ready is True  # Always true when disabled
+
+    def test_dfi_ready_state(self):
+        """Test DFI ready state check"""
+        controller = HBM4Controller()
+        assert controller.dfi_ready is True
+
+    def test_dfi_ctrlupd_request(self):
+        """Test DFI control update request"""
+        controller = HBM4Controller()
+        result = controller.dfi_request_ctrlupd()
+        assert result is True
+
+    def test_dfi_frequency_change(self):
+        """Test DFI frequency change request"""
+        controller = HBM4Controller()
+        result = controller.dfi_set_frequency(1200)
+        assert result is True
+
+    def test_dfi_enter_freq_change(self):
+        """Test entering frequency change sequence"""
+        controller = HBM4Controller()
+        controller.dfi_set_frequency(1200)
+        result = controller.dfi_enter_freq_change()
+        assert result is True
+
+    def test_dfi_exit_freq_change(self):
+        """Test exiting frequency change sequence"""
+        controller = HBM4Controller()
+        controller.dfi_set_frequency(1200)
+        controller.dfi_enter_freq_change()
+        result = controller.dfi_exit_freq_change()
+        assert result is True
+
+    def test_dfi_low_power_state(self):
+        """Test DFI low power state transition"""
+        controller = HBM4Controller()
+        result = controller.dfi_set_low_power(DFILowPowerState.LP_CTRL)
+        assert result is True
+
+    def test_dfi_wakeup(self):
+        """Test DFI wakeup from low power"""
+        controller = HBM4Controller()
+        controller.dfi_set_low_power(DFILowPowerState.LP_CTRL)
+        controller.dfi_wakeup()
+        # After wakeup, lp_wakeup should be set
+
+    def test_dfi_get_signals(self):
+        """Test getting DFI signal states"""
+        controller = HBM4Controller()
+        signals = controller.dfi_get_signals()
+        assert signals is not None
+        assert hasattr(signals, 'lp_state')
+
+    def test_dfi_get_statistics(self):
+        """Test getting DFI statistics"""
+        controller = HBM4Controller()
+        # Submit a request to generate DFI commands
+        controller.submit_request(addr=0x1000, is_read=True)
+        controller.tick()
+
+        stats = controller.dfi_get_statistics()
+        assert 'commands_sent' in stats
+
+    def test_dfi_command_generation(self):
+        """Test that DFI commands are generated on request submission"""
+        controller = HBM4Controller()
+
+        # Submit a read request
+        request_id = controller.submit_request(addr=0x1000, is_read=True)
+        assert request_id is not None
+
+        # Check that a DFI command was generated
+        stats = controller.get_stats()
+        assert stats['dfi']['pending_commands'] >= 1
+
+    def test_dfi_training_integration(self):
+        """Test that DFI training is triggered with controller training"""
+        controller = HBM4Controller()
+        initial_training_count = controller.stats.training_count
+
+        training_id = controller.trigger_training()
+
+        assert training_id is not None
+        assert controller.stats.training_count == initial_training_count + 1
+        # DFI should have started training
+        assert controller.dfi.training_in_progress is True
+
+    def test_dfi_stats_in_controller_stats(self):
+        """Test that DFI stats appear in controller stats"""
+        controller = HBM4Controller()
+        stats = controller.get_stats()
+
+        assert 'dfi' in stats
+        assert stats['dfi']['enabled'] is True
+        assert stats['dfi']['ready'] is True
 
 
 class TestHBM4ControllerIntegration:

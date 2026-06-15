@@ -337,6 +337,28 @@ run_auto_refresh:
 		+DUMP_VCD=$(WAVEFORM)
 
 # ================================================================
+# Multi-Channel Interleaving Tests
+# ================================================================
+
+# Run multi-channel interleaving test
+run_multi_channel_interleave:
+	@echo "=== Running multi-channel interleaving test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_multi_channel_interleave_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run channel conflict test
+run_channel_conflict:
+	@echo "=== Running channel conflict test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_channel_conflict_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# ================================================================
 # Bank Contention Tests
 # ================================================================
 
@@ -517,6 +539,13 @@ test-boundary: compile
 	@$(MAKE) run_data_pattern_boundary
 	@echo "=== Boundary tests complete ==="
 
+# Run all multi-channel tests
+test-multi-channel: compile
+	@echo "=== Running all multi-channel tests ==="
+	@$(MAKE) run_multi_channel_interleave
+	@$(MAKE) run_channel_conflict
+	@echo "=== Multi-channel tests complete ==="
+
 # Run all new tests
 test-new: compile
 	@echo "=== Running all new tests ==="
@@ -524,6 +553,7 @@ test-new: compile
 	@$(MAKE) test-refresh
 	@$(MAKE) test-bank
 	@$(MAKE) test-boundary
+	@$(MAKE) test-multi-channel
 	@echo "=== All new tests complete ==="
 
 # Run all tests (comprehensive)
@@ -539,6 +569,7 @@ test-all-full: compile
 	@$(MAKE) test-refresh
 	@$(MAKE) test-bank
 	@$(MAKE) test-boundary
+	@$(MAKE) test-multi-channel
 	@$(MAKE) run_comprehensive
 	@echo "=== All tests complete ==="
 
@@ -622,6 +653,10 @@ help:
 	@echo "  run_cross_bank_scheduling      - Run cross-bank scheduling test"
 	@echo "  run_bank_contention_stress    - Run bank contention stress test"
 	@echo ""
+	@echo "  -- Multi-Channel Tests --"
+	@echo "  run_multi_channel_interleave - Run multi-channel interleaving test"
+	@echo "  run_channel_conflict          - Run channel conflict test"
+	@echo ""
 	@echo "  -- Boundary Tests --"
 	@echo "  run_max_address           - Run max address test"
 	@echo "  run_min_address           - Run min address test"
@@ -636,6 +671,7 @@ help:
 	@echo "  test-qos          - Run all QoS tests"
 	@echo "  test-refresh      - Run all refresh tests"
 	@echo "  test-bank         - Run all bank contention tests"
+	@echo "  test-multi-channel - Run all multi-channel tests"
 	@echo "  test-boundary     - Run all boundary tests"
 	@echo "  test-new          - Run all new tests"
 	@echo "  test-all-full     - Run all tests (comprehensive)"

@@ -297,6 +297,15 @@ class HBM4AddressDecoder(AddressDecoder):
         else:
             result = super().decode(addr)
 
+        # Extract burst_id and byte_offset from mapping
+        mapping = self._get_hbm4_mapping(self._mapping_scheme)
+        if 'burst' in mapping:
+            burst_msb, burst_lsb, _ = mapping['burst']
+            result.burst_id = (addr >> burst_lsb) & ((1 << (burst_msb - burst_lsb + 1)) - 1)
+        if 'offset' in mapping:
+            offset_msb, offset_lsb, _ = mapping['offset']
+            result.byte_offset = (addr >> offset_lsb) & ((1 << (offset_msb - offset_lsb + 1)) - 1)
+
         return result
 
     def get_channel_id(self, addr: int) -> int:

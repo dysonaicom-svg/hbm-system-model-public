@@ -1298,14 +1298,33 @@ class DFI5Interface:
         self.phy.calibration_data[key] = value
 
     def get_bandwidth_gbs(self) -> float:
-        """Get current bandwidth in GB/s
+        """Get theoretical bandwidth in GB/s
+
+        Uses the HBM4 formula: data_rate (GT/s) × io_width (bits) / 8
+        For HBM4 @ 8 GT/s with 2048-bit width: 8 × 2048 / 8 = 2048 GB/s
+
+        Note: This returns the theoretical peak bandwidth for the full interface.
 
         Returns:
-            Bandwidth based on current frequency
+            Theoretical bandwidth in GB/s
         """
-        # DFI bandwidth = frequency × width / 8
-        # Assuming 64-bit per channel
-        return self.frequency_mhz * 64 / 8
+        # HBM4 bandwidth formula: data_rate (GT/s) × io_width (bits) / 8 = GB/s
+        # For HBM4: 8 GT/s × 2048 bits / 8 = 2048 GB/s
+        io_width = 2048  # HBM4 interface width in bits
+        # Convert DFI frequency (in MHz) to GT/s
+        # DFI frequency represents the interface clock, not the memory data rate
+        # For HBM4 at 8 GT/s, the DFI clock is 800 MHz
+        # So we use the stored frequency to compute the actual data rate
+        data_rate_gtps = self.frequency_mhz / 100  # 800 MHz → 8 GT/s
+        return data_rate_gtps * io_width / 8
+
+    def get_bandwidth_tbs(self) -> float:
+        """Get theoretical bandwidth in TB/s
+
+        Returns:
+            Theoretical bandwidth in TB/s
+        """
+        return self.get_bandwidth_gbs() / 1000
 
     def is_ready(self) -> bool:
         """Check if interface is ready for commands

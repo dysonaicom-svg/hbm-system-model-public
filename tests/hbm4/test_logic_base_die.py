@@ -302,7 +302,8 @@ class TestBankStateTracking:
 
         # Activate first
         lbd.activate_bank(channel_id=0, bank_id=0, row=0x1000)
-        for _ in range(25):  # Wait for tRAS
+        # Wait for tRAS (HBM3Timing.tRAS = 42 cycles)
+        for _ in range(50):
             lbd.tick()
 
         can_pre = lbd.can_precharge_bank(channel_id=0, bank_id=0)
@@ -312,7 +313,8 @@ class TestBankStateTracking:
         """Test precharging a bank"""
         lbd = HBM4LogicBaseDie()
         lbd.activate_bank(channel_id=0, bank_id=0, row=0x1000)
-        for _ in range(25):
+        # Wait for tRAS
+        for _ in range(50):
             lbd.tick()
 
         success = lbd.precharge_bank(channel_id=0, bank_id=0)
@@ -328,7 +330,8 @@ class TestBankStateTracking:
         assert can_read is False  # Bank not active
 
         lbd.activate_bank(channel_id=0, bank_id=0, row=0x1000)
-        for _ in range(10):  # Wait for tRCD
+        # Wait for tRCD (HBM3Timing.tRCD = 16 cycles)
+        for _ in range(20):
             lbd.tick()
 
         can_read = lbd.can_read_bank(channel_id=0, bank_id=0)
@@ -338,7 +341,7 @@ class TestBankStateTracking:
         """Test issuing a read to a bank"""
         lbd = HBM4LogicBaseDie()
         lbd.activate_bank(channel_id=0, bank_id=0, row=0x1000)
-        for _ in range(10):
+        for _ in range(20):
             lbd.tick()
 
         success = lbd.read_bank(channel_id=0, bank_id=0)
@@ -351,7 +354,8 @@ class TestBankStateTracking:
         assert can_write is False
 
         lbd.activate_bank(channel_id=0, bank_id=0, row=0x1000)
-        for _ in range(10):
+        # Wait for tRCD (HBM3Timing.tRCD = 16 cycles)
+        for _ in range(20):
             lbd.tick()
 
         can_write = lbd.can_write_bank(channel_id=0, bank_id=0)
@@ -361,7 +365,7 @@ class TestBankStateTracking:
         """Test issuing a write to a bank"""
         lbd = HBM4LogicBaseDie()
         lbd.activate_bank(channel_id=0, bank_id=0, row=0x1000)
-        for _ in range(10):
+        for _ in range(20):
             lbd.tick()
 
         success = lbd.write_bank(channel_id=0, bank_id=0)

@@ -680,6 +680,8 @@ class HBM4PowerEstimator:
         for ch in self.channels:
             ch.update_energy(cycles, state)
             ch.state = state
+        # Advance time
+        self.tick(cycles)
 
     def record_command(self, channel_id: int, cmd: CommandType):
         """Record a command on a channel

@@ -1,0 +1,2 @@
+pattern,request_rate,hbm_version,total_requests,completed,row_hit_rate,avg_latency,max_latency,throughput_gbps,bandwidth_efficiency,requests_per_second,efficiency,p50_latency,p95_latency,p99_latency,channel_balance_score,active_channels,total_channels,qos_fairness_index,wall_clock_time_ms
+sequential,0.5,hbm3,12851,12850,0.0,2.4309727626459146,30,0.08224321262549317,5.019727333098948e-05,4595.643515188351,0.5020117973358335,1.321398131882446,2.77778455012964,3.499366485496902,1.0,1,16,0.0,2796.126365661621

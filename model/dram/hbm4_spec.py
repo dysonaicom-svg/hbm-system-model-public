@@ -110,7 +110,7 @@ class HBM4Spec:
     ADDR_PCH_BITS: int = 1                # 2 pseudo-channels per channel
     ADDR_BG_BITS: int = 3                 # 8 bank groups
     ADDR_BANK_BITS: int = 4              # 16 banks per group
-    ADDR_ROW_BITS: int = 16               # 64K rows
+    ADDR_ROW_BITS: int = 19               # 512K rows (for 4TB capacity)
     ADDR_COL_BITS: int = 6                # 64 columns
     ADDR_BURST_BITS: int = 2              # 4-beat burst alignment
 

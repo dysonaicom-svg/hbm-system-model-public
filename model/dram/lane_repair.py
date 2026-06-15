@@ -39,10 +39,11 @@ Based on:
   - Synopsys HBM4 Controller IP
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import random
+import struct
 
 
 class RepairStatus(Enum):
@@ -318,9 +319,10 @@ class HBM4LaneRepairModel:
         """Perform repair by allocating first available spare lane.
 
         This is the main repair operation - it:
-          1. Adds the failed lane to the track list (if not already tracked)
-          2. Finds the first available spare lane
-          3. Creates the repair mapping entry
+          1. Checks if lane is already remapped (return existing spare)
+          2. Adds the failed lane to the track list (if not already tracked)
+          3. Finds the first available spare lane
+          4. Creates the repair mapping entry
 
         Args:
             channel_id: Channel to repair
@@ -334,6 +336,11 @@ class HBM4LaneRepairModel:
             return None
 
         rm = self._repair_maps[channel_id]
+
+        # Check if lane is already remapped - return existing spare
+        for entry in rm.repair_entries:
+            if entry.failed_lane == failed_lane:
+                return entry.spare_lane
 
         # Add failed lane if not already tracked
         if failed_lane not in rm.failed_lanes:
@@ -535,3 +542,248 @@ class HBM4LaneRepairModel:
         self._total_repairs = 0
         self._total_failed_lanes = 0
         self._unrepairable_channels.clear()
+
+    # ==================== Repair Sequence Generation ====================
+
+    def generate_repair_sequence(self, channel_id: int) -> Optional[List[Dict[str, Any]]]:
+        """Generate repair programming sequence for eFuse/fuse box.
+
+        Creates a sequence of repair entries that can be programmed into
+        non-volatile storage (eFuses) for permanent lane remapping.
+
+        Args:
+            channel_id: Channel to generate sequence for
+
+        Returns:
+            List of repair entries, each containing:
+              - failed_lane: Original lane index
+              - spare_lane: Replacement spare lane index
+              - repair_type: Type of repair ("bit", "byte", "channel")
+              - encoding: Encoded value for fuse programming
+            Returns None if channel doesn't exist or has no repairs
+        """
+        if channel_id not in self._repair_maps:
+            return None
+
+        rm = self._repair_maps[channel_id]
+        if not rm.repair_entries:
+            return None
+
+        sequence = []
+        for entry in rm.repair_entries:
+            sequence.append({
+                'failed_lane': entry.failed_lane,
+                'spare_lane': entry.spare_lane,
+                'repair_type': entry.repair_type,
+                'encoding': self._encode_repair_entry(entry),
+            })
+
+        return sequence
+
+    def _encode_repair_entry(self, entry: LaneRepairEntry) -> int:
+        """Encode repair entry into a single integer for fuse programming.
+
+
+        Encoding format (32 bits):
+          [31:24] - Repair type (0=bit, 1=byte, 2=channel)
+          [23:16] - Channel ID (0-255)
+          [15:8]  - Failed lane (0-255)
+          [7:0]   - Spare lane (0-255)
+
+        Args:
+            entry: Repair entry to encode
+
+        Returns:
+            32-bit encoded value
+        """
+        type_map = {'bit': 0, 'byte': 1, 'channel': 2}
+        type_val = type_map.get(entry.repair_type, 0)
+
+        encoding = (type_val << 24) | (entry.channel_id << 16) | \
+                   (entry.failed_lane << 8) | entry.spare_lane
+        return encoding
+
+    def decode_repair_entry(self, encoding: int) -> Dict[str, Any]:
+        """Decode a fused repair entry back to components.
+
+        Args:
+            encoding: 32-bit encoded value
+
+        Returns:
+            Dictionary with decoded fields:
+              - repair_type: String ("bit", "byte", "channel")
+              - channel_id: Channel number
+              - failed_lane: Original lane index
+              - spare_lane: Replacement spare index
+        """
+        type_map = {0: 'bit', 1: 'byte', 2: 'channel'}
+        type_val = (encoding >> 24) & 0xFF
+        channel_id = (encoding >> 16) & 0xFF
+        failed_lane = (encoding >> 8) & 0xFF
+        spare_lane = encoding & 0xFF
+
+        return {
+            'repair_type': type_map.get(type_val, 'bit'),
+            'channel_id': channel_id,
+            'failed_lane': failed_lane,
+            'spare_lane': spare_lane,
+        }
+
+    def generate_bulk_repair_sequence(self) -> Dict[int, List[Dict[str, Any]]]:
+        """Generate repair sequences for all channels.
+
+        Creates a complete programming sequence for all channels with repairs.
+        Useful for mass programming of eFuses during manufacturing.
+
+        Returns:
+            Dictionary mapping channel_id -> list of repair entries
+        """
+        bulk_sequence = {}
+        for ch_id in self._repair_maps:
+            seq = self.generate_repair_sequence(ch_id)
+            if seq:
+                bulk_sequence[ch_id] = seq
+        return bulk_sequence
+
+    def export_repair_map(self, channel_id: int) -> Optional[Dict[str, Any]]:
+        """Export complete repair map for a channel.
+
+        Creates a serializable dictionary representation of the repair state
+        for persistence or transmission to other systems.
+
+        Args:
+            channel_id: Channel to export
+
+        Returns:
+            Dictionary containing:
+              - channel_id: Channel number
+              - total_lanes: Number of data lanes
+              - total_spares: Number of spare lanes
+              - repair_entries: List of repair mappings
+              - status: Repair status string
+              - encoding: Encoded fuse values for each repair
+        """
+        if channel_id not in self._repair_maps:
+            return None
+
+        rm = self._repair_maps[channel_id]
+        entries = []
+        for entry in rm.repair_entries:
+            entries.append({
+                'failed_lane': entry.failed_lane,
+                'spare_lane': entry.spare_lane,
+                'repair_type': entry.repair_type,
+                'encoding': self._encode_repair_entry(entry),
+            })
+
+        return {
+            'channel_id': channel_id,
+            'total_lanes': rm.total_lanes,
+            'total_spares': rm.total_spares,
+            'repair_entries': entries,
+            'status': rm.status.value,
+            'failed_lanes': list(rm.failed_lanes),
+        }
+
+    def import_repair_map(self, data: Dict[str, Any]) -> bool:
+        """Import repair map from serialized data.
+
+        Restores repair state from a previously exported repair map.
+        Useful for loading manufacturing test results.
+
+        Args:
+            data: Dictionary from export_repair_map()
+
+        Returns:
+            True if import succeeded
+        """
+        try:
+            channel_id = data['channel_id']
+            total_lanes = data['total_lanes']
+            total_spares = data['total_spares']
+
+            # Configure channel
+            self.configure_channel(channel_id, total_lanes, total_spares)
+
+            # Reset existing state
+            self.reset_channel(channel_id)
+
+            # Restore repairs
+            for entry_data in data['repair_entries']:
+                failed_lane = entry_data['failed_lane']
+                spare_lane = entry_data['spare_lane']
+                repair_type = entry_data['repair_type']
+
+                self.add_failed_lane(channel_id, failed_lane)
+                self.allocate_spare(channel_id, failed_lane, spare_lane, repair_type)
+
+            return True
+        except (KeyError, TypeError):
+            return False
+
+    def verify_repair_integrity(self, channel_id: int) -> Dict[str, Any]:
+        """Verify repair state integrity for a channel.
+
+        Checks that repair mappings are internally consistent:
+          - No duplicate failed lanes
+          - No duplicate spare lanes
+          - All spare lanes are valid (in spare range)
+          - Repair count matches entry count
+
+        Args:
+            channel_id: Channel to verify
+
+        Returns:
+            Dictionary with:
+              - valid: Boolean indicating if state is valid
+              - errors: List of error strings (empty if valid)
+              - warnings: List of warning strings
+        """
+        if channel_id not in self._repair_maps:
+            return {'valid': False, 'errors': ['Channel not found'], 'warnings': []}
+
+        rm = self._repair_maps[channel_id]
+        errors = []
+        warnings = []
+
+        # Check for duplicate failed lanes
+        if len(rm.failed_lanes) != len(set(rm.failed_lanes)):
+            errors.append('Duplicate failed lanes detected')
+
+        # Check for duplicate spare lanes
+        if len(rm.spare_lanes) != len(set(rm.spare_lanes)):
+            errors.append('Duplicate spare lanes detected')
+
+        # Check spare lane range
+        spare_base = rm.total_lanes
+        spare_top = rm.total_lanes + rm.total_spares
+        for spare in rm.spare_lanes:
+            if spare < spare_base or spare >= spare_top:
+                errors.append(f'Invalid spare lane {spare} (valid range: {spare_base}-{spare_top-1})')
+
+        # Check failed lane range
+        for failed in rm.failed_lanes:
+            if failed < 0 or failed >= rm.total_lanes:
+                errors.append(f'Invalid failed lane {failed} (valid range: 0-{rm.total_lanes-1})')
+
+        # Check repair count matches
+        if rm.repair_count != len(rm.repair_entries):
+            errors.append(f'Repair count mismatch: {rm.repair_count} != {len(rm.repair_entries)}')
+
+        # Check entry consistency
+        for entry in rm.repair_entries:
+            if entry.channel_id != channel_id:
+                errors.append(f'Entry channel mismatch: {entry.channel_id} != {channel_id}')
+
+        # Warnings
+        if rm.available_spares == 0 and rm.status != RepairStatus.UNREPAIRABLE:
+            warnings.append('All spares used')
+
+        if rm.status == RepairStatus.UNREPAIRABLE:
+            warnings.append('Channel marked unrepairable')
+
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors,
+            'warnings': warnings,
+        }

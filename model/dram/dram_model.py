@@ -281,13 +281,13 @@ class DRAMModel:
             self.set_time(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
 
-            success = bank.activate(row_id)
+            success, error_msg = bank.activate(row_id)
 
             if success:
                 self.stats.add_activation_to_channel(channel_id)
                 return DRAMResponse(success=True, latency_cycles=self.timing.tRCD)
             else:
-                return DRAMResponse(success=False, error="Activation failed")
+                return DRAMResponse(success=False, error=error_msg or "Activation failed")
 
         except Exception as e:
             return DRAMResponse(success=False, error=str(e))

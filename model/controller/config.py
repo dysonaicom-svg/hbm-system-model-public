@@ -174,26 +174,26 @@ HBM3_DEFAULT = HBMConfig(
 
 
 # HBM4 默认配置 (基于 JEDEC JESD270-4A)
-# 特点: 8 GHz DDR, 16通道, 更高带宽
+# 特点: 8 GT/s DDR (tCK=125ps), 32 channels per stack, 2 TB/s bandwidth
 HBM4_DEFAULT = HBMConfig(
-    stack_count=4,                      # HBM4 支持最多 8 stacks
-    channels_per_stack=16,              # HBM4 每个 stack 16 通道
+    stack_count=4,                      # HBM4 支持最多 4 stacks
+    channels_per_stack=32,              # HBM4: 32 channels per stack
     pseudo_channels_per_channel=2,
     banks_per_pseudo_channel=16,
     bank_groups_per_channel=8,
     row_size=2048,
-    burst_length=32,
-    data_rate=12.8e9,                  # 12.8 Gb/s/pin (HBM4 baseline)
-    io_width=2048,                     # 16 channels * 128 bits
-    read_latency_base=25,              # 优化后的读延迟
-    write_latency_base=8,              # 优化后的写延迟
-    phy_latency=15,                    # 更快的 PHY
-    queue_depth=64,                     # 更大队列深度
-    max_outstanding=32,               # 更高并发
+    burst_length=4,                      # FLINE burst length
+    data_rate=8.0e9,                    # 8 GT/s DDR (HBM4 baseline)
+    io_width=2048,                       # 32 channels * 64 bits (or 16 channels * 128 bits)
+    read_latency_base=25,               # Optimized read latency
+    write_latency_base=8,               # Optimized write latency
+    phy_latency=15,                     # Faster PHY
+    queue_depth=64,                      # Larger queue depth
+    max_outstanding=32,                 # Higher concurrency
     address_mapping="rbc",
     scheduler_mode="fr-fcfs",
     write_drain_policy="threshold",
     refresh_interval=3.9e-6,
-    refresh_penalty=180e-9,           # 更快的刷新
-    timing=HBM4Timing.for_12gbps(),    # 使用 12Gbps 时序
+    refresh_penalty=180e-9,            # Faster refresh (tRFC=180 cycles @ 8GHz)
+    timing=HBM4Timing.for_8gbps(),       # Use 8 GT/s timing
 )

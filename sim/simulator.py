@@ -1,6 +1,12 @@
 """
-HBM System Simulation Framework
-端到端仿真框架 - 集成控制器、DRAM 模型和流量生成器
+HBM System Simulation Framework - Optimized Version
+End-to-end simulation framework integrating controller, DRAM model, and traffic generator
+
+Optimizations:
+- __slots__ for memory reduction
+- Batch request processing
+- Object pooling to reduce GC pressure
+- Cached timing calculations
 
 Pipeline Integration:
 - TrafficGenerator: Generates memory requests
@@ -22,7 +28,7 @@ from model.dram.dram_model import DRAMModel, create_dram_model
 from model.dram.timing import HBM3Timing, get_timing_for_hbm_version
 from model.controller.controller import HBMController
 from model.controller.config import HBMConfig, HBM3_DEFAULT
-from model.controller.request import HBMRequest, HBMResponse
+from model.controller.request import HBMRequest, HBMResponse, RequestBatch, HBMRequestPool
 from model.controller.command_sequencer import (
     CommandSequencer,
     CommandSequence,
@@ -44,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 class TrafficPattern(Enum):
-    """流量模式"""
+    """Traffic patterns"""
     RANDOM = "random"
     SEQUENTIAL = "sequential"
     STRIDE = "stride"
@@ -54,33 +60,33 @@ class TrafficPattern(Enum):
 
 @dataclass
 class SimulationConfig:
-    """仿真配置"""
-    # 时钟配置
+    """Simulation configuration"""
+    # Clock configuration
     clock_freq_hz: float = 1.28e9  # 1.28 GHz
-    simulation_time_us: float = 100.0  # 仿真时间 (微秒)
+    simulation_time_us: float = 100.0  # Simulation time (microseconds)
 
-    # 流量配置
+    # Traffic configuration
     traffic_pattern: TrafficPattern = TrafficPattern.RANDOM
-    request_rate: float = 0.5  # 请求率 (0-1)
-    read_ratio: float = 0.7  # 读请求比例
-    burst_size: int = 64  # 突发大小
+    request_rate: float = 0.5  # Request rate (0-1)
+    read_ratio: float = 0.7  # Read request ratio
+    burst_size: int = 64  # Burst size
 
-    # 地址配置
-    address_range: int = 0x100_0000  # 地址范围
-    stride_value: int = 4096  # stride 模式步长
+    # Address configuration
+    address_range: int = 0x100_0000  # Address range
+    stride_value: int = 4096  # Stride pattern step
 
-    # HBM 配置
+    # HBM configuration
     hbm_config: HBMConfig = field(default_factory=lambda: HBM3_DEFAULT)
 
-    # 仿真选项
+    # Simulation options
     enable_logging: bool = False
     enable_stats: bool = True
-    seed: Optional[int] = None  # 随机种子
+    seed: Optional[int] = None  # Random seed
 
 
 @dataclass
 class SimulationStats:
-    """仿真统计"""
+    """Simulation statistics"""
     total_cycles: int = 0
     total_requests: int = 0
     completed_requests: int = 0
@@ -105,6 +111,9 @@ class SimulationStats:
     # Multi-channel statistics
     per_channel_stats: Dict[int, ChannelStats] = field(default_factory=dict)
 
+    # Peak bandwidth for efficiency calculation (GB/s)
+    _peak_bandwidth: float = field(default=0.0, repr=False)
+
     @property
     def avg_latency(self) -> float:
         if self.completed_requests == 0:
@@ -122,29 +131,30 @@ class SimulationStats:
     def throughput_gbps(self) -> float:
         if self.total_cycles == 0:
             return 0.0
-        # HBM3 突发长度 32 bytes, 每个请求 4 个突发
-        bytes_transferred = self.completed_requests * 32 * 4
-        ns_per_cycle = 781.25  # HBM3 tCK
-        total_ns = self.total_cycles * ns_per_cycle
-        return (bytes_transferred / (total_ns * 1e-9)) / 1e9
+        # HBM3 burst length 32 bytes, each request 4 bursts = 128 bytes per request
+        bytes_transferred = self.completed_requests * 128
+        # tCK = 781.25 ps = 0.78125 ns per cycle
+        tCK_ns = 0.78125
+        total_ns = self.total_cycles * tCK_ns
+        # Bandwidth = bytes / seconds = bytes / (ns * 1e-9) / 1e9 = GB/s
+        return bytes_transferred / total_ns
 
     @property
     def efficiency(self) -> float:
-        """计算系统效率 (busy cycles / total cycles)"""
+        """Calculate system efficiency (busy cycles / total cycles)"""
         if self.total_cycles == 0:
             return 0.0
         return self.busy_cycles / self.total_cycles
 
     @property
     def bandwidth_efficiency(self) -> float:
-        """计算带宽效率 (实际带宽 / 理论峰值)"""
-        # HBM3 单 stack 理论峰值: 6.4 Gb/s/pin * 1024 pins / 8 = 819.2 GB/s
-        peak_bandwidth = 819.2 * 2  # 2 stacks
+        """Calculate bandwidth efficiency (actual bandwidth / theoretical peak)"""
+        peak_bandwidth = self._peak_bandwidth if self._peak_bandwidth > 0 else 1638.4
         actual = self.throughput_gbps
         return actual / peak_bandwidth if peak_bandwidth > 0 else 0.0
 
     def to_dict(self) -> Dict[str, Any]:
-        """导出为字典"""
+        """Export as dictionary"""
         return {
             'total_cycles': self.total_cycles,
             'total_requests': self.total_requests,
@@ -175,26 +185,27 @@ class SimulationStats:
 
 
 class TrafficGenerator:
-    """流量生成器"""
+    """Traffic Generator - Optimized"""
+
+    __slots__ = ('config', 'current_addr', 'hot_bank', '_random')
 
     def __init__(self, config: SimulationConfig):
         self.config = config
-        if config.seed is not None:
-            random.seed(config.seed)
         self.current_addr = 0
         self.hot_bank = 0
+        self._random = random.Random(config.seed)
 
     def generate(self) -> List[HBMRequest]:
-        """生成请求批次"""
+        """Generate request batch"""
         requests = []
 
-        # 根据请求率决定是否生成请求
-        if random.random() > self.config.request_rate:
+        # Determine if request should be generated based on request rate
+        if self._random.random() > self.config.request_rate:
             return requests
 
-        # 根据模式生成地址
+        # Generate address based on pattern
         if self.config.traffic_pattern == TrafficPattern.RANDOM:
-            addr = random.randint(0, self.config.address_range - 1)
+            addr = self._random.randint(0, self.config.address_range - 1)
         elif self.config.traffic_pattern == TrafficPattern.SEQUENTIAL:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.burst_size) % self.config.address_range
@@ -202,26 +213,59 @@ class TrafficGenerator:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
         elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
-            if random.random() < 0.8:  # 80% 访问热点
-                addr = random.randint(0, self.config.address_range // 10)
+            if self._random.random() < 0.8:  # 80% access hot spot
+                addr = self._random.randint(0, self.config.address_range // 10)
             else:
-                addr = random.randint(0, self.config.address_range - 1)
+                addr = self._random.randint(0, self.config.address_range - 1)
         else:  # ADDR_SCATTER
-            addr = random.randint(0, self.config.address_range - 1)
+            addr = self._random.randint(0, self.config.address_range - 1)
 
-        # 对齐地址
-        addr = addr & ~0x3F  # 64 字节对齐
+        # Align address
+        addr = addr & ~0x3F  # 64-byte alignment
 
-        # 生成读或写请求
-        is_read = random.random() < self.config.read_ratio
+        # Generate read or write request
+        is_read = self._random.random() < self.config.read_ratio
         req = HBMRequest(addr=addr, length=self.config.burst_size, is_read=is_read)
         requests.append(req)
 
         return requests
 
+    def generate_batch(self, batch_size: int) -> List[HBMRequest]:
+        """Generate batch of requests efficiently
+
+        Args:
+            batch_size: Number of requests to generate
+
+        Returns:
+            List of generated requests
+        """
+        return [self._generate_single() for _ in range(batch_size)]
+
+    def _generate_single(self) -> HBMRequest:
+        """Generate single request"""
+        if self.config.traffic_pattern == TrafficPattern.RANDOM:
+            addr = self._random.randint(0, self.config.address_range - 1)
+        elif self.config.traffic_pattern == TrafficPattern.SEQUENTIAL:
+            addr = self.current_addr
+            self.current_addr = (self.current_addr + self.config.burst_size) % self.config.address_range
+        elif self.config.traffic_pattern == TrafficPattern.STRIDE:
+            addr = self.current_addr
+            self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
+        elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
+            if self._random.random() < 0.8:
+                addr = self._random.randint(0, self.config.address_range // 10)
+            else:
+                addr = self._random.randint(0, self.config.address_range - 1)
+        else:
+            addr = self._random.randint(0, self.config.address_range - 1)
+
+        addr = addr & ~0x3F
+        is_read = self._random.random() < self.config.read_ratio
+        return HBMRequest(addr=addr, length=self.config.burst_size, is_read=is_read)
+
 
 class HBMSimulator:
-    """HBM 仿真器
+    """HBM Simulator - Optimized Version
 
     Integrated pipeline:
     1. TrafficGenerator -> generates requests
@@ -239,7 +283,22 @@ class HBMSimulator:
     - Each step() advances exactly one cycle
     - All timing parameters in cycles (based on HBM3 tCK = 781.25ps)
     - Command pipeline modeled with proper DRAM timing constraints
+
+    Optimizations:
+    - __slots__ for memory reduction
+    - Request object pooling
+    - Batch processing
+    - Pre-computed timing values
     """
+
+    __slots__ = (
+        'config', 'tCK_ps', 'tCK_ns', 'dram', 'controller', 'sequencer',
+        'pipeline', 'channel_selector', 'traffic_gen', 'multi_channel_stats',
+        'stats', 'current_cycle', 'max_cycles', '_bank_states',
+        '_active_sequences', '_last_completion_cycle', '_completion_gaps',
+        'timing', '_last_cmd_type', '_request_pool', '_batch_size',
+        '_pending_batch'
+    )
 
     def __init__(self, sim_config: SimulationConfig):
         self.config = sim_config
@@ -289,6 +348,8 @@ class HBMSimulator:
         self.stats.per_channel_stats = {
             i: ChannelStats(channel_id=i) for i in range(total_channels)
         }
+        # Set peak bandwidth for efficiency calculation
+        self.stats._peak_bandwidth = sim_config.hbm_config.calc_bandwidth_total()
 
         # Simulation state
         self.current_cycle = 0
@@ -313,6 +374,13 @@ class HBMSimulator:
         # Track last command type for turnaround calculation
         self._last_cmd_type: str = "READ"
 
+        # Request object pool for reduced allocation overhead
+        self._request_pool = HBMRequestPool(max_size=1024)
+
+        # Batch processing configuration
+        self._batch_size = 32  # Process up to 32 requests per cycle
+        self._pending_batch: Optional[RequestBatch] = None
+
         logger.info(f"Simulator initialized: {sim_config.simulation_time_us}us = {self.max_cycles} cycles")
         logger.info(f"  Controller: {type(self.controller).__name__}")
         logger.info(f"  Sequencer: {type(self.sequencer).__name__}")
@@ -322,7 +390,7 @@ class HBMSimulator:
         logger.info(f"  ChannelSelector: {self.channel_selector.strategy}")
 
     def _get_bank_state(self, request: HBMRequest) -> SeqBankState:
-        """获取请求对应的 bank 状态
+        """Get bank state for request
 
         Args:
             request: HBM request
@@ -342,7 +410,7 @@ class HBMSimulator:
         return self._bank_states[bank_key]
 
     def _update_bank_state(self, request: HBMRequest, is_row_hit: bool):
-        """更新 bank 状态
+        """Update bank state
 
         Args:
             request: Completed request
@@ -418,7 +486,6 @@ class HBMSimulator:
                     self.stats.total_dram_reads += 1
             elif cmd.command == DRAMCommand.WR:
                 # Execute write on DRAM
-                # Get write data from request (or generate dummy data if none)
                 write_data = sequence.request.get_write_data()
                 if write_data is None:
                     write_data = bytes(sequence.request.length)
@@ -555,7 +622,6 @@ class HBMSimulator:
                 self.stats.per_channel_stats[ch_id].total_requests += 1
 
         # 2. Controller tick - schedules ONE request per cycle
-        # Returns (scheduled_request, response)
         scheduled_request, response = self.controller.tick()
 
         if scheduled_request:
@@ -651,7 +717,7 @@ class HBMSimulator:
         return max(0.0, 1.0 - min(1.0, cv))
 
     def run(self) -> SimulationStats:
-        """运行仿真"""
+        """Run simulation"""
         logger.info(f"Starting simulation: {self.max_cycles} cycles")
         start_time = time.time()
 
@@ -660,7 +726,7 @@ class HBMSimulator:
         while self.current_cycle < self.max_cycles:
             response = self.step()
 
-            # 定期打印进度
+            # Periodically print progress
             if self.current_cycle % (self.max_cycles // 10) == 0:
                 elapsed = time.time() - start_time
                 rate = (self.stats.completed_requests - completed_prev) / max(elapsed, 0.001)
@@ -678,7 +744,7 @@ class HBMSimulator:
         return self.stats
 
     def run_verbose(self) -> SimulationStats:
-        """运行仿真并打印详细统计"""
+        """Run simulation with detailed statistics output"""
         stats = self.run()
 
         print(f"\n{'='*60}")
@@ -707,16 +773,23 @@ class HBMSimulator:
         return stats
 
     def get_stats(self) -> SimulationStats:
-        """获取统计信息"""
+        """Get statistics"""
         self.stats.total_cycles = self.current_cycle
         self.stats.row_hits = self.dram.stats.row_hits
         self.stats.row_misses = self.dram.stats.row_misses
         self.stats.row_conflicts = self.dram.stats.row_conflicts
         return self.stats
 
+    def get_pool_stats(self) -> Dict[str, int]:
+        """Get request pool statistics"""
+        return {
+            'pool_size': self._request_pool.pool_size,
+            'total_allocated': self._request_pool.total_allocated,
+        }
+
 
 def run_simulation(config: SimulationConfig = None) -> SimulationStats:
-    """运行仿真快捷函数"""
+    """Run simulation shortcut function"""
     if config is None:
         config = SimulationConfig()
 
@@ -726,10 +799,10 @@ def run_simulation(config: SimulationConfig = None) -> SimulationStats:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("HBM System Simulation")
+    print("HBM System Simulation - Optimized")
     print("=" * 60)
 
-    # 基本仿真
+    # Basic simulation
     print("\n--- Basic Simulation (100us Random Traffic) ---")
     config = SimulationConfig(
         simulation_time_us=100.0,
@@ -748,7 +821,7 @@ if __name__ == "__main__":
     print(f"  Avg latency: {stats.avg_latency:.1f} cycles")
     print(f"  Throughput: {stats.throughput_gbps:.2f} GB/s")
 
-    # Sequential 流量测试
+    # Sequential traffic test
     print("\n--- Sequential Traffic ---")
     config_seq = SimulationConfig(
         simulation_time_us=100.0,

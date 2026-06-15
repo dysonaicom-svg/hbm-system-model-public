@@ -633,7 +633,7 @@ class HBM4PowerEstimator:
                 'channels': self.spec.channels,
                 'io_width': self.spec.io_width,
                 'data_rate': self.spec.data_rate_gtps,
-                'bandwidth_tbs': self.spec.bandwidth,
+                'bandwidth_tbps': self.spec.bandwidth,  # Peak bandwidth in TB/s
             },
             'parameters': {
                 'vdd_mv': self.vdd_mv,

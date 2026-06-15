@@ -8,14 +8,13 @@ sys.path.insert(0, '/home/ic/JXTF/HBM')
 
 import pytest
 from sim.benchmark import (
-    HBMBenchmark,
+    HBMComprehensiveBenchmark as HBMBenchmark,
     BenchmarkResult,
-    PerformanceMetrics,
-    TrafficPattern,
     LatencyPercentiles,
-    ChannelUtilization,
+    ChannelMetrics,
     calculate_percentile,
 )
+from sim.simulator import TrafficPattern
 
 
 class TestLatencyPercentiles:
@@ -60,7 +59,7 @@ class TestChannelUtilization:
 
     def test_channel_utilization_creation(self):
         """测试通道利用率创建"""
-        ch = ChannelUtilization(
+        ch = ChannelMetrics(
             channel_id=0,
             requests=100,
             total_latency_cycles=5000,
@@ -75,7 +74,7 @@ class TestChannelUtilization:
 
     def test_channel_utilization_to_dict(self):
         """测试通道利用率转字典"""
-        ch = ChannelUtilization(channel_id=0)
+        ch = ChannelMetrics(channel_id=0)
         d = ch.to_dict()
         assert 'channel_id' in d
         assert 'utilization_percent' in d

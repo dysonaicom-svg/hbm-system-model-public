@@ -1,155 +1,206 @@
 """
-HBM Request and Response Classes
+HBM Request and Response Classes - Optimized Version
+
+Optimizations:
+- __slots__ for memory reduction
+- optimized property access
 """
 
-from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Optional, ClassVar
 
 
 class RequestState(IntEnum):
-    """请求状态枚举
-    
-    表示请求在生命周期中的状态。
+    """Request state enum.
+
+    Represents the state of a request in its lifecycle.
     """
-    PENDING = 0      # 等待调度
-    SCHEDULED = 1    # 已调度，等待执行
-    IN_PROGRESS = 2 # 执行中
-    COMPLETED = 3    # 已完成
-    FAILED = 4       # 失败
+    PENDING = 0      # Waiting for scheduling
+    SCHEDULED = 1    # Scheduled, waiting for execution
+    IN_PROGRESS = 2 # In execution
+    COMPLETED = 3    # Completed
+    FAILED = 4       # Failed
 
 
-@dataclass
+# Pre-computed state masks for fast checking
+_STATE_COMPLETED_MASK = 1 << RequestState.COMPLETED
+_STATE_FAILED_MASK = 1 << RequestState.FAILED
+_STATE_PENDING_MASK = 1 << RequestState.PENDING
+
+
+# Class variables for HBMRequest - defined at module level (not in __slots__)
+_HBMRequest_next_id: int = 0
+
+
 class HBMRequest:
-    """HBM 内存请求
+    """HBM Memory Request - Optimized Version
 
-    表示一个读或写内存请求，包含地址解码信息和状态跟踪。
+    Uses __slots__ to reduce memory footprint and improve access speed.
 
     Attributes:
-        addr: 64-bit 内存地址
-        length: 请求长度 (bytes)
-        is_read: True=读请求, False=写请求
-        qos: QoS 优先级 (0-15, 15 最高)
-        burst_length: 突发长度
-        request_id: 全局唯一请求 ID
-        arrival_time: 请求到达时间戳
-        stack_id: 解码后的 stack ID
-        channel_id: 解码后的通道 ID
-        pseudo_channel_id: 解码后的伪通道 ID
-        bank_group_id: 解码后的 bank group ID
-        bank_id: 解码后的 bank ID
-        row_id: 解码后的行 ID
-        col_id: 解码后的列 ID
-        row_hit: 是否 row hit
-        state: 当前请求状态
-        scheduled_time: 调度时间
-        completion_time: 完成时间
-        data: 写数据 (bytes, 仅写请求使用)
+        addr: 64-bit memory address
+        length: Request length (bytes)
+        is_read: True=read request, False=write request
+        qos: QoS priority (0-15, 15 highest)
+        burst_length: Burst size
+        request_id: Globally unique request ID
+        arrival_time: Request arrival timestamp
+        stack_id: Decoded stack ID
+        channel_id: Decoded channel ID
+        pseudo_channel_id: Decoded pseudo channel ID
+        bank_group_id: Decoded bank group ID
+        bank_id: Decoded bank ID
+        row_id: Decoded row ID
+        col_id: Decoded column ID
+        row_hit: Whether row hit
+        state: Current request state
+        scheduled_time: Scheduling time
+        completion_time: Completion time
+        data: Write data (bytes, for write requests only)
     """
-    addr: int                                # 64-bit address
-    length: int                             # bytes
-    is_read: bool                           # True=read, False=write
-    qos: int = 8                             # 0-15 priority
-    burst_length: int = 32                  # burst size
+    __slots__ = (
+        'addr', 'length', 'is_read', 'qos', 'burst_length',
+        'request_id', 'arrival_time',
+        'stack_id', 'channel_id', 'pseudo_channel_id',
+        'bank_group_id', 'bank_id', 'row_id', 'col_id',
+        'row_hit', 'state', 'scheduled_time', 'completion_time',
+        'data', '_is_read_completed', '_is_read_failed', '_is_read_pending',
+        'estimated_cycles'
+    )
 
-    # 内部字段 (自动生成)
-    request_id: int = field(default=0, init=False)
-    arrival_time: float = field(default=0.0, init=False)
+    def __init__(
+        self,
+        addr: int,
+        length: int,
+        is_read: bool,
+        qos: int = 8,
+        burst_length: int = 32,
+        request_id: int = 0,
+        arrival_time: float = 0.0,
+        stack_id: int = 0,
+        channel_id: int = 0,
+        pseudo_channel_id: int = 0,
+        bank_group_id: int = 0,
+        bank_id: int = 0,
+        row_id: int = 0,
+        col_id: int = 0,
+        row_hit: bool = False,
+        state: RequestState = RequestState.PENDING,
+        scheduled_time: float = 0.0,
+        completion_time: float = 0.0,
+        data: Optional[bytes] = None,
+        estimated_cycles: float = 0.0,
+    ):
+        """Initialize HBM Request"""
+        self.addr = addr
+        self.length = length
+        self.is_read = is_read
+        self.qos = qos
+        self.burst_length = burst_length
+        self.request_id = request_id
+        self.arrival_time = arrival_time
+        self.stack_id = stack_id
+        self.channel_id = channel_id
+        self.pseudo_channel_id = pseudo_channel_id
+        self.bank_group_id = bank_group_id
+        self.bank_id = bank_id
+        self.row_id = row_id
+        self.col_id = col_id
+        self.row_hit = row_hit
+        self.state = state
+        self.scheduled_time = scheduled_time
+        self.completion_time = completion_time
+        self.data = data
+        self.estimated_cycles = estimated_cycles
 
-    # 解码后的地址字段
-    stack_id: int = 0
-    channel_id: int = 0
-    pseudo_channel_id: int = 0
-    bank_group_id: int = 0
-    bank_id: int = 0
-    row_id: int = 0
-    col_id: int = 0
-
-    # 状态
-    row_hit: bool = False
-    state: RequestState = RequestState.PENDING
-    scheduled_time: float = 0.0
-    completion_time: float = 0.0
-
-    # 写数据 (可选)
-    data: Optional[bytes] = None
-
-    # 类变量用于生成唯一 ID
-    _next_id: ClassVar[int] = 0
-    _id_lock: ClassVar[bool] = False
-    
-    def __post_init__(self):
-        """初始化自动生成的字段"""
-        # 生成唯一请求 ID
+        # Generate unique request ID using module-level counter
+        global _HBMRequest_next_id
         if self.request_id == 0:
-            HBMRequest._next_id += 1
-            self.request_id = HBMRequest._next_id
+            _HBMRequest_next_id += 1
+            self.request_id = _HBMRequest_next_id
+
+        # Initialize cached flags
+        self._is_read_completed = self.state == RequestState.COMPLETED
+        self._is_read_failed = self.state == RequestState.FAILED
+        self._is_read_pending = self.state == RequestState.PENDING
 
     def set_arrival_time(self, cycle: float):
-        """设置到达时间（仿真周期）"""
+        """Set arrival time (simulation cycle)"""
         self.arrival_time = cycle
 
     def get_latency_cycles(self) -> float:
-        """计算延迟（周期）"""
+        """Calculate latency (cycles)"""
         if self.completion_time > 0 and self.arrival_time > 0:
             return self.completion_time - self.arrival_time
         return 0.0
-    
+
     @property
     def latency(self) -> float:
-        """计算请求延迟 (秒)"""
+        """Calculate request latency (seconds)"""
         if self.completion_time > 0:
             return self.completion_time - self.arrival_time
         return 0.0
-    
+
     @property
     def is_completed(self) -> bool:
-        """检查请求是否已完成"""
-        return self.state == RequestState.COMPLETED
-    
+        """Check if request is completed"""
+        return self._is_read_completed
+
     @property
     def is_failed(self) -> bool:
-        """检查请求是否失败"""
-        return self.state == RequestState.FAILED
-    
+        """Check if request failed"""
+        return self._is_read_failed
+
     @property
     def is_pending(self) -> bool:
-        """检查请求是否等待中"""
-        return self.state == RequestState.PENDING
-    
+        """Check if request is pending"""
+        return self._is_read_pending
+
     def mark_scheduled(self, timestamp: float):
-        """标记请求已调度"""
+        """Mark request as scheduled"""
         self.state = RequestState.SCHEDULED
         self.scheduled_time = timestamp
-    
+        self._update_state_flags()
+
     def mark_in_progress(self):
-        """标记请求执行中"""
+        """Mark request as in progress"""
         self.state = RequestState.IN_PROGRESS
-    
+        self._update_state_flags()
+
     def mark_completed(self, timestamp: float):
-        """标记请求已完成"""
+        """Mark request as completed"""
         self.state = RequestState.COMPLETED
         self.completion_time = timestamp
-    
+        self._is_read_completed = True
+        self._update_state_flags()
+
     def mark_failed(self):
-        """标记请求失败"""
+        """Mark request as failed"""
         self.state = RequestState.FAILED
+        self._is_read_failed = True
+        self._update_state_flags()
+
+    def _update_state_flags(self):
+        """Update cached state flags"""
+        self._is_read_completed = self.state == RequestState.COMPLETED
+        self._is_read_failed = self.state == RequestState.FAILED
+        self._is_read_pending = self.state == RequestState.PENDING
 
     def set_write_data(self, data: bytes):
-        """设置写数据
+        """Set write data
 
         Args:
-            data: 要写入的数据
+            data: Data to write
         """
         if self.is_read:
             raise ValueError("Cannot set write data on a read request")
         self.data = data
 
     def get_write_data(self) -> Optional[bytes]:
-        """获取写数据
+        """Get write data
 
         Returns:
-            写数据 (bytes) 或 None
+            Write data (bytes) or None
         """
         return self.data
 
@@ -160,31 +211,110 @@ class HBMRequest:
                 f"qos={self.qos}, state={self.state.name})")
 
 
-@dataclass
 class HBMResponse:
-    """HBM 响应
+    """HBM Response - Optimized Version
 
-    表示请求完成后的响应。
+    Uses __slots__ to reduce memory footprint.
 
     Attributes:
-        request_id: 关联的请求 ID
-        status: 状态 ("OK", "SLVERR", "DECERR")
-        latency: 响应延迟 (纳秒)
-        channel_id: 响应的通道 ID (HBM4 特有)
-        bank_id: 响应的 bank ID
-        data: 读数据 (读请求时)
+        request_id: Associated request ID
+        status: Status ("OK", "SLVERR", "DECERR")
+        latency: Response latency (nanoseconds)
+        channel_id: Response channel ID (HBM4 specific)
+        bank_id: Response bank ID
+        data: Read data (for read requests)
     """
-    request_id: int
-    status: str = "OK"                      # "OK", "SLVERR", "DECERR"
-    latency: float = 0.0                    # response latency in ns
-    channel_id: int = 0                     # HBM4 channel
-    bank_id: int = 0                        # bank in channel
-    data: Optional[bytes] = None            # read data
-    
+    __slots__ = ('request_id', 'status', 'latency', 'channel_id', 'bank_id', 'data')
+
+    def __init__(
+        self,
+        request_id: int,
+        status: str = "OK",
+        latency: float = 0.0,
+        channel_id: int = 0,
+        bank_id: int = 0,
+        data: Optional[bytes] = None,
+    ):
+        self.request_id = request_id
+        self.status = status
+        self.latency = latency
+        self.channel_id = channel_id
+        self.bank_id = bank_id
+        self.data = data
+
     @property
     def is_success(self) -> bool:
-        """检查响应是否成功"""
+        """Check if response is successful"""
         return self.status == "OK"
-    
+
     def __repr__(self) -> str:
         return f"HBMResponse(id={self.request_id}, status={self.status}, latency={self.latency:.2f}ns)"
+
+
+# Batch request type for efficient processing
+class RequestBatch:
+    """Batch of requests for efficient processing"""
+    __slots__ = ('requests', 'size', 'read_count', 'write_count')
+
+    def __init__(self, requests: list):
+        self.requests = requests
+        self.size = len(requests)
+        self.read_count = sum(1 for r in requests if r.is_read)
+        self.write_count = len(requests) - self.read_count
+
+    @classmethod
+    def from_list(cls, requests: list) -> 'RequestBatch':
+        """Create batch from request list"""
+        return cls(requests=requests)
+
+
+# Pool for reusing request objects (reduces GC pressure)
+class HBMRequestPool:
+    """Object pool for HBMRequest to reduce allocation overhead"""
+
+    __slots__ = ('_pool', '_max_size', '_allocated')
+
+    def __init__(self, max_size: int = 1024):
+        self._pool = []
+        self._max_size = max_size
+        self._allocated = 0
+
+    def acquire(self, addr: int, length: int, is_read: bool, **kwargs) -> HBMRequest:
+        """Acquire a request from pool or create new"""
+        if self._pool:
+            req = self._pool.pop()
+            # Reinitialize fields
+            req.addr = addr
+            req.length = length
+            req.is_read = is_read
+            for k, v in kwargs.items():
+                if hasattr(req, k):
+                    setattr(req, k, v)
+            req._update_state_flags()
+            return req
+        else:
+            self._allocated += 1
+            return HBMRequest(addr=addr, length=length, is_read=is_read, **kwargs)
+
+    def release(self, req: HBMRequest):
+        """Return request to pool"""
+        if len(self._pool) < self._max_size:
+            # Reset fields to defaults
+            req.state = RequestState.PENDING
+            req.completion_time = 0.0
+            req.scheduled_time = 0.0
+            req.row_hit = False
+            req.data = None
+            self._pool.append(req)
+
+    def clear(self):
+        """Clear pool"""
+        self._pool.clear()
+
+    @property
+    def pool_size(self) -> int:
+        return len(self._pool)
+
+    @property
+    def total_allocated(self) -> int:
+        return self._allocated

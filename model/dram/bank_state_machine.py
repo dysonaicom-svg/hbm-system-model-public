@@ -1,52 +1,77 @@
 """
-HBM DRAM Bank State Machine
-参考设计文档 2026-06-15-hbm-system-model-design.md 的 5.2.1 和 5.2.2 节
+HBM DRAM Bank State Machine - Optimized Version
+Reference design document 2026-06-15-hbm-system-model-design.md Section 5.2.1 and 5.2.2
 
-Bank 状态机实现:
-- IDLE: Bank 空闲
-- ACTIVE: Bank 已激活，行打开
-- READING: 读操作中
-- WRITING: 写操作中
-- REFRESHING: 刷新中
+Optimizations:
+- __slots__ for memory reduction
+- Frozen dataclass for immutable types
+- Batch state checks
+- Pre-computed timing values
 """
 
-from enum import Enum
+from enum import IntEnum
 from dataclasses import dataclass, field
-from typing import Optional
-import time
-
-from model.dram.timing import HBM3Timing
+from typing import Optional, List, Tuple
+import sys
 
 
-class BankStateEnum(Enum):
-    """Bank 状态枚举
+class BankStateEnum(IntEnum):
+    """Bank state enum
 
-    与 RTL 对齐:
-    - RTL: 3-bit 编码 000=IDLE, 001=ACTIVE, 010=BUSY, 011=REFRESH, 100=POWERDN, 101=SELFREF
+    Aligned with RTL 3-bit encoding:
+    - RTL: 000=IDLE, 001=ACTIVE, 010=BUSY, 011=REFRESH, 100=POWERDN, 101=SELFREF
     """
-    IDLE = 0       # 000 - Bank 空闲
-    ACTIVE = 1     # 001 - Bank 已激活
-    BUSY = 2       # 010 - Bank 忙 (READ/WRITE 中)
-    REFRESHING = 3 # 011 - 刷新中
-    POWERDN = 4    # 100 - 掉电
-    SELFREF = 5     # 101 - 自刷新
+    IDLE = 0       # 000 - Bank idle
+    ACTIVE = 1     # 001 - Bank activated
+    BUSY = 2       # 010 - Bank busy (READ/WRITE in progress)
+    REFRESHING = 3 # 011 - Refreshing
+    POWERDN = 4    # 100 - Power down
+    SELFREF = 5    # 101 - Self refresh
 
-    # 别名以兼容旧代码
-    READING = 2    # 与 BUSY 相同
-    WRITING = 2    # 与 BUSY 相同
+    # Aliases for backward compatibility with HBM3 naming
+    READING = 2    # Same as BUSY
+    WRITING = 2    # Same as BUSY
 
 
-@dataclass
+class OperationType(IntEnum):
+    """Operation type enum"""
+    NONE = 0
+    READ = 1
+    WRITE = 2
+    REFRESH = 3
+
+
+# Pre-computed state masks for fast checking
+_STATE_IDLE = 1 << BankStateEnum.IDLE
+_STATE_ACTIVE = 1 << BankStateEnum.ACTIVE
+_STATE_BUSY = 1 << BankStateEnum.BUSY
+_STATE_REFRESHING = 1 << BankStateEnum.REFRESHING
+
+
 class Bank:
-    """DRAM Bank 状态"""
-    bank_id: int
-    state: BankStateEnum = BankStateEnum.IDLE
-    open_row: int = -1
-    activate_time: float = -1.0  # 使用 -1.0 表示从未激活
-    read_time: float = 0.0
-    write_time: float = 0.0
-    precharge_time: float = -1.0  # 使用 -1.0 表示从未预充电
-    refresh_time: float = 0.0
+    """DRAM Bank State
+
+    Represents the state of a single DRAM bank.
+    """
+    __slots__ = ('bank_id', 'state', 'open_row', 'activate_time', 'precharge_time',
+                 'last_operation_time', 'read_start_time', 'read_complete_time',
+                 'write_start_time', 'write_complete_time', 'refresh_time',
+                 'refresh_complete_time', '_cached_state')
+
+    def __init__(self, bank_id: int):
+        self.bank_id = bank_id
+        self.state = BankStateEnum.IDLE
+        self.open_row = -1
+        self.activate_time = -1.0
+        self.precharge_time = -1.0
+        self.last_operation_time = 0.0
+        self.read_start_time = -1.0
+        self.read_complete_time = -1.0
+        self.write_start_time = -1.0
+        self.write_complete_time = -1.0
+        self.refresh_time = -1.0
+        self.refresh_complete_time = -1.0
+        self._cached_state = 1 << BankStateEnum.IDLE
 
     @property
     def is_idle(self) -> bool:
@@ -57,159 +82,723 @@ class Bank:
         return self.state == BankStateEnum.ACTIVE
 
     @property
+    def is_busy(self) -> bool:
+        return self.state == BankStateEnum.BUSY
+
+    @property
+    def is_refresh(self) -> bool:
+        return self.state == BankStateEnum.REFRESHING
+
+    @property
+    def is_powered_down(self) -> bool:
+        return self.state == BankStateEnum.POWERDN
+
+    @property
+    def is_self_refresh(self) -> bool:
+        return self.state == BankStateEnum.SELFREF
+
+    @property
     def row_open(self) -> bool:
         return self.is_active and self.open_row >= 0
+
+    @property
+    def has_been_activated(self) -> bool:
+        """Check if bank has ever been activated"""
+        return self.activate_time >= 0
+
+    @property
+    def has_been_precharged(self) -> bool:
+        """Check if bank has ever been precharged"""
+        return self.precharge_time >= 0
+
+    def update_state(self, new_state: BankStateEnum):
+        """Update state with cached flag update"""
+        self.state = new_state
+        self._cached_state = 1 << new_state
 
     def __repr__(self) -> str:
         row_str = f"row=0x{self.open_row:x}" if self.open_row >= 0 else "row=closed"
         return f"Bank{self.bank_id}({self.state.name}, {row_str})"
 
 
+class TimingViolation:
+    """Timing violation record"""
+    __slots__ = ('violation_type', 'required_time', 'actual_time', 'time_available', 'description')
+
+    def __init__(self, violation_type: str, required_time: float, actual_time: float,
+                 time_available: float, description: str):
+        self.violation_type = violation_type
+        self.required_time = required_time
+        self.actual_time = actual_time
+        self.time_available = time_available
+        self.description = description
+
+
+class TimingViolationList:
+    """Efficient timing violation list"""
+    __slots__ = ('_violations', '_capacity')
+
+    def __init__(self, capacity: int = 16):
+        self._violations = []
+        self._capacity = capacity
+
+    def append(self, violation: TimingViolation):
+        self._violations.append(violation)
+
+    def clear(self):
+        self._violations.clear()
+
+    def get_all(self) -> list:
+        return self._violations.copy()
+
+    def __len__(self) -> int:
+        return len(self._violations)
+
+
 class BankStateMachine:
-    """Bank 状态机
-    
-    管理单个 bank 的状态转换和时序约束。
+    """Bank State Machine - Optimized Version
+
+    Manages single bank state transitions and timing constraints.
+    Supports HBM3/HBM4 timing parameters.
+
+    Optimizations:
+    - Batch timing checks
+    - Pre-computed timing conversions
+    - Fast state comparisons using cached masks
     """
-    
-    def __init__(self, bank_id: int, timing: HBM3Timing):
+
+    __slots__ = ('bank', 'timing', 'current_time', 'timing_violations',
+                 '_clock_period_ns', '_cache_valid', '_cached_tRC', '_cached_tRAS',
+                 '_cached_tRCD', '_cached_tRFC')
+
+    def __init__(self, bank_id: int, timing):
+        """Initialize Bank State Machine
+
+        Args:
+            bank_id: Bank ID
+            timing: Timing parameter object (HBM3Timing or HBM4Timing)
+        """
         self.bank = Bank(bank_id=bank_id)
         self.timing = timing
         self.current_time = 0.0
-    
-    def set_time(self, current_time: float):
-        """设置当前时间"""
-        self.current_time = current_time
-    
-    def can_activate(self) -> bool:
-        """检查是否可以发起 ACT
+        self.timing_violations: List[TimingViolation] = []
 
-        时序约束:
-        - Bank 必须是 IDLE 状态
-        - 距离上次操作必须 >= tRC (如果是新 bank，始终可用)
+        # Pre-compute clock period for fast cycles-to-seconds conversion
+        self._clock_period_ns = getattr(timing, 'clock_period_ns', 0.78125)
+
+        # Cache for timing values
+        self._cache_valid = False
+        self._cached_tRC = 0
+        self._cached_tRAS = 0
+        self._cached_tRCD = 0
+        self._cached_tRFC = 0
+
+    def set_time(self, current_time: float):
+        """Set current time (in cycles)"""
+        self.current_time = current_time
+        # Refresh timing cache when time changes
+        self._refresh_timing_cache()
+
+    def _refresh_timing_cache(self):
+        """Refresh cached timing values"""
+        if not self._cache_valid:
+            self._cached_tRC = self.get_timing_value('nRC')
+            self._cached_tRAS = self.get_timing_value('nRAS')
+            self._cached_tRCD = self.get_timing_value('nRCD')
+            self._cached_tRFC = self.get_timing_value('nRFC')
+            self._cache_valid = True
+
+    def _record_violation(self, violation_type: str, required_time: float,
+                         actual_time: float, description: str):
+        """Record timing violation"""
+        violation = TimingViolation(
+            violation_type=violation_type,
+            required_time=required_time,
+            actual_time=actual_time,
+            time_available=actual_time,
+            description=description
+        )
+        self.timing_violations.append(violation)
+
+    def get_timing_value(self, name: str) -> int:
+        """Get timing parameter value (compatible with HBM3/HBM4 naming)
+
+        Args:
+            name: Parameter name (e.g., 'tRCD', 'nRCD', 'tRC', 'nRC', etc.)
+
+        Returns:
+            Timing parameter value (in cycles)
+        """
+        # HBM4 n-prefix priority
+        if hasattr(self.timing, name):
+            return getattr(self.timing, name)
+        # HBM3 t-prefix fallback
+        hbm3_name = name.replace('n', 't', 1) if name.startswith('n') else name
+        if hasattr(self.timing, hbm3_name):
+            return getattr(self.timing, hbm3_name)
+        # Default to 0
+        return 0
+
+    # =========================================================================
+    # Activation State Transitions
+    # =========================================================================
+
+    def can_activate(self) -> bool:
+        """Check if activation can be initiated
+
+        Timing constraints:
+        - Bank must be IDLE
+        - Must be >= tRC since last operation (ACT or PRE)
         """
         if self.bank.state != BankStateEnum.IDLE:
             return False
 
-        # 如果 bank 从未激活过，可以激活
+        # If never activated, can activate
         if self.bank.activate_time < 0:
             return True
 
-        time_since_act = self.current_time - self.bank.activate_time
-        return time_since_act >= self.timing.cycles_to_s(self.timing.tRC)
-    
-    def activate(self, row: int) -> bool:
-        """激活 Bank
-        
+        # tRC: Minimum interval between consecutive ACTs on same bank
+        time_since_last = self.current_time - self.bank.last_operation_time
+        tRC_seconds = self._cycles_to_seconds(self._cached_tRC)
+        return time_since_last >= tRC_seconds
+
+    def activate(self, row: int) -> Tuple[bool, Optional[str]]:
+        """Activate Bank
+
         Args:
-            row: 要激活的行号
-            
+            row: Row number to activate
+
         Returns:
-            True 如果成功激活
+            (success flag, error message)
         """
-        if not self.can_activate():
-            return False
-        
-        self.bank.state = BankStateEnum.ACTIVE
+        # Refresh timing cache before checking timing constraints
+        self._refresh_timing_cache()
+
+        if self.bank.state != BankStateEnum.IDLE:
+            return False, f"Bank {self.bank.bank_id} not idle (state={self.bank.state.name})"
+
+        # If ever activated, must satisfy tRC
+        if self.bank.activate_time >= 0:
+            time_since_last = self.current_time - self.bank.last_operation_time
+            tRC_seconds = self._cycles_to_seconds(self._cached_tRC)
+            if time_since_last < tRC_seconds:
+                msg = f"tRC violation: need {tRC_seconds}s, have {time_since_last}s"
+                self._record_violation('tRC', self._cached_tRC, time_since_last, msg)
+                return False, msg
+
+        self.bank.update_state(BankStateEnum.ACTIVE)
         self.bank.open_row = row
         self.bank.activate_time = self.current_time
-        return True
-    
-    def can_precharge(self) -> bool:
-        """检查是否可以发起 PRE
+        self.bank.last_operation_time = self.current_time
+        return True, None
 
-        时序约束:
-        - Bank 必须是 ACTIVE 状态
-        - 距离 ACT >= tRAS
+    # =========================================================================
+    # Precharge State Transitions
+    # =========================================================================
+
+    def can_precharge(self) -> bool:
+        """Check if precharge can be initiated
+
+        Timing constraints:
+        - Bank must be ACTIVE (or BUSY but READ/WRITE complete)
+        - Must be >= tRAS since ACT
         """
-        if self.bank.state not in [BankStateEnum.ACTIVE, BankStateEnum.BUSY]:
+        # Fast state check using cached mask
+        state_mask = self.bank._cached_state
+        if state_mask & (_STATE_ACTIVE | _STATE_BUSY) == 0:
             return False
 
-        # 对于 BUSY 状态，检查是否 READ/WRITE 已完成
-        if self.bank.state == BankStateEnum.BUSY:
-            # 简化为: 如果当前时间已过 read/write 完成时间，可以 PRE
-            time_since_read = self.current_time - self.bank.read_time
-            time_since_write = self.current_time - self.bank.write_time
-            if time_since_read < self.timing.cycles_to_s(self.timing.tCCD) and \
-               time_since_write < self.timing.cycles_to_s(self.timing.tCCD):
+        # If BUSY, check if operation complete
+        if state_mask & _STATE_BUSY:
+            if not self._is_operation_complete():
                 return False
 
         time_since_act = self.current_time - self.bank.activate_time
-        return time_since_act >= self.timing.cycles_to_s(self.timing.tRAS)
-    
-    def precharge(self) -> bool:
-        """关闭 Bank"""
-        if not self.can_precharge():
-            return False
-        
-        self.bank.state = BankStateEnum.IDLE
+        tRAS_seconds = self._cycles_to_seconds(self._cached_tRAS)
+        return time_since_act >= tRAS_seconds
+
+    def precharge(self) -> Tuple[bool, Optional[str]]:
+        """Close Bank
+
+        Returns:
+            (success flag, error message)
+        """
+        state_mask = self.bank._cached_state
+        if state_mask & (_STATE_ACTIVE | _STATE_BUSY) == 0:
+            return False, f"Bank {self.bank.bank_id} not active (state={self.bank.state.name})"
+
+        # Check tRAS
+        time_since_act = self.current_time - self.bank.activate_time
+        tRAS_seconds = self._cycles_to_seconds(self._cached_tRAS)
+        if time_since_act < tRAS_seconds:
+            msg = f"tRAS violation: need {self._cached_tRAS} cycles ({tRAS_seconds}s), have {time_since_act}s"
+            self._record_violation('tRAS', self._cached_tRAS, time_since_act, msg)
+            return False, msg
+
+        self.bank.update_state(BankStateEnum.IDLE)
+        self.bank.open_row = -1
         self.bank.precharge_time = self.current_time
-        return True
-    
+        self.bank.last_operation_time = self.current_time
+        return True, None
+
+    # =========================================================================
+    # Read State Transitions
+    # =========================================================================
+
+    def _cycles_to_seconds(self, cycles: int) -> float:
+        """Convert timing cycles to seconds
+
+        HBM3: tCK = 781.25 ps = 0.78125 ns = 0.78125e-9 s
+        """
+        return cycles * self._clock_period_ns * 1e-9
+
     def can_read(self) -> bool:
-        """检查是否可以发起 READ
-        
-        时序约束:
-        - Bank 必须是 ACTIVE 状态
-        - 距离 ACT >= tRCD
+        """Check if READ can be initiated
+
+        Timing constraints:
+        - Bank must be ACTIVE
+        - Must be >= tRCD since ACT
         """
         if self.bank.state != BankStateEnum.ACTIVE:
             return False
-        
+
         time_since_act = self.current_time - self.bank.activate_time
-        return time_since_act >= self.timing.cycles_to_s(self.timing.tRCD)
-    
-    def read(self) -> bool:
-        """发起 READ"""
+        tRCD_seconds = self._cycles_to_seconds(self._cached_tRCD)
+        return time_since_act >= tRCD_seconds
+
+    def read(self, burst_length: int = 4) -> Tuple[bool, Optional[str]]:
+        """Initiate READ
+
+        Args:
+            burst_length: Burst length (default 4 for HBM)
+
+        Returns:
+            (success flag, error message)
+        """
         if not self.can_read():
+            return False, f"Cannot read: state={self.bank.state.name}, " \
+                         f"time since act={self.current_time - self.bank.activate_time}"
+
+        self.bank.update_state(BankStateEnum.BUSY)
+        self.bank.read_start_time = self.current_time
+
+        # Calculate read completion time: tRCD + tCL + (burst_length - 1) * tCCD
+        tRCD = self._cached_tRCD
+        tCL = self.get_timing_value('nCL')
+        tCCD = self.get_timing_value('nCCD')
+        self.bank.read_complete_time = self.current_time + tRCD + tCL + (burst_length - 1) * tCCD
+
+        return True, None
+
+    def can_complete_read(self) -> bool:
+        """Check if read can complete"""
+        if self.bank.read_start_time < 0:
             return False
-        
-        self.bank.state = BankStateEnum.READING
-        self.bank.read_time = self.current_time
-        return True
-    
+        return self.current_time >= self.bank.read_complete_time
+
+    def complete_read(self) -> Tuple[bool, Optional[str]]:
+        """READ complete, return to ACTIVE
+
+        Returns:
+            (success flag, error message)
+        """
+        if self.bank.state != BankStateEnum.BUSY:
+            return False, "Not in BUSY state"
+
+        if self.bank.read_start_time < 0:
+            return False, "No read in progress"
+
+        self.bank.update_state(BankStateEnum.ACTIVE)
+        self.bank.last_operation_time = self.current_time
+        self.bank.read_start_time = -1.0
+        self.bank.read_complete_time = -1.0
+        return True, None
+
+    # =========================================================================
+    # Write State Transitions
+    # =========================================================================
+
     def can_write(self) -> bool:
-        """检查是否可以发起 WRITE
-        
-        时序约束:
-        - Bank 必须是 ACTIVE 状态
-        - 距离 ACT >= tRCD
+        """Check if WRITE can be initiated
+
+        Timing constraints:
+        - Bank must be ACTIVE
+        - Must be >= tRCD since ACT
         """
         if self.bank.state != BankStateEnum.ACTIVE:
             return False
-        
+
         time_since_act = self.current_time - self.bank.activate_time
-        return time_since_act >= self.timing.cycles_to_s(self.timing.tRCD)
-    
-    def write(self) -> bool:
-        """发起 WRITE"""
+        tRCD_seconds = self._cycles_to_seconds(self._cached_tRCD)
+        return time_since_act >= tRCD_seconds
+
+    def write(self, burst_length: int = 4) -> Tuple[bool, Optional[str]]:
+        """Initiate WRITE
+
+        Args:
+            burst_length: Burst length (default 4 for HBM)
+
+        Returns:
+            (success flag, error message)
+        """
         if not self.can_write():
+            return False, f"Cannot write: state={self.bank.state.name}, " \
+                         f"time since act={self.current_time - self.bank.activate_time}"
+
+        self.bank.update_state(BankStateEnum.BUSY)
+        self.bank.write_start_time = self.current_time
+
+        # Calculate write completion time: tRCD + tCWL + burst * tCCD
+        tRCD = self._cached_tRCD
+        tCWL = self.get_timing_value('nCWL')
+        tCCD = self.get_timing_value('nCCD')
+        self.bank.write_complete_time = self.current_time + tRCD + tCWL + (burst_length - 1) * tCCD
+
+        return True, None
+
+    def can_complete_write(self) -> bool:
+        """Check if write can complete"""
+        if self.bank.write_start_time < 0:
             return False
-        
-        self.bank.state = BankStateEnum.WRITING
-        self.bank.write_time = self.current_time
-        return True
-    
-    def is_row_hit(self, row: int) -> bool:
-        """检查是否 row hit"""
-        return (self.bank.state == BankStateEnum.ACTIVE and 
-                self.bank.open_row == row)
-    
-    def complete_read(self):
-        """READ 完成，返回 ACTIVE"""
-        self.bank.state = BankStateEnum.ACTIVE
-    
-    def complete_write(self):
-        """WRITE 完成"""
-        self.bank.state = BankStateEnum.ACTIVE
-    
-    def refresh(self) -> bool:
-        """执行刷新"""
-        if self.bank.state == BankStateEnum.IDLE:
-            self.bank.state = BankStateEnum.REFRESHING
-            self.bank.refresh_time = self.current_time
+        return self.current_time >= self.bank.write_complete_time
+
+    def complete_write(self) -> Tuple[bool, Optional[str]]:
+        """WRITE complete, return to ACTIVE
+
+        Returns:
+            (success flag, error message)
+        """
+        if self.bank.state != BankStateEnum.BUSY:
+            return False, "Not in BUSY state"
+
+        if self.bank.write_start_time < 0:
+            return False, "No write in progress"
+
+        self.bank.update_state(BankStateEnum.ACTIVE)
+        self.bank.last_operation_time = self.current_time
+        self.bank.write_start_time = -1.0
+        self.bank.write_complete_time = -1.0
+        return True, None
+
+    # =========================================================================
+    # Operation Completion Helpers
+    # =========================================================================
+
+    def _is_operation_complete(self) -> bool:
+        """Check if current BUSY operation is complete"""
+        if self.bank.read_start_time >= 0:
+            return self.current_time >= self.bank.read_complete_time
+        if self.bank.write_start_time >= 0:
+            return self.current_time >= self.bank.write_complete_time
+        return True  # No operation in progress
+
+    def is_operation_in_progress(self) -> bool:
+        """Check if operation is in progress (READ/WRITE/REFRESH)"""
+        state_mask = self.bank._cached_state
+        return (state_mask & (_STATE_BUSY | _STATE_REFRESHING)) != 0
+
+    # =========================================================================
+    # Turnaround Timing
+    # =========================================================================
+
+    def can_read_after_write(self) -> bool:
+        """Check if READ can be initiated after WRITE (tWTRS/tWTRL)
+
+        Returns:
+            True if read can be initiated
+        """
+        if self.bank.write_start_time < 0:
+            return True  # No write operation
+
+        if not self.can_complete_write():
+            return False
+
+        # tWTRS: Write to Read (same Bank Group)
+        tWTRS = self.get_timing_value('nWTRS')
+        time_since_write = self.current_time - self.bank.write_complete_time
+        return time_since_write >= tWTRS
+
+    def can_write_after_read(self) -> bool:
+        """Check if WRITE can be initiated after READ (tRTW)
+
+        Returns:
+            True if write can be initiated
+        """
+        if self.bank.read_start_time < 0:
+            return True  # No read operation
+
+        if not self.can_complete_read():
+            return False
+
+        # tRTW: Read to Write
+        tRTW = self.get_timing_value('nRTW')
+        time_since_read = self.current_time - self.bank.read_complete_time
+        return time_since_read >= tRTW
+
+    # =========================================================================
+    # Refresh State Transitions
+    # =========================================================================
+
+    def can_refresh(self) -> bool:
+        """Check if refresh can be initiated
+
+        Timing constraints:
+        - Bank must be IDLE
+        - Must be >= tRFC since last refresh
+        """
+        if self.bank.state != BankStateEnum.IDLE:
+            return False
+
+        # If never refreshed, can refresh
+        if self.bank.refresh_time < 0:
             return True
-        return False
-    
-    def complete_refresh(self):
-        """刷新完成"""
-        self.bank.state = BankStateEnum.IDLE
+
+        time_since_refresh = self.current_time - self.bank.refresh_time
+        nRFC_seconds = self._cycles_to_seconds(self._cached_tRFC)
+        return time_since_refresh >= nRFC_seconds
+
+    def refresh(self) -> Tuple[bool, Optional[str]]:
+        """Execute refresh
+
+        Returns:
+            (success flag, error message)
+        """
+        if self.bank.state != BankStateEnum.IDLE:
+            return False, f"Bank not idle (state={self.bank.state.name})"
+
+        self.bank.update_state(BankStateEnum.REFRESHING)
+        self.bank.refresh_time = self.current_time
+
+        # Calculate refresh completion time
+        self.bank.refresh_complete_time = self.current_time + self._cached_tRFC
+
+        return True, None
+
+    def can_complete_refresh(self) -> bool:
+        """Check if refresh can complete"""
+        if self.bank.state != BankStateEnum.REFRESHING:
+            return False
+        if self.bank.refresh_complete_time < 0:
+            return False
+        return self.current_time >= self.bank.refresh_complete_time
+
+    def complete_refresh(self) -> Tuple[bool, Optional[str]]:
+        """Refresh complete
+
+        Returns:
+            (success flag, error message)
+        """
+        if self.bank.state != BankStateEnum.REFRESHING:
+            return False, "Not refreshing"
+
+        if self.bank.refresh_complete_time >= 0:
+            if self.current_time < self.bank.refresh_complete_time:
+                return False, f"Refresh not complete: need {self.bank.refresh_complete_time}, current {self.current_time}"
+
+        self.bank.update_state(BankStateEnum.IDLE)
+        self.bank.refresh_time = self.current_time
+        self.bank.refresh_complete_time = -1.0
+        self.bank.last_operation_time = self.current_time
+        return True, None
+
+    # =========================================================================
+    # Power Management State Transitions
+    # =========================================================================
+
+    def can_enter_power_down(self) -> bool:
+        """Check if power down mode can be entered
+
+        Constraints:
+        - Bank must be IDLE
+        """
+        return self.bank.state == BankStateEnum.IDLE
+
+    def enter_power_down(self) -> Tuple[bool, Optional[str]]:
+        """Enter power down mode
+
+        Returns:
+            (success flag, error message)
+        """
+        if not self.can_enter_power_down():
+            return False, f"Cannot enter power down: state={self.bank.state.name}"
+
+        self.bank.update_state(BankStateEnum.POWERDN)
+        return True, None
+
+    def exit_power_down(self) -> Tuple[bool, Optional[str]]:
+        """Exit power down mode
+
+        Returns:
+            (success flag, error message)
+        """
+        if self.bank.state != BankStateEnum.POWERDN:
+            return False, f"Not in power down: state={self.bank.state.name}"
+
+        self.bank.update_state(BankStateEnum.IDLE)
+        return True, None
+
+    def can_enter_self_refresh(self) -> bool:
+        """Check if self refresh mode can be entered
+
+        Constraints:
+        - Bank must be IDLE
+        """
+        return self.bank.state == BankStateEnum.IDLE
+
+    def enter_self_refresh(self) -> Tuple[bool, Optional[str]]:
+        """Enter self refresh mode
+
+        Returns:
+            (success flag, error message)
+        """
+        if not self.can_enter_self_refresh():
+            return False, f"Cannot enter self refresh: state={self.bank.state.name}"
+
+        self.bank.update_state(BankStateEnum.SELFREF)
+        return True, None
+
+    def exit_self_refresh(self) -> Tuple[bool, Optional[str]]:
+        """Exit self refresh mode
+
+        Returns:
+            (success flag, error message)
+        """
+        if self.bank.state != BankStateEnum.SELFREF:
+            return False, f"Not in self refresh: state={self.bank.state.name}"
+
+        self.bank.update_state(BankStateEnum.IDLE)
+        return True, None
+
+    # =========================================================================
+    # Row Access Helpers
+    # =========================================================================
+
+    def is_row_hit(self, row: int) -> bool:
+        """Check if row hit"""
+        return (self.bank.state == BankStateEnum.ACTIVE and
+                self.bank.open_row == row)
+
+    def is_row_open(self, row: int) -> bool:
+        """Check if specified row is open"""
+        return self.bank.open_row == row
+
+    def close_row(self) -> Tuple[bool, Optional[str]]:
+        """Close currently open row"""
+        if self.bank.state != BankStateEnum.ACTIVE:
+            return False, "Bank not active"
+        return self.precharge()
+
+    # =========================================================================
+    # Timing Query
+    # =========================================================================
+
+    def time_to_ready(self) -> float:
+        """Calculate time until next ACT can be initiated
+
+        Returns:
+            Required wait time (cycles), 0 if already ready
+        """
+        if self.bank.state != BankStateEnum.IDLE:
+            return float('inf')  # Wrong state, need to precharge first
+
+        if not self.bank.has_been_activated:
+            return 0.0
+
+        time_since_last = self.current_time - self.bank.last_operation_time
+        if time_since_last >= self._cached_tRC:
+            return 0.0
+
+        return self._cached_tRC - time_since_last
+
+    def time_to_read_ready(self) -> float:
+        """Calculate time until READ can be initiated
+
+        Returns:
+            Required wait time (cycles)
+        """
+        if self.bank.state == BankStateEnum.ACTIVE:
+            time_since_act = self.current_time - self.bank.activate_time
+            if time_since_act >= self._cached_tRCD:
+                return 0.0
+            return self._cached_tRCD - time_since_act
+
+        return float('inf')  # Need to activate first
+
+    def time_to_precharge_ready(self) -> float:
+        """Calculate time until PRE can be initiated
+
+        Returns:
+            Required wait time (cycles)
+        """
+        state_mask = self.bank._cached_state
+        if state_mask & (_STATE_ACTIVE | _STATE_BUSY) == 0:
+            return float('inf')
+
+        time_since_act = self.current_time - self.bank.activate_time
+        if time_since_act >= self._cached_tRAS:
+            return 0.0
+
+        return self._cached_tRAS - time_since_act
+
+    def get_violations(self) -> List[TimingViolation]:
+        """Get recorded timing violations"""
+        return self.timing_violations.copy()
+
+    def clear_violations(self):
+        """Clear recorded timing violations"""
+        self.timing_violations.clear()
+
+    # =========================================================================
+    # State Queries (for compatibility with existing code)
+    # =========================================================================
+
+    def complete_read_legacy(self):
+        """READ complete, return ACTIVE (legacy)"""
+        self.complete_read()
+
+    def complete_write_legacy(self):
+        """WRITE complete (legacy)"""
+        self.complete_write()
+
+
+# Aliases for backward compatibility
+def create_bank_state_machine(bank_id: int, timing) -> BankStateMachine:
+    """Factory function to create BankStateMachine"""
+    return BankStateMachine(bank_id=bank_id, timing=timing)
+
+
+# Vectorized operations for batch processing (using lists, no numpy dependency)
+def batch_check_can_activate(bank_machines: List[BankStateMachine]) -> List[bool]:
+    """Batch check if banks can activate
+
+    Args:
+        bank_machines: List of BankStateMachine instances
+
+    Returns:
+        List of boolean results
+    """
+    return [bm.can_activate() for bm in bank_machines]
+
+
+def batch_check_can_read(bank_machines: List[BankStateMachine]) -> List[bool]:
+    """Batch check if banks can read
+
+    Args:
+        bank_machines: List of BankStateMachine instances
+
+    Returns:
+        List of boolean results
+    """
+    return [bm.can_read() for bm in bank_machines]
+
+
+def batch_check_can_write(bank_machines: List[BankStateMachine]) -> List[bool]:
+    """Batch check if banks can write
+
+    Args:
+        bank_machines: List of BankStateMachine instances
+
+    Returns:
+        List of boolean results
+    """
+    return [bm.can_write() for bm in bank_machines]

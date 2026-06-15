@@ -302,7 +302,7 @@ class HBM4UnifiedSimulator:
 
     def get_stats(self) -> Dict[str, Any]:
         """获取仿真统计"""
-        power_mW = self.power.get_power_mW()
+        power_mW = self.power.get_total_power_mw() if hasattr(self.power, 'get_total_power_mw') else self.power.get_average_power_mw()
         self.stats.power_mW = power_mW
         self.stats.end_time = time.time()
 

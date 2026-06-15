@@ -139,8 +139,8 @@ class TestHBM4RefreshSchedulerBankTracking:
         """mark_bank_refreshed() must update status"""
         scheduler = HBM4RefreshScheduler()
 
-        # New signature: (channel_id, bank_id, cycle)
-        scheduler.mark_bank_refreshed(0, 0, 1000)
+        # Signature: (channel_id, pseudo_channel_id, bank_id, cycle)
+        scheduler.mark_bank_refreshed(0, 0, 0, 1000)
 
         assert scheduler.bank_status[0].last_refresh_cycle == 1000
         assert scheduler.bank_status[0].needs_refresh is False
@@ -160,8 +160,8 @@ class TestHBM4RefreshSchedulerBankTracking:
                 scheduler.tick()
 
             cmd = scheduler.get_refresh_command()
-            if cmd and cmd[2] is not None:
-                banks_seen.add(cmd[2])
+            if cmd and cmd[3] is not None:
+                banks_seen.add(cmd[3])
 
         # Should have seen multiple banks
         assert len(banks_seen) > 1

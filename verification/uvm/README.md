@@ -103,7 +103,21 @@ Tests for bank arbitration, conflicts, and scheduling.
 | `hbm_cross_bank_scheduling_test` | Cross-bank scheduling test |
 | `hbm_bank_contention_stress_test` | Stress test |
 
-### 4. Boundary Condition Tests (`hbm_boundary_test_pkg.sv`)
+### 4. Multi-Channel Interleaving Tests (`test_multi_channel_seq.sv`)
+
+Tests for HBM4 multi-channel operation with 32 channels.
+
+| Test Sequence | Description |
+|--------------|-------------|
+| `multi_channel_interleave_seq` | Tests interleaved access across 32 channels |
+| `channel_conflict_seq` | Tests conflicts when multiple channels access same bank |
+
+| Test Class | Description |
+|-----------|-------------|
+| `hbm_multi_channel_interleave_test` | Multi-channel interleaving test |
+| `hbm_channel_conflict_test` | Channel conflict test |
+
+### 5. Boundary Condition Tests (`hbm_boundary_test_pkg.sv`)
 
 Tests edge cases and boundary conditions.
 
@@ -129,7 +143,7 @@ Tests edge cases and boundary conditions.
 | `hbm_timing_boundary_test` | Timing boundary test |
 | `hbm_data_pattern_boundary_test` | Data pattern boundary test |
 
-### 5. Coverage Collection (`hbm_coverage_pkg.sv`)
+### 6. Coverage Collection (`hbm_coverage_pkg.sv`)
 
 Comprehensive coverage models for verification completeness.
 
@@ -205,6 +219,13 @@ make run_bank_contention_stress  # Stress test
 make test-bank                   # Run all bank tests
 ```
 
+### Multi-Channel Tests
+```bash
+make run_multi_channel_interleave # Multi-channel interleaving test
+make run_channel_conflict         # Channel conflict test
+make test-multi-channel           # Run all multi-channel tests
+```
+
 ### Boundary Tests
 ```bash
 make run_max_address            # Max address test
@@ -253,18 +274,24 @@ make coverage
 verification/uvm/
 ├── hbm_env_pkg.sv              # Environment package (base)
 ├── hbm_test_pkg.sv            # Base test package
+├── hbm_coverage.sv            # Functional coverage
 ├── hbm_tb.sv                  # Testbench top
 ├── Makefile                   # Build system
 ├── uvm.f                      # File list
 ├── uvm_stub/                  # UVM stub library
 ├── tests/
+│   ├── test_read_seq.sv               # Single read sequence
+│   ├── test_write_seq.sv              # Single write sequence
+│   ├── test_bank_conflict_seq.sv      # Bank conflict sequence
+│   ├── test_refresh_seq.sv           # Refresh sequence
+│   ├── test_multi_channel_seq.sv      # Multi-channel interleaving tests
 │   ├── hbm_qos_test_pkg.sv            # QoS priority tests
 │   ├── hbm_refresh_test_pkg.sv        # Refresh conflict tests
 │   ├── hbm_bank_contention_test_pkg.sv # Bank contention tests
 │   ├── hbm_boundary_test_pkg.sv       # Boundary condition tests
 │   ├── hbm_coverage_pkg.sv            # Coverage collection
 │   └── hbm_test_pkg_list.sv           # Test package index
-└── reference_model/
+└── ../reference_model/
     ├── dram_ref_model.sv      # DRAM reference model
     ├── timing_checker.sv      # Timing validator
     ├── bandwidth_calc.sv      # Bandwidth calculator
@@ -287,8 +314,28 @@ The UVM verification environment is complete with:
 - **QoS priority test suite** (4 tests)
 - **Refresh conflict test suite** (5 tests)
 - **Bank contention test suite** (6 tests)
+- **Multi-channel interleaving test suite** (2 tests)
 - **Boundary condition test suite** (8 tests)
 - **Coverage collection package** (8 coverage groups)
+
+### Issues Found and Fixed
+
+1. **Fixed** - `hbm_coverage.sv` line 100: Syntax error - `endcase` instead of `endgroup`
+2. **Note** - Reference model directory is at `verification/reference_model/`, not `verification/uvm/reference_model/`
+3. **Note** - Some Makefile targets reference test classes not included in the main test package (e.g., `hbm_row_hammer_test`, `hbm_axi4_test`). These are defined in separate test packages in `tests/` directory.
+
+### Test Categories Summary
+
+| Category | Sequences | Test Classes |
+|----------|-----------|--------------|
+| Base Tests | 6 (single_read, single_write, random_traffic, write_read, bank_stress, hotspot) | 6 |
+| QoS Tests | 4 (priority_inheritance, starvation_prevention, deadline_miss, mixed_traffic) | 4 |
+| Refresh Tests | 5 (refresh_conflict, refresh_timing_violation, per_bank_refresh, refresh_during_active, auto_refresh) | 5 |
+| Bank Contention | 6 (bank_group_conflict, bank_activation_conflict, bank_round_robin, bank_open_close, cross_bank_scheduling, bank_contention_stress) | 6 |
+| Multi-Channel | 2 (multi_channel_interleave, channel_conflict) | 2 |
+| Boundary Tests | 8 (max_address, min_address, address_overflow, queue_full, queue_empty, burst_boundary, timing_boundary, data_pattern_boundary) | 8 |
+| Register Tests | 1 (register_test) | 1 |
+| **Total** | **33** | **33** |
 
 ## Next Steps
 
