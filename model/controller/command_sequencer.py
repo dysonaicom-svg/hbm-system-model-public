@@ -349,7 +349,7 @@ class CommandSequencer:
         ))
         current_cycle += 1
 
-        # Add tRCD delay before RD/WR (nRCDRD cycles for read)
+        # Add tRCD delay before RD/WR (HBM4Spec has nRCDRD/nRCDWR)
         if request.is_read:
             current_cycle += self.spec.nRCDRD
         else:

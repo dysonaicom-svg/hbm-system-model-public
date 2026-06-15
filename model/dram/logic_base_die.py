@@ -23,6 +23,7 @@ Based on:
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from collections import deque
 
 # Import existing HBM4 modules
 from model.dram.hbm4_spec import HBM4Spec
@@ -34,6 +35,15 @@ from model.dram.phy_training import (
 )
 from model.dram.lane_repair import HBM4LaneRepairModel, RepairStatus
 from model.dram.ecc_crc import HBM4DataIntegrity, HBM4ECC, HBM4CRC
+from model.dram.dfi_interface import (
+    DFI5Interface,
+    DFICommand,
+    DFIRequest,
+    DFIResponse,
+    DFILowPowerState,
+)
+from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
+from model.dram.timing import HBM3Timing
 
 
 class ChannelState(Enum):
@@ -78,6 +88,131 @@ class ChannelContext:
     error_count: int = 0
     last_error: Optional[str] = None
 
+    # Bank state tracking per pseudo-channel and bank
+    bank_states: Dict[int, BankStateEnum] = field(default_factory=dict)
+
+
+class CommandBuffer:
+    """Command buffer for pending commands
+
+    Implements a FIFO command buffer with configurable depth
+    for DFI command buffering and scheduling.
+    """
+
+    def __init__(self, depth: int = 64):
+        """Initialize command buffer
+
+        Args:
+            depth: Maximum number of commands in buffer
+        """
+        self.depth = depth
+        self._buffer: deque = deque(maxlen=depth)
+        self._command_counter = 0
+        self._total_commands_issued = 0
+        self._total_commands_completed = 0
+
+    def enqueue(self, command: str, channel: int, address: int,
+                priority: int = 0, data: Optional[int] = None) -> int:
+        """Add command to buffer
+
+        Args:
+            command: Command name (ACT, PRE, RD, WR, REF, MRS)
+            channel: Target channel (0-31)
+            address: Memory address
+            priority: Command priority (higher = more urgent)
+            data: Optional data payload for write commands
+
+        Returns:
+            Command ID if successful, -1 if buffer full
+        """
+        if len(self._buffer) >= self.depth:
+            return -1
+
+        cmd_id = self._command_counter
+        self._command_counter += 1
+
+        cmd_entry = {
+            'id': cmd_id,
+            'command': command,
+            'channel': channel,
+            'address': address,
+            'priority': priority,
+            'data': data,
+            'enqueued_cycle': None,  # Will be set by tick()
+            'issued_cycle': None,
+            'completed': False,
+        }
+
+        self._buffer.append(cmd_entry)
+        return cmd_id
+
+    def dequeue(self) -> Optional[Dict]:
+        """Remove and return next command
+
+        Returns:
+            Next command dict or None if empty
+        """
+        if not self._buffer:
+            return None
+
+        cmd = self._buffer.popleft()
+        cmd['completed'] = True
+        self._total_commands_completed += 1
+        return cmd
+
+    def peek(self) -> Optional[Dict]:
+        """View next command without removing
+
+        Returns:
+            Next command dict or None if empty
+        """
+        if not self._buffer:
+            return None
+        return self._buffer[0]
+
+    def tick(self):
+        """Advance buffer state (called each cycle)
+
+        Updates internal timestamps for queued commands.
+        """
+        cycle_commands = [c for c in self._buffer if c['enqueued_cycle'] is None]
+        for cmd in cycle_commands:
+            cmd['enqueued_cycle'] = cmd['id']  # Placeholder for cycle tracking
+
+    def clear(self):
+        """Clear all commands from buffer"""
+        self._buffer.clear()
+
+    @property
+    def size(self) -> int:
+        """Current buffer size"""
+        return len(self._buffer)
+
+    @property
+    def is_empty(self) -> bool:
+        """Check if buffer is empty"""
+        return len(self._buffer) == 0
+
+    @property
+    def is_full(self) -> bool:
+        """Check if buffer is at capacity"""
+        return len(self._buffer) >= self.depth
+
+    @property
+    def available_capacity(self) -> int:
+        """Available slots in buffer"""
+        return self.depth - len(self._buffer)
+
+    def get_stats(self) -> Dict:
+        """Get buffer statistics"""
+        return {
+            'current_size': len(self._buffer),
+            'max_depth': self.depth,
+            'total_commands_issued': self._total_commands_issued,
+            'total_commands_completed': self._total_commands_completed,
+            'utilization': len(self._buffer) / self.depth if self.depth > 0 else 0,
+        }
+
 
 @dataclass
 class LogicBaseDieConfig:
@@ -107,6 +242,13 @@ class LogicBaseDieConfig:
     # Timing (cycles @ 8 GT/s)
     tCK_ps: float = 125.0            # 125ps = 8 GHz
 
+    # Command buffer
+    command_buffer_depth: int = 64
+
+    # Bank state tracking
+    banks_per_channel: int = 16       # 16 banks per pseudo-channel
+    pseudo_channels_per_channel: int = 2
+
 
 class HBM4LogicBaseDie:
     """HBM4 Logic Base Die Model
@@ -126,6 +268,9 @@ class HBM4LogicBaseDie:
     |  +------------------+  +------------------+               |
     |  +------------------+  +------------------+               |
     |  | PHY Manager      |  | Lane Repair      |               |
+    |  +------------------+  +------------------+               |
+    |  +------------------+  +------------------+               |
+    |  | DFI 5.0 Interface|  | Bank State Track|               |
     |  +------------------+  +------------------+               |
     +----------------------------------------------------------+
     |              Per-Channel Contexts (x32)                  |
@@ -161,6 +306,9 @@ class HBM4LogicBaseDie:
         else:
             self.pam3_encoder = None
 
+        # Initialize DFI 5.0 Interface
+        self.dfi = DFI5Interface()
+
         # Initialize PHY Manager (per-channel training)
         self.phy_manager = HBM4PHYManager(
             num_channels=self.config.num_channels,
@@ -183,6 +331,14 @@ class HBM4LogicBaseDie:
             enable_crc=self.config.crc_enabled,
         )
 
+        # Initialize Command Buffer
+        self.command_buffer = CommandBuffer(depth=self.config.command_buffer_depth)
+
+        # Initialize Bank State Tracking
+        # Each channel has pseudo_channels * banks structure
+        self._bank_state_machines: Dict[int, Dict[int, BankStateMachine]] = {}
+        self._initialize_bank_state_machines()
+
         # Per-channel contexts (independent operation)
         self._channels: List[ChannelContext] = []
         for ch in range(self.config.num_channels):
@@ -196,6 +352,21 @@ class HBM4LogicBaseDie:
         # Statistics
         self._total_commands = 0
         self._total_errors = 0
+        self._dfi_commands_sent = 0
+        self._dfi_commands_completed = 0
+
+    def _initialize_bank_state_machines(self):
+        """Initialize bank state machines for all channels"""
+        timing = HBM3Timing()
+        total_banks = self.config.banks_per_channel * self.config.pseudo_channels_per_channel
+
+        for ch in range(self.config.num_channels):
+            self._bank_state_machines[ch] = {}
+            for bank_id in range(total_banks):
+                self._bank_state_machines[ch][bank_id] = BankStateMachine(
+                    bank_id=bank_id,
+                    timing=timing
+                )
 
     @property
     def cycle(self) -> int:
@@ -235,9 +406,16 @@ class HBM4LogicBaseDie:
     def tick(self):
         """Advance simulation by one cycle
 
-        Updates all channel contexts and component state machines.
+        Updates all channel contexts, DFI interface, command buffer,
+        and component state machines.
         """
         self._global_cycle += 1
+
+        # Update DFI interface
+        self.dfi.tick()
+
+        # Update command buffer
+        self.command_buffer.tick()
 
         # Update PHY state machines
         self.phy_manager.tick()
@@ -268,20 +446,548 @@ class HBM4LogicBaseDie:
         if all_ready and self._initialized:
             self._training_complete = True
 
-    def wait_for_ready(self, max_cycles: int = 100000) -> bool:
-        """Wait for Logic Base Die to be ready
+    # ==================== Bank State Tracking ====================
+
+    def get_bank_state(self, channel_id: int, bank_id: int) -> Optional[BankStateEnum]:
+        """Get state of a specific bank
 
         Args:
-            max_cycles: Maximum cycles to wait
+            channel_id: Channel index (0-31)
+            bank_id: Bank index within channel
 
         Returns:
-            True if ready, False if timeout
+            BankStateEnum or None if invalid channel/bank
         """
-        for _ in range(max_cycles):
-            if self.is_ready:
-                return True
-            self.tick()
-        return False
+        if not 0 <= channel_id < self.config.num_channels:
+            return None
+
+        if channel_id not in self._bank_state_machines:
+            return None
+
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return None
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        return bsm.bank.state
+
+    def get_all_bank_states(self, channel_id: int) -> Dict[int, BankStateEnum]:
+        """Get states of all banks in a channel
+
+        Args:
+            channel_id: Channel index (0-31)
+
+        Returns:
+            Dictionary mapping bank_id to BankStateEnum
+        """
+        if not 0 <= channel_id < self.config.num_channels:
+            return {}
+
+        states = {}
+        if channel_id in self._bank_state_machines:
+            for bank_id, bsm in self._bank_state_machines[channel_id].items():
+                states[bank_id] = bsm.bank.state
+
+        return states
+
+    def can_activate_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Check if a bank can be activated
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if bank can be activated
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        return bsm.can_activate()
+
+    def activate_bank(self, channel_id: int, bank_id: int, row: int) -> bool:
+        """Activate a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+            row: Row address to activate
+
+        Returns:
+            True if activation successful
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        success = bsm.activate(row)
+
+        if success:
+            # Update channel context
+            ctx = self._channels[channel_id]
+            ctx.last_act_cycle = ctx.local_cycle
+            ctx.state = ChannelState.ACTIVE
+            ctx.open_row = row
+            ctx.bank_states[bank_id] = BankStateEnum.ACTIVE
+
+        return success
+
+    def can_precharge_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Check if a bank can be precharged
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if bank can be precharged
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        return bsm.can_precharge()
+
+    def precharge_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Precharge a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if precharge successful
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        success = bsm.precharge()
+
+        if success:
+            # Update channel context
+            ctx = self._channels[channel_id]
+            ctx.last_pre_cycle = ctx.local_cycle
+            ctx.open_row = None
+            ctx.bank_states[bank_id] = BankStateEnum.IDLE
+
+        return success
+
+    def can_read_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Check if a read can be issued to a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if read can be issued
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        return bsm.can_read()
+
+    def read_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Issue a read to a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if read started successfully
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        success = bsm.read()
+
+        if success:
+            ctx = self._channels[channel_id]
+            ctx.last_rd_cycle = ctx.local_cycle
+
+        return success
+
+    def can_write_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Check if a write can be issued to a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if write can be issued
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        return bsm.can_write()
+
+    def write_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Issue a write to a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if write started successfully
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        success = bsm.write()
+
+        if success:
+            ctx = self._channels[channel_id]
+            ctx.last_wr_cycle = ctx.local_cycle
+
+        return success
+
+    def complete_bank_read(self, channel_id: int, bank_id: int):
+        """Complete a read operation on a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+        """
+        if channel_id in self._bank_state_machines and \
+           bank_id in self._bank_state_machines[channel_id]:
+            self._bank_state_machines[channel_id][bank_id].complete_read()
+
+    def complete_bank_write(self, channel_id: int, bank_id: int):
+        """Complete a write operation on a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+        """
+        if channel_id in self._bank_state_machines and \
+           bank_id in self._bank_state_machines[channel_id]:
+            self._bank_state_machines[channel_id][bank_id].complete_write()
+
+    def refresh_bank(self, channel_id: int, bank_id: int) -> bool:
+        """Refresh a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+
+        Returns:
+            True if refresh successful
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        bsm = self._bank_state_machines[channel_id][bank_id]
+        bsm.set_time(self._global_cycle)
+        success = bsm.refresh()
+
+        if success:
+            ctx = self._channels[channel_id]
+            ctx.state = ChannelState.MAINTENANCE
+
+        return success
+
+    def complete_bank_refresh(self, channel_id: int, bank_id: int):
+        """Complete a refresh operation on a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+        """
+        if channel_id in self._bank_state_machines and \
+           bank_id in self._bank_state_machines[channel_id]:
+            self._bank_state_machines[channel_id][bank_id].complete_refresh()
+            ctx = self._channels[channel_id]
+            if ctx.state == ChannelState.MAINTENANCE:
+                ctx.state = ChannelState.IDLE
+
+    def is_row_hit(self, channel_id: int, bank_id: int, row: int) -> bool:
+        """Check if a row is currently open in a bank
+
+        Args:
+            channel_id: Channel index
+            bank_id: Bank index
+            row: Row address to check
+
+        Returns:
+            True if row is open (row hit)
+        """
+        if channel_id not in self._bank_state_machines:
+            return False
+        if bank_id not in self._bank_state_machines[channel_id]:
+            return False
+
+        return self._bank_state_machines[channel_id][bank_id].is_row_hit(row)
+
+    # ==================== DFI Interface ====================
+
+    def submit_dfi_command(self, command: DFICommand, address: int, bank: int,
+                          channel: int, pseudo_channel: int = 0,
+                          wrdata_en: bool = False, rddata_en: bool = False,
+                          priority: int = 0) -> bool:
+        """Submit a command through the DFI interface
+
+        Args:
+            command: DFI command type
+            address: Memory address
+            bank: Bank index
+            channel: Channel index (0-31)
+            pseudo_channel: Pseudo-channel index (0-1)
+            wrdata_en: Write data enable
+            rddata_en: Read data enable
+            priority: Command priority
+
+        Returns:
+            True if command submitted successfully
+        """
+        request = DFIRequest(
+            command=command,
+            address=address,
+            bank=bank,
+            pseudo_channel=pseudo_channel,
+            channel=channel,
+            wrdata_en=wrdata_en,
+            rddata_en=rddata_en,
+            priority=priority,
+            timestamp=self._global_cycle
+        )
+
+        success = self.dfi.queue_request(request)
+        if success:
+            self._dfi_commands_sent += 1
+        return success
+
+    def submit_dfi_act(self, channel: int, bank: int, row: int,
+                       priority: int = 0) -> bool:
+        """Submit ACTIVATE command through DFI
+
+        Args:
+            channel: Channel index
+            bank: Bank index
+            row: Row address
+            priority: Command priority
+
+        Returns:
+            True if command submitted
+        """
+        return self.submit_dfi_command(
+            command=DFICommand.ACT,
+            address=row,
+            bank=bank,
+            channel=channel,
+            priority=priority
+        )
+
+    def submit_dfi_pre(self, channel: int, bank: int,
+                        priority: int = 0) -> bool:
+        """Submit PRECHARGE command through DFI
+
+        Args:
+            channel: Channel index
+            bank: Bank index
+            priority: Command priority
+
+        Returns:
+            True if command submitted
+        """
+        return self.submit_dfi_command(
+            command=DFICommand.PRE,
+            address=0,
+            bank=bank,
+            channel=channel,
+            priority=priority
+        )
+
+    def submit_dfi_read(self, channel: int, bank: int, column: int,
+                        pseudo_channel: int = 0, priority: int = 0) -> bool:
+        """Submit READ command through DFI
+
+        Args:
+            channel: Channel index
+            bank: Bank index
+            column: Column address
+            pseudo_channel: Pseudo-channel index
+            priority: Command priority
+
+        Returns:
+            True if command submitted
+        """
+        return self.submit_dfi_command(
+            command=DFICommand.RD,
+            address=column,
+            bank=bank,
+            channel=channel,
+            pseudo_channel=pseudo_channel,
+            rddata_en=True,
+            priority=priority
+        )
+
+    def submit_dfi_write(self, channel: int, bank: int, column: int,
+                         pseudo_channel: int = 0, priority: int = 0) -> bool:
+        """Submit WRITE command through DFI
+
+        Args:
+            channel: Channel index
+            bank: Bank index
+            column: Column address
+            pseudo_channel: Pseudo-channel index
+            priority: Command priority
+
+        Returns:
+            True if command submitted
+        """
+        return self.submit_dfi_command(
+            command=DFICommand.WR,
+            address=column,
+            bank=bank,
+            channel=channel,
+            pseudo_channel=pseudo_channel,
+            wrdata_en=True,
+            priority=priority
+        )
+
+    def submit_dfi_refresh(self, channel: int, priority: int = 0) -> bool:
+        """Submit REFRESH command through DFI
+
+        Args:
+            channel: Channel index
+            priority: Command priority
+
+        Returns:
+            True if command submitted
+        """
+        return self.submit_dfi_command(
+            command=DFICommand.REFab,
+            address=0,
+            bank=0,
+            channel=channel,
+            priority=priority
+        )
+
+    def get_next_dfi_request(self) -> Optional[DFIRequest]:
+        """Get next request from DFI queue
+
+        Returns:
+            Next DFIRequest or None
+        """
+        return self.dfi.get_next_request()
+
+    def peek_dfi_request(self) -> Optional[DFIRequest]:
+        """Peek at next request without removing
+
+        Returns:
+            Next DFIRequest or None
+        """
+        return self.dfi.peek_request()
+
+    @property
+    def dfi_pending_count(self) -> int:
+        """Number of pending DFI requests"""
+        return self.dfi.pending_request_count
+
+    @property
+    def dfi_is_ready(self) -> bool:
+        """Check if DFI interface is ready"""
+        return self.dfi.is_ready()
+
+    def get_dfi_signals(self) -> Dict:
+        """Get current DFI signal states
+
+        Returns:
+            Dictionary with DFI signal states
+        """
+        return self.dfi.get_dfi_signals()
+
+    # ==================== Command Buffer ====================
+
+    def enqueue_command(self, command: str, channel: int, address: int,
+                        priority: int = 0, data: Optional[int] = None) -> int:
+        """Add a command to the internal command buffer
+
+        Args:
+            command: Command name (ACT, PRE, RD, WR, REF, MRS)
+            channel: Target channel
+            address: Memory address
+            priority: Command priority
+            data: Optional data payload
+
+        Returns:
+            Command ID if successful, -1 if buffer full
+        """
+        return self.command_buffer.enqueue(
+            command=command,
+            channel=channel,
+            address=address,
+            priority=priority,
+            data=data
+        )
+
+    def dequeue_command(self) -> Optional[Dict]:
+        """Remove and return next command from buffer
+
+        Returns:
+            Next command dict or None
+        """
+        return self.command_buffer.dequeue()
+
+    def peek_command(self) -> Optional[Dict]:
+        """View next command without removing
+
+        Returns:
+            Next command dict or None
+        """
+        return self.command_buffer.peek()
+
+    @property
+    def command_buffer_size(self) -> int:
+        """Current command buffer size"""
+        return self.command_buffer.size
+
+    @property
+    def command_buffer_full(self) -> bool:
+        """Check if command buffer is full"""
+        return self.command_buffer.is_full
+
+    def get_command_buffer_stats(self) -> Dict:
+        """Get command buffer statistics
+
+        Returns:
+            Dictionary with buffer stats
+        """
+        return self.command_buffer.get_stats()
 
     # ==================== Command Processing ====================
 
@@ -531,3 +1237,96 @@ class HBM4LogicBaseDie:
             Lane repair statistics
         """
         return self.lane_repair.get_stats()
+
+    # ==================== Utility Methods ====================
+
+    def wait_for_ready(self, max_cycles: int = 100000) -> bool:
+        """Wait for Logic Base Die to be ready
+
+        Args:
+            max_cycles: Maximum cycles to wait
+
+        Returns:
+            True if ready, False if timeout
+        """
+        for _ in range(max_cycles):
+            if self.is_ready:
+                return True
+            self.tick()
+        return False
+
+    def reset(self):
+        """Reset Logic Base Die to initial state
+
+        Resets all state machines, queues, and statistics.
+        Preserves configuration.
+        """
+        # Reset global state
+        self._global_cycle = 0
+        self._initialized = False
+        self._training_complete = False
+
+        # Reset DFI interface
+        self.dfi.reset()
+
+        # Reset command buffer
+        self.command_buffer.clear()
+
+        # Reset bank state machines
+        timing = HBM3Timing()
+        total_banks = self.config.banks_per_channel * self.config.pseudo_channels_per_channel
+        for ch in range(self.config.num_channels):
+            for bank_id in range(total_banks):
+                self._bank_state_machines[ch][bank_id] = BankStateMachine(
+                    bank_id=bank_id,
+                    timing=timing
+                )
+
+        # Reset channel contexts
+        for ctx in self._channels:
+            ctx.state = ChannelState.IDLE
+            ctx.local_cycle = 0
+            ctx.last_act_cycle = -1
+            ctx.last_pre_cycle = -1
+            ctx.last_rd_cycle = -1
+            ctx.last_wr_cycle = -1
+            ctx.open_row = None
+            ctx.training_passed = False
+            ctx.calibration_data = {}
+            ctx.error_count = 0
+            ctx.last_error = None
+            ctx.bank_states = {}
+
+        # Reset statistics
+        self._total_commands = 0
+        self._total_errors = 0
+        self._dfi_commands_sent = 0
+        self._dfi_commands_completed = 0
+
+    def get_status(self) -> Dict:
+        """Get comprehensive status of Logic Base Die
+
+        Returns:
+            Dictionary with complete status information
+        """
+        return {
+            'cycle': self._global_cycle,
+            'initialized': self._initialized,
+            'training_complete': self._training_complete,
+            'ready': self.is_ready,
+            'dfi': {
+                'lp_state': self.dfi.lp_state.value,
+                'frequency_mhz': self.dfi.frequency_mhz,
+                'pending_requests': self.dfi_pending_count,
+                'ready': self.dfi_is_ready,
+            },
+            'command_buffer': {
+                'size': self.command_buffer_size,
+                'full': self.command_buffer_full,
+            },
+            'channels': {
+                'total': self.config.num_channels,
+                'ready': sum(1 for ctx in self._channels if ctx.training_passed),
+            },
+            'statistics': self.get_stats(),
+        }

@@ -13,6 +13,7 @@
 // verilator lint_off LATCH
 // verilator lint_off MISINDENT
 // verilator lint_off EOFNEWLINE
+// verilator lint_off UNSIGNED
 
 module hbm_controller #(
     parameter QUEUE_DEPTH       = 32,
@@ -75,6 +76,7 @@ module hbm_controller #(
     // [10:3]  Burst/offset (8 bytes per beat, 4-beat burst)
     // =============================================================================
     localparam COL_LSB_WIDTH = 3;  // 8-byte granularity for 256-bit bus
+    localparam BURST_SIZE = 1 << COL_LSB_WIDTH;  // 8 bytes per burst beat
 
     logic [STACK_ADDR_WIDTH-1:0]  dec_stack;
     logic [CH_ADDR_WIDTH-1:0]     dec_ch;
@@ -128,7 +130,7 @@ module hbm_controller #(
     logic [$clog2(QUEUE_DEPTH)-1:0] queue_count;
     logic [7:0] age_counter;
 
-    wire queue_full  = (queue_count == QUEUE_DEPTH);
+    wire queue_full  = (queue_count >= QUEUE_DEPTH[$clog2(QUEUE_DEPTH)-1:0]);
     wire queue_empty = (queue_count == 0);
 
     // Queue count tracking
@@ -147,7 +149,7 @@ module hbm_controller #(
 
             // Track queue entries
             if (req_valid && req_ready && !queue_empty) begin
-                if (queue_count < QUEUE_DEPTH)
+                if (queue_count < QUEUE_DEPTH[$clog2(QUEUE_DEPTH)-1:0])
                     queue_count <= queue_count + 1;
             end
             if (grant_valid && !queue_empty) begin
@@ -239,6 +241,37 @@ module hbm_controller #(
     end
 
     // =============================================================================
+    // Address Decode Function for Queue Entries
+    // =============================================================================
+    function automatic logic check_row_hit(input logic [ADDR_WIDTH-1:0] addr);
+        logic [CH_ADDR_WIDTH-1:0]   q_ch;
+        logic [PCH_ADDR_WIDTH-1:0]  q_pch;
+        logic [BG_ADDR_WIDTH-1:0]   q_bg;
+        logic [BK_ADDR_WIDTH-1:0]   q_bank;
+        logic [ROW_ADDR_WIDTH-1:0]  q_row;
+    begin
+        // HBM4 RBC address mapping - extracts fields from packed address
+        q_ch    = addr[CH_ADDR_WIDTH+BK_ADDR_WIDTH+BG_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                         BK_ADDR_WIDTH+BG_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+        q_bg    = addr[BK_ADDR_WIDTH+BG_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                         BG_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+        q_pch   = addr[BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                         PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+        q_bank  = addr[BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                         ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+        q_row   = addr[ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                         COL_ADDR_WIDTH];
+
+        // Row hit requires matching: channel, pseudo-channel, bank group, bank, row
+        check_row_hit = row_open[get_ch_idx(q_ch)] &&
+                        (q_pch  == open_pch_reg[get_ch_idx(q_ch)]) &&
+                        (q_bg   == open_bg_reg[get_ch_idx(q_ch)]) &&
+                        (q_bank == open_bank_reg[get_ch_idx(q_ch)]) &&
+                        (q_row  == open_row_reg[get_ch_idx(q_ch)]);
+    end
+    endfunction
+
+    // =============================================================================
     // FR-FCFS Scheduler
     // =============================================================================
     logic [$clog2(QUEUE_DEPTH)-1:0] best_idx;
@@ -249,41 +282,21 @@ module hbm_controller #(
 
     always_comb begin
         // Default assignments to avoid latches
-        best_idx = 0;
-        best_priority = 0;
-        best_age = 0;
-        best_row_hit = 0;
-        grant_valid = 0;
+        best_idx = '0;
+        best_priority = '0;
+        best_age = '0;
+        best_row_hit = 1'b0;
+        grant_valid = 1'b0;
 
         for (int i = 0; i < QUEUE_DEPTH; i++) begin
+            logic row_hit;
+
+            // Default row_hit to 0 when queue entry is invalid
+            row_hit = 1'b0;
+
             if (queue[i].valid) begin
-                logic row_hit;
-                logic [CH_ADDR_WIDTH-1:0]   q_ch;
-                logic [BG_ADDR_WIDTH-1:0]   q_bg;
-                logic [BK_ADDR_WIDTH-1:0]   q_bank;
-                logic [PCH_ADDR_WIDTH-1:0]  q_pch;
-                logic [ROW_ADDR_WIDTH-1:0]  q_row;
-                logic [STACK_ADDR_WIDTH-1:0] q_stack;
-
-                // Decode address from queue entry - HBM4 RBC mapping
-                q_ch    = queue[i].addr[CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                                BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
-                q_bg    = queue[i].addr[BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                                BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
-                q_pch   = queue[i].addr[BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH:
-                                BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
-                q_bank  = queue[i].addr[BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                                ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
-                q_row   = queue[i].addr[ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
-                                COL_ADDR_WIDTH];
-                q_stack = queue[i].addr[ADDR_WIDTH-1:CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+PCH_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
-
-                // Row hit requires matching: channel, pseudo-channel, bank group, bank, row
-                row_hit = row_open[get_ch_idx(q_ch)] &&
-                          (q_pch  == open_pch_reg[get_ch_idx(q_ch)]) &&
-                          (q_bg   == open_bg_reg[get_ch_idx(q_ch)]) &&
-                          (q_bank == open_bank_reg[get_ch_idx(q_ch)]) &&
-                          (q_row  == open_row_reg[get_ch_idx(q_ch)]);
+                // Check row hit for this queue entry
+                row_hit = check_row_hit(queue[i].addr);
 
                 // Selection criteria: row_hit > priority > age (older wins)
                 if (!grant_valid) begin
@@ -291,7 +304,7 @@ module hbm_controller #(
                     best_priority = queue[i].req_priority;
                     best_age = queue[i].age;
                     best_row_hit = row_hit;
-                    grant_valid = 1;
+                    grant_valid = 1'b1;
                 end else if (row_hit && !best_row_hit) begin
                     best_idx = i[$clog2(QUEUE_DEPTH)-1:0];
                     best_priority = queue[i].req_priority;
@@ -333,9 +346,10 @@ module hbm_controller #(
             grant_idx <= 0;
             grant_row_hit <= 0;
         end else begin
-            if (grant_valid)
+            if (grant_valid) begin
                 grant_idx <= best_idx;
                 grant_row_hit <= best_row_hit;
+            end
         end
     end
 
@@ -475,6 +489,14 @@ module hbm_controller #(
     end
 
     // =============================================================================
+    // Read Data Handling
+    // =============================================================================
+    // verilator lint_off UNUSEDSIGNAL
+    logic [255:0] read_data_q;  // Read data capture register
+    assign read_data_q = dram_rd_data;  // Use read data (captured in READ_WF state)
+    // verilator lint_on UNUSEDSIGNAL
+
+    // =============================================================================
     // Response Generation
     // =============================================================================
     logic [31:0] resp_id_q;
@@ -520,9 +542,9 @@ module hbm_controller #(
 
             // Calculate hit rate (percentage)
             if (requests_q > 0)
-                stat_hit_rate <= (completed_q * 100) / requests_q;
+                stat_hit_rate <= 8'((completed_q * 100) / requests_q);
             else
-                stat_hit_rate <= 0;
+                stat_hit_rate <= 8'd0;
         end
     end
 
@@ -540,6 +562,137 @@ module hbm_controller #(
         end
     end
 
+    // =============================================================================
+    // SystemVerilog Assertions
+    // =============================================================================
+    // Enable assertions in simulation
+    `ifdef ASSERT_ON
+    `ifdef VERILATOR
+    `else
+    // 1. Reset behavior assertions
+    assert property (@(posedge clk) rst_n === 1'b0 |=> rst_n[*0:$] throughout req_ready == 1'b1)
+        else $error("Controller should be ready after reset");
+
+    // 2. Queue behavior assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        req_valid && req_ready |-> queue_count < QUEUE_DEPTH)
+        else $error("Should not enqueue when queue is full");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid |-> queue_count > 0)
+        else $error("Should not grant when queue is empty");
+
+    // 3. FSM state transition assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == IDLE && grant_valid |=> state inside {ACTIVATE, READ})
+        else $error("IDLE should transition to ACTIVATE or READ on grant");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == ACTIVATE |=> state == READ)
+        else $error("ACTIVATE should transition to READ");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == READ |=> state == READ_WF)
+        else $error("READ should transition to READ_WF");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == READ_WF |=> state == PRECHARGE)
+        else $error("READ_WF should transition to PRECHARGE");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == WRITE |=> state == WRITE_WF)
+        else $error("WRITE should transition to WRITE_WF");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == WRITE_WF |=> state == PRECHARGE)
+        else $error("WRITE_WF should transition to PRECHARGE");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == PRECHARGE |=> state == COMPLETE)
+        else $error("PRECHARGE should transition to COMPLETE");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == COMPLETE |=> state == IDLE)
+        else $error("COMPLETE should transition to IDLE");
+
+    // 4. DRAM command validity assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        dram_cmd inside {4'd0, 4'd1, 4'd2, 4'd3, 4'd4})
+        else $error("DRAM command should be valid (NOP, ACT, READ, WRITE, or PRE)");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        (state == IDLE && !grant_valid) |-> dram_cmd == 4'd0)
+        else $error("Should issue NOP when idle and no grant");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == ACTIVATE |-> dram_cmd == 4'd1)
+        else $error("ACTIVATE state should issue CMD_ACT");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == READ |-> dram_cmd == 4'd2)
+        else $error("READ state should issue CMD_READ");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == WRITE |-> dram_cmd == 4'd3)
+        else $error("WRITE state should issue CMD_WRITE");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == PRECHARGE |-> dram_cmd == 4'd4)
+        else $error("PRECHARGE state should issue CMD_PRE");
+
+    // 5. Address channel range assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid |-> dram_ch < (1 << CH_ADDR_WIDTH))
+        else $error("DRAM channel index out of range");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid |-> dram_bg < (1 << BG_ADDR_WIDTH))
+        else $error("DRAM bank group index out of range");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid |-> dram_bank < (1 << BK_ADDR_WIDTH))
+        else $error("DRAM bank index out of range");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid |-> dram_pch < (1 << PCH_ADDR_WIDTH))
+        else $error("DRAM pseudo-channel index out of range");
+
+    // 6. Response validity assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        resp_valid |-> resp_id != 0)
+        else $error("Response ID should not be zero");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        resp_valid |-> resp_status == 8'd0)
+        else $error("Response status should be success (0)");
+
+    // 7. Row buffer consistency assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        row_open == 1'b1 |-> open_bank_reg[get_ch_idx(dec_ch)] != '0)
+        else $error("Row open but bank register is invalid");
+
+    assert property (@(posedge clk) disable iff (!rst_n)
+        row_open == 1'b1 |-> open_row_reg[get_ch_idx(dec_ch)] != '0)
+        else $error("Row open but row register is invalid");
+
+    // 8. One-hot grant assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid |-> 1'b1)
+        else $error("Grant should be valid when selected");
+
+    // 9. Priority encoding assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        req_valid |-> req_priority <= 3'd7)
+        else $error("Request priority should be 3-bit value (0-7)");
+
+    // 10. Queue entry state consistency
+    assert property (@(posedge clk) disable iff (!rst_n)
+        queue[grant_idx].valid throughout (IDLE[*0:$] ##1 (ACTIVATE |-> ##1 (READ |-> ##1 (READ_WF |-> ##1 COMPLETE))))
+        else $error("Queue entry should remain valid during transaction");
+
+    `endif  // VERILATOR
+    `endif  // ASSERT_ON
+
 endmodule
 // verilator lint_on WIDTHEXPAND
 // verilator lint_on SELRANGE
@@ -549,3 +702,4 @@ endmodule
 // verilator lint_on LATCH
 // verilator lint_on MISINDENT
 // verilator lint_on EOFNEWLINE
+// verilator lint_on UNSIGNED

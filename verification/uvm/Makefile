@@ -247,6 +247,301 @@ run_comprehensive:
 		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
 		+DUMP_VCD=$(WAVEFORM)
 
+# ================================================================
+# QoS Priority Tests
+# ================================================================
+
+# Run QoS priority test
+run_qos_priority:
+	@echo "=== Running QoS priority test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_qos_priority_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run QoS starvation prevention test
+run_qos_starvation:
+	@echo "=== Running QoS starvation prevention test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_qos_starvation_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run QoS deadline test
+run_qos_deadline:
+	@echo "=== Running QoS deadline test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_qos_deadline_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run QoS mixed traffic test
+run_qos_mixed:
+	@echo "=== Running QoS mixed traffic test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_qos_mixed_traffic_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# ================================================================
+# Refresh Conflict Tests
+# ================================================================
+
+# Run refresh conflict test
+run_refresh_conflict:
+	@echo "=== Running refresh conflict test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_refresh_conflict_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run refresh timing test
+run_refresh_timing:
+	@echo "=== Running refresh timing test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_refresh_timing_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run per-bank refresh test
+run_per_bank_refresh:
+	@echo "=== Running per-bank refresh test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_per_bank_refresh_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run refresh during active test
+run_refresh_during_active:
+	@echo "=== Running refresh during active test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_refresh_during_active_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run auto-refresh test
+run_auto_refresh:
+	@echo "=== Running auto-refresh test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_auto_refresh_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# ================================================================
+# Bank Contention Tests
+# ================================================================
+
+# Run bank group conflict test
+run_bank_group_conflict:
+	@echo "=== Running bank group conflict test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_bank_group_conflict_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run bank activation conflict test
+run_bank_activation_conflict:
+	@echo "=== Running bank activation conflict test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_bank_activation_conflict_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run bank round-robin test
+run_bank_round_robin:
+	@echo "=== Running bank round-robin test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_bank_round_robin_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run bank open/close test
+run_bank_open_close:
+	@echo "=== Running bank open/close test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_bank_open_close_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run cross-bank scheduling test
+run_cross_bank_scheduling:
+	@echo "=== Running cross-bank scheduling test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_cross_bank_scheduling_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run bank contention stress test
+run_bank_contention_stress:
+	@echo "=== Running bank contention stress test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_bank_contention_stress_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# ================================================================
+# Boundary Condition Tests
+# ================================================================
+
+# Run max address test
+run_max_address:
+	@echo "=== Running max address test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_max_address_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run min address test
+run_min_address:
+	@echo "=== Running min address test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_min_address_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run address overflow test
+run_address_overflow:
+	@echo "=== Running address overflow test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_address_overflow_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run queue full test
+run_queue_full:
+	@echo "=== Running queue full test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_queue_full_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run queue empty test
+run_queue_empty:
+	@echo "=== Running queue empty test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_queue_empty_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run burst boundary test
+run_burst_boundary:
+	@echo "=== Running burst boundary test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_burst_boundary_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run timing boundary test
+run_timing_boundary:
+	@echo "=== Running timing boundary test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_timing_boundary_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# Run data pattern boundary test
+run_data_pattern_boundary:
+	@echo "=== Running data pattern boundary test ==="
+	@mkdir -p $(COV_DIR)
+	@cd $(BUILD_DIR) && ./$(EXEC) \
+		+UVM_TEST_NAME=hbm_data_pattern_boundary_test \
+		+UVM_VERBOSITY=$(UVM_VERBOSITY) \
+		+DUMP_VCD=$(WAVEFORM)
+
+# ================================================================
+# Test Suite Targets
+# ================================================================
+
+# Run all QoS tests
+test-qos: compile
+	@echo "=== Running all QoS tests ==="
+	@$(MAKE) run_qos_priority
+	@$(MAKE) run_qos_starvation
+	@$(MAKE) run_qos_deadline
+	@$(MAKE) run_qos_mixed
+	@echo "=== QoS tests complete ==="
+
+# Run all refresh tests
+test-refresh: compile
+	@echo "=== Running all refresh tests ==="
+	@$(MAKE) run_refresh_conflict
+	@$(MAKE) run_refresh_timing
+	@$(MAKE) run_per_bank_refresh
+	@$(MAKE) run_refresh_during_active
+	@$(MAKE) run_auto_refresh
+	@echo "=== Refresh tests complete ==="
+
+# Run all bank contention tests
+test-bank: compile
+	@echo "=== Running all bank contention tests ==="
+	@$(MAKE) run_bank_group_conflict
+	@$(MAKE) run_bank_activation_conflict
+	@$(MAKE) run_bank_round_robin
+	@$(MAKE) run_bank_open_close
+	@$(MAKE) run_cross_bank_scheduling
+	@$(MAKE) run_bank_contention_stress
+	@echo "=== Bank contention tests complete ==="
+
+# Run all boundary tests
+test-boundary: compile
+	@echo "=== Running all boundary tests ==="
+	@$(MAKE) run_max_address
+	@$(MAKE) run_min_address
+	@$(MAKE) run_address_overflow
+	@$(MAKE) run_queue_full
+	@$(MAKE) run_queue_empty
+	@$(MAKE) run_burst_boundary
+	@$(MAKE) run_timing_boundary
+	@$(MAKE) run_data_pattern_boundary
+	@echo "=== Boundary tests complete ==="
+
+# Run all new tests
+test-new: compile
+	@echo "=== Running all new tests ==="
+	@$(MAKE) test-qos
+	@$(MAKE) test-refresh
+	@$(MAKE) test-bank
+	@$(MAKE) test-boundary
+	@echo "=== All new tests complete ==="
+
+# Run all tests (comprehensive)
+test-all-full: compile
+	@echo "=== Running all tests (comprehensive) ==="
+	@$(MAKE) run_single
+	@$(MAKE) run_write
+	@$(MAKE) run_write_read
+	@$(MAKE) run_hotspot
+	@$(MAKE) run_random
+	@$(MAKE) run_bank_stress
+	@$(MAKE) test-qos
+	@$(MAKE) test-refresh
+	@$(MAKE) test-bank
+	@$(MAKE) test-boundary
+	@$(MAKE) run_comprehensive
+	@echo "=== All tests complete ==="
+
 # ------------------------------------------------------------
 # Coverage
 # ------------------------------------------------------------
@@ -296,20 +591,59 @@ help:
 	@echo "  compile-rtl      - Compile with RTL controller"
 	@echo "  run              - Run simulation (default: random)"
 	@echo "  run-test         - Run simulation with TEST variable"
+	@echo ""
+	@echo "  -- Basic Tests --"
 	@echo "  run_single       - Run single read test"
 	@echo "  run_write        - Run single write test"
 	@echo "  run_write_read   - Run write-read test"
 	@echo "  run_hotspot      - Run hotspot test"
 	@echo "  run_random       - Run random traffic test"
 	@echo "  run_bank_stress  - Run bank stress test"
-	@echo "  run_row_hammer  - Run row hammer test"
-	@echo "  run_axi4         - Run AXI4 test"
 	@echo "  run_comprehensive- Run comprehensive test"
-	@echo "  coverage         - Generate coverage report"
-	@echo "  clean            - Clean build directory"
-	@echo "  clean-all        - Clean all generated files"
-	@echo "  clean-full       - Full clean including generated RTL"
-	@echo "  help             - Show this help"
+	@echo ""
+	@echo "  -- QoS Priority Tests --"
+	@echo "  run_qos_priority     - Run QoS priority test"
+	@echo "  run_qos_starvation   - Run QoS starvation prevention test"
+	@echo "  run_qos_deadline     - Run QoS deadline test"
+	@echo "  run_qos_mixed        - Run QoS mixed traffic test"
+	@echo ""
+	@echo "  -- Refresh Tests --"
+	@echo "  run_refresh_conflict       - Run refresh conflict test"
+	@echo "  run_refresh_timing         - Run refresh timing test"
+	@echo "  run_per_bank_refresh       - Run per-bank refresh test"
+	@echo "  run_refresh_during_active  - Run refresh during active test"
+	@echo "  run_auto_refresh          - Run auto-refresh test"
+	@echo ""
+	@echo "  -- Bank Contention Tests --"
+	@echo "  run_bank_group_conflict      - Run bank group conflict test"
+	@echo "  run_bank_activation_conflict - Run bank activation conflict test"
+	@echo "  run_bank_round_robin         - Run bank round-robin test"
+	@echo "  run_bank_open_close           - Run bank open/close test"
+	@echo "  run_cross_bank_scheduling      - Run cross-bank scheduling test"
+	@echo "  run_bank_contention_stress    - Run bank contention stress test"
+	@echo ""
+	@echo "  -- Boundary Tests --"
+	@echo "  run_max_address           - Run max address test"
+	@echo "  run_min_address           - Run min address test"
+	@echo "  run_address_overflow      - Run address overflow test"
+	@echo "  run_queue_full            - Run queue full test"
+	@echo "  run_queue_empty           - Run queue empty test"
+	@echo "  run_burst_boundary        - Run burst boundary test"
+	@echo "  run_timing_boundary       - Run timing boundary test"
+	@echo "  run_data_pattern_boundary - Run data pattern boundary test"
+	@echo ""
+	@echo "  -- Test Suites --"
+	@echo "  test-qos          - Run all QoS tests"
+	@echo "  test-refresh      - Run all refresh tests"
+	@echo "  test-bank         - Run all bank contention tests"
+	@echo "  test-boundary     - Run all boundary tests"
+	@echo "  test-new          - Run all new tests"
+	@echo "  test-all-full     - Run all tests (comprehensive)"
+	@echo "  coverage          - Generate coverage report"
+	@echo "  clean             - Clean build directory"
+	@echo "  clean-all         - Clean all generated files"
+	@echo "  clean-full        - Full clean including generated RTL"
+	@echo "  help              - Show this help"
 	@echo ""
 	@echo "Variables:"
 	@echo "  UVM_HOME=$(UVM_HOME)"

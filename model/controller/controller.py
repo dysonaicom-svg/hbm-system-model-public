@@ -15,6 +15,14 @@ from model.controller.scheduler import FRFCFSScheduler, BankState, SchedulerStat
 from model.controller.qos_scheduler import QoSScheduler
 from model.controller.refresh_scheduler import RefreshScheduler, RefreshManager
 from model.controller.exceptions import QueueOverflowError
+from model.controller.command_sequencer import (
+    CommandSequencer,
+    CommandSequence,
+    BankState as SeqBankState,
+    BankStateEnum,
+)
+from model.controller.command_pipeline import CommandPipeline
+from model.dram.timing import HBM3Timing
 
 
 @dataclass
@@ -45,7 +53,18 @@ class HBMController:
         
         # 初始化刷新调度器
         self.refresh_manager = RefreshManager.create(self.config)
-        
+
+        # 初始化 CommandSequencer (用于生成 DRAM 命令序列)
+        # Use the timing spec from config for correct timing parameters
+        if hasattr(self.config, 'timing'):
+            timing_spec = self.config.timing
+        else:
+            timing_spec = self.config  # Fallback to config itself
+        self.sequencer = CommandSequencer(timing_spec)
+
+        # 初始化 CommandPipeline (用于 DRAM 命令执行)
+        self.pipeline = CommandPipeline(timing_spec)
+
         # Bank 状态
         self.bank_states: Dict[Tuple, BankState] = {}
         
@@ -148,18 +167,24 @@ class HBMController:
             self._last_cmd_type = "READ" if scheduled.is_read else "WRITE"
             self._last_scheduled_request = scheduled
 
-            # 更新 bank 状态
-            bank_key = (scheduled.channel_id, scheduled.pseudo_channel_id, scheduled.bank_id)
-            if scheduled in self.queue_manager.read_queue._queue or                scheduled in self.queue_manager.write_queue._queue:
-                # 请求还在队列中，不更新状态
-                pass
-            else:
-                # 请求已调度，更新 bank 状态
-                bank_state = self.bank_states.get(bank_key)
-                if bank_state:
-                    bank_state.is_open = True
-                    bank_state.open_row = scheduled.row_id
-                    bank_state.last_access_time = self.current_time
+            # 生成 DRAM 命令序列 (使用 CommandSequencer)
+            # 创建 BankState 用于命令序列生成
+            seq_bank_state = SeqBankState(
+                bank_id=scheduled.bank_id,
+                open_row=scheduled.row_id if scheduled.row_hit else -1,
+                state=BankStateEnum.ACTIVE if scheduled.row_hit else BankStateEnum.IDLE
+            )
+            cmd_sequence = self._generate_command_sequence(scheduled, self.current_time)
+
+            # 通过 CommandPipeline 提交命令 (用于跟踪实际 DRAM 延迟)
+            # 注意: 实际 DRAMModel 在 HBMSimulator 中, 这里记录命令序列供后续使用
+            pending_cmd = self.pipeline.submit_command(scheduled, None)
+
+            # 计算实际延迟 (基于命令序列)
+            # Row hit: RD/WR + PRE = ~5 cycles
+            # Row miss: ACT + RD/WR + PRE = ~43 cycles (HBM3)
+            actual_latency_cycles = cmd_sequence.total_cycles
+            scheduled.estimated_cycles = actual_latency_cycles
 
             # 标记完成
             scheduled.mark_completed(self.current_time)
@@ -168,8 +193,7 @@ class HBMController:
             self.scheduler_stats.record_schedule(scheduled)
 
             # 计算延迟（周期转换为 ns）
-            latency_cycles = scheduled.get_latency_cycles()
-            latency_ns = latency_cycles * self.config.timing.clock_period_ns
+            latency_ns = actual_latency_cycles * self.config.timing.clock_period_ns
 
             return (scheduled, HBMResponse(
                 request_id=scheduled.request_id,
@@ -178,7 +202,40 @@ class HBMController:
             ))
 
         return (None, None)
-    
+
+    def _generate_command_sequence(self, request: HBMRequest, start_cycle: int = 0) -> CommandSequence:
+        """生成 DRAM 命令序列
+
+        Args:
+            request: HBM 请求
+            start_cycle: 序列开始的周期
+
+        Returns:
+            CommandSequence 包含所有命令和时序信息
+        """
+        # 获取 bank 状态
+        bank_key = (request.channel_id, request.pseudo_channel_id, request.bank_id)
+        bank_state = self.bank_states.get(bank_key)
+
+        if bank_state:
+            # 转换为 CommandSequencer 使用的 BankState
+            seq_bank_state = SeqBankState(
+                bank_id=request.bank_id,
+                open_row=bank_state.open_row if bank_state.is_open else -1,
+                state=BankStateEnum.ACTIVE if bank_state.is_open else BankStateEnum.IDLE
+            )
+        else:
+            seq_bank_state = SeqBankState(bank_id=request.bank_id)
+
+        # 生成命令序列 (使用 sequencer 实例方法)
+        sequence = self.sequencer.generate_command_sequence(
+            request=request,
+            bank_state=seq_bank_state,
+            start_cycle=start_cycle
+        )
+
+        return sequence
+
     def get_bandwidth(self) -> float:
         """计算当前有效带宽"""
         total_bytes = 0

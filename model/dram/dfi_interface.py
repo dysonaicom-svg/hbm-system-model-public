@@ -750,8 +750,10 @@ class DFI5Interface:
                              self._cycle)
             return False
 
-        # Reset lp_state to LP_IDLE immediately upon exit
-        self.lp_state = DFILowPowerState.LP_IDLE
+        # Transition to FC_EXITING state
+        # Note: lp_state remains LP_FREQ_CHANGE until state machine completes
+        # This follows DFI 5.0 spec which requires LP state to remain active
+        # during the entire frequency change exit sequence
         self._fc_state = DFI5FreqChangeState.FC_EXITING
         self._fc_latency_counter = 0
 
@@ -764,6 +766,8 @@ class DFI5Interface:
         """Update frequency change state machine
 
         Handles the dfi_freq_change_en/ack handshake and timing.
+        Per DFI 5.0 spec, lp_state should only transition to LP_IDLE
+        after the entire frequency change sequence completes.
         """
         if self._fc_state == DFI5FreqChangeState.FC_ENTERING:
             self._fc_latency_counter += 1
@@ -784,6 +788,9 @@ class DFI5Interface:
                 self._fc_latency_counter = 0
 
         elif self._fc_state == DFI5FreqChangeState.FC_COMPLETE:
+            # Only transition to IDLE when frequency change is fully complete
+            # This follows DFI 5.0 spec for proper LP state management
+            self.lp_state = DFILowPowerState.LP_IDLE
             self._fc_state = DFI5FreqChangeState.FC_IDLE
             self.frequency_mhz = self.target_frequency_mhz
 

@@ -262,12 +262,35 @@ class InterconnectBase(ABC):
         """Initialize interconnect base
 
         Args:
-            num_ports: Number of input/output ports
+            num_ports: Number of input/output ports (must be positive)
             stack_count: Number of HBM4 stacks (1-8)
             channels_per_stack: Channels per stack (default 32 for HBM4)
             routing_mode: Routing mechanism to use
             arbitration_mode: Arbitration mechanism to use
+
+        Raises:
+            ValueError: If parameters are invalid
         """
+        # Validate num_ports
+        if num_ports <= 0:
+            raise ValueError(f"num_ports must be positive, got {num_ports}")
+
+        # Validate stack_count (HBM4 supports 1-8 stacks)
+        if stack_count < 1 or stack_count > 8:
+            raise ValueError(f"stack_count must be 1-8 for HBM4, got {stack_count}")
+
+        # Validate channels_per_stack (HBM4 has 32 channels per stack)
+        if channels_per_stack <= 0:
+            raise ValueError(f"channels_per_stack must be positive, got {channels_per_stack}")
+
+        # Validate routing_mode
+        if not isinstance(routing_mode, RoutingMode):
+            raise ValueError(f"routing_mode must be RoutingMode enum, got {type(routing_mode)}")
+
+        # Validate arbitration_mode
+        if not isinstance(arbitration_mode, ArbitrationMode):
+            raise ValueError(f"arbitration_mode must be ArbitrationMode enum, got {type(arbitration_mode)}")
+
         self.num_ports = num_ports
         self.stack_count = stack_count
         self.channels_per_stack = channels_per_stack

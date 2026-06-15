@@ -9,6 +9,14 @@ import hbm_env_pkg::*;
 `include "uvm_macros.svh"
 
 // ------------------------------------------------------------
+// Include Test Sequences
+// ------------------------------------------------------------
+`include "tests/test_read_seq.sv"
+`include "tests/test_write_seq.sv"
+`include "tests/test_bank_conflict_seq.sv"
+`include "tests/test_refresh_seq.sv"
+
+// ------------------------------------------------------------
 // Base Sequence with Register Access
 // ------------------------------------------------------------
 class hbm_base_sequence extends uvm_sequence #(hbm_transaction);

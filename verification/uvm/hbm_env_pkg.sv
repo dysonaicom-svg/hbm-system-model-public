@@ -7,6 +7,9 @@ package hbm_env_pkg;
 import uvm_pkg::*;
 `include "uvm_macros.svh"
 
+// Include coverage package
+`include "hbm_coverage.sv"
+
 // ------------------------------------------------------------
 // Constants and Types
 // ------------------------------------------------------------
@@ -522,6 +525,7 @@ class hbm_env extends uvm_env;
     hbm_scoreboard  scoreboard;
     hbm_agent_config hbm_cfg;
     axi4_agent_config axi4_cfg;
+    hbm_coverage    coverage;
 
     // Register model
     hbm_reg_model regmodel;
@@ -545,6 +549,7 @@ class hbm_env extends uvm_env;
         hbm_agent_inst = hbm_agent::type_id::create("hbm_agent_inst", this);
         axi4_agent_inst = axi4_agent::type_id::create("axi4_agent_inst", this);
         scoreboard = hbm_scoreboard::type_id::create("scoreboard", this);
+        coverage = hbm_coverage::type_id::create("coverage", this);
 
         // Create register model
         regmodel = hbm_reg_model::type_id::create("regmodel");
@@ -561,6 +566,8 @@ class hbm_env extends uvm_env;
 
         // Connect monitor transactions to scoreboard
         hbm_agent_inst.monitor.ap.connect(scoreboard);
+        // Connect monitor transactions to coverage
+        hbm_agent_inst.monitor.ap.connect(coverage.item_export);
     endfunction
 
     function void end_of_elaboration_phase(uvm_phase phase);

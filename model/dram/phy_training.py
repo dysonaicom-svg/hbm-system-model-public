@@ -25,6 +25,19 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import deque
 
 
+# HBM4 VREF range constants (JEDEC JESD270-4A)
+# VREF DAC is typically 6-bit (0-63)
+VREF_DAC_BITS = 6
+VREF_DAC_RANGE = (0, 63)  # 6-bit DAC range
+VREF_CA_MIN = VREF_DAC_RANGE[0]  # 0
+VREF_CA_MAX = VREF_DAC_RANGE[1]  # 63
+VREF_DQ_MIN = VREF_DAC_RANGE[0]  # 0
+VREF_DQ_MAX = VREF_DAC_RANGE[1]  # 63
+# VREF as percentage of VDDQ (typical range)
+VREF_CA_RANGE_PERCENT = (15.0, 45.0)  # 15-45% VDDQ
+VREF_DQ_RANGE_PERCENT = (15.0, 45.0)   # 15-45% VDDQ
+
+
 class PHYInitState(Enum):
     """PHY Initialization State Machine (PH-003)
 
@@ -548,13 +561,17 @@ class PHYTrainingStateMachine:
         best_vref = 32
         best_margin = 0.0
 
-        for vref in range(64):
+        # Sweep VREF DAC range (0-63 for 6-bit DAC)
+        for vref in range(VREF_CA_MIN, VREF_CA_MAX + 1):
             margin = self._measure_ca_vref_margin(vref)
             if margin > best_margin:
                 best_margin = margin
                 best_vref = vref
 
+        # Validate VREF result
         self.params.ca_vref = best_vref
+        if not self._validate_vref_result(best_vref, "CA"):
+            return False
 
         if best_margin < 0.1:
             self.params.training_errors.append("VREF CA training failed")
@@ -576,11 +593,61 @@ class PHYTrainingStateMachine:
         self.dfi_control.tra_mode = tra_mode
         self.dfi_control.tra_type = tra_type
 
-        # DQ VREF already calibrated in margin training
-        # This is additional fine-tuning if needed
+        # DQ VREF calibrated in margin training - validate stored results
+        if hasattr(self.params, 'rd_vref') and not self._validate_vref_result(self.params.rd_vref, "DQ"):
+            return False
+        if hasattr(self.params, 'wr_vref') and not self._validate_vref_result(self.params.wr_vref, "DQ"):
+            return False
+
         return True
 
     # === Measurement helpers ===
+
+    def _validate_vref(self, vref: int, vref_type: str = "DQ") -> bool:
+        """Validate VREF setting is within valid range
+
+        Args:
+            vref: VREF DAC setting to validate
+            vref_type: Type of VREF ("CA" or "DQ")
+
+        Returns:
+            True if VREF is valid
+
+        Raises:
+            ValueError: If VREF is out of range
+        """
+        if vref_type == "CA":
+            vref_min = VREF_CA_MIN
+            vref_max = VREF_CA_MAX
+        else:
+            vref_min = VREF_DQ_MIN
+            vref_max = VREF_DQ_MAX
+
+        if not (vref_min <= vref <= vref_max):
+            raise ValueError(
+                f"Invalid {vref_type} VREF value {vref}: "
+                f"must be in range [{vref_min}, {vref_max}]"
+            )
+        return True
+
+    def _validate_vref_result(self, vref: int, vref_type: str = "DQ") -> bool:
+        """Validate VREF training result
+
+        Args:
+            vref: VREF DAC setting from training
+            vref_type: Type of VREF ("CA" or "DQ")
+
+        Returns:
+            True if VREF is within valid range
+        """
+        try:
+            self._validate_vref(vref, vref_type)
+        except ValueError:
+            self.params.training_errors.append(
+                f"{vref_type} VREF training resulted in invalid value: {vref}"
+            )
+            return False
+        return True
 
     def _measure_rd_dqs_margin(self, delay: int) -> float:
         """Measure read DQS margin for given delay

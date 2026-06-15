@@ -6,6 +6,9 @@ Tests power consumption estimation based on:
 - Read/Write operations
 - Refresh operations
 - Temperature and process corners
+- Per-command energy tracking
+- Dynamic power calculation
+- Power report generation
 
 Reference:
 - JEDEC JESD270-4A HBM4 specification
@@ -27,6 +30,11 @@ from model.dram.power_estimator import (
     DEFAULT_POWER_ESTIMATOR,
     POWER_PRESETS,
     create_power_estimator,
+    create_power_estimator_with_config,
+    CommandType,
+    CommandEnergy,
+    ProcessCorner,
+    PowerReport,
 )
 
 
@@ -48,6 +56,32 @@ class TestPowerState:
         assert PowerState.ACTIVE.value == 'active'
         assert PowerState.IDLE.value == 'idle'
         assert PowerState.SELF_REFRESH.value == 'self_refresh'
+
+
+class TestProcessCorner:
+    """Tests for ProcessCorner enumeration"""
+
+    def test_all_corners_defined(self):
+        """Test all process corners are defined"""
+        expected = ['SS', 'TT', 'FF']
+        actual = [c.name for c in ProcessCorner]
+        for corner in expected:
+            assert corner in actual
+
+
+class TestCommandType:
+    """Tests for CommandType enumeration"""
+
+    def test_all_commands_defined(self):
+        """Test all command types are defined"""
+        expected = [
+            'ACT', 'PRE', 'PREA', 'RD', 'WR', 'RDA', 'WRA',
+            'REFAB', 'REFSB', 'RFMAB', 'RFMSB', 'MRW', 'MRR',
+            'PDN_ENTER', 'PDN_EXIT', 'SREF_ENTER', 'SREF_EXIT'
+        ]
+        actual = [c.name for c in CommandType]
+        for cmd in expected:
+            assert cmd in actual
 
 
 class TestPowerParameters:
@@ -87,6 +121,95 @@ class TestPowerParameters:
         assert params.active_power_ma == 400.0
         assert params.read_power_ma == 500.0
         assert params.vddq_voltage == 1.2
+
+    def test_process_scaling_factor(self):
+        """Test process corner scaling factors"""
+        params = PowerParameters()
+
+        # TT should be 1.0
+        params.process_corner = ProcessCorner.TT
+        assert params.get_process_scaling_factor() == pytest.approx(1.0, rel=0.01)
+
+        # FF should be > 1.0
+        params.process_corner = ProcessCorner.FF
+        assert params.get_process_scaling_factor() > 1.0
+
+        # SS should be < 1.0
+        params.process_corner = ProcessCorner.SS
+        assert params.get_process_scaling_factor() < 1.0
+
+    def test_temperature_scaling_factor(self):
+        """Test temperature scaling factors"""
+        params = PowerParameters()
+
+        # At reference temperature, should be 1.0
+        params.temperature_c = 45.0
+        assert params.get_temperature_scaling_factor() == pytest.approx(1.0, rel=0.01)
+
+        # Above reference, should increase
+        params.temperature_c = 85.0
+        assert params.get_temperature_scaling_factor() > 1.0
+
+    def test_effective_power_scale(self):
+        """Test combined power scaling"""
+        params = PowerParameters()
+        params.process_corner = ProcessCorner.TT
+        params.temperature_c = 45.0
+
+        scale = params.get_effective_power_scale()
+        assert scale == pytest.approx(1.0, rel=0.01)
+
+    def test_command_energy_pj(self):
+        """Test command energy retrieval"""
+        params = PowerParameters()
+
+        # Test various command energies
+        assert params.get_command_energy_pj(CommandType.ACT) == params.act_energy_pj
+        assert params.get_command_energy_pj(CommandType.RD) == params.rd_energy_pj
+        assert params.get_command_energy_pj(CommandType.WR) == params.wr_energy_pj
+        assert params.get_command_energy_pj(CommandType.REFAB) == params.refab_energy_pj
+
+
+class TestCommandEnergy:
+    """Tests for CommandEnergy dataclass"""
+
+    def test_command_energy_creation(self):
+        """Test command energy tracker creation"""
+        ce = CommandEnergy()
+
+        assert ce.act_count == 0
+        assert ce.rd_count == 0
+        assert ce.total_commands == 0
+        assert ce.total_energy_pj == 0.0
+
+    def test_total_commands(self):
+        """Test total command counting"""
+        ce = CommandEnergy()
+        ce.act_count = 10
+        ce.rd_count = 20
+        ce.wr_count = 5
+
+        assert ce.total_commands == 35
+
+    def test_energy_breakdown(self):
+        """Test energy breakdown generation"""
+        ce = CommandEnergy()
+        ce.act_count = 10
+        ce.total_act_energy_pj = 3200.0  # 10 * 320 pJ
+
+        breakdown = ce.get_energy_breakdown()
+        assert 'act' in breakdown
+        assert breakdown['act'] == 3200.0
+
+    def test_count_breakdown(self):
+        """Test count breakdown generation"""
+        ce = CommandEnergy()
+        ce.rd_count = 100
+        ce.wr_count = 50
+
+        breakdown = ce.get_count_breakdown()
+        assert breakdown['rd'] == 100
+        assert breakdown['wr'] == 50
 
 
 class TestChannelPower:
@@ -165,6 +288,43 @@ class TestChannelPower:
 
         avg_power = channel.get_average_power_mw(total_cycles=0)
         assert avg_power == 0.0
+
+    def test_record_command(self):
+        """Test command recording"""
+        channel = ChannelPower(channel_id=0)
+        params = PowerParameters()
+
+        channel.record_command(CommandType.ACT, params)
+        channel.record_command(CommandType.RD, params)
+
+        assert channel.command_energy.act_count == 1
+        assert channel.command_energy.rd_count == 1
+        assert channel.command_energy.total_act_energy_pj > 0
+        assert channel.command_energy.total_rd_energy_pj > 0
+
+    def test_get_peak_power(self):
+        """Test peak power from history"""
+        channel = ChannelPower(channel_id=0)
+
+        # Update with different states
+        channel.update_energy(10, PowerState.IDLE)
+        channel.update_energy(10, PowerState.ACTIVE)
+        channel.update_energy(10, PowerState.READ)
+
+        peak = channel.get_peak_power_mw()
+        assert peak > 0.0
+
+    def test_get_power_stats(self):
+        """Test power statistics"""
+        channel = ChannelPower(channel_id=0)
+
+        channel.update_energy(100, PowerState.ACTIVE)
+
+        stats = channel.get_power_stats()
+        assert 'average_mw' in stats
+        assert 'peak_mw' in stats
+        assert 'min_mw' in stats
+        assert 'rms_mw' in stats
 
 
 class TestHBM4PowerEstimator:
@@ -281,6 +441,34 @@ class TestHBM4PowerEstimator:
         assert breakdown['read'] > 0.0
         assert breakdown['idle'] > 0.0
 
+    def test_command_energy_breakdown(self):
+        """Test command energy breakdown"""
+        estimator = HBM4PowerEstimator(num_channels=2)
+
+        estimator.record_command(0, CommandType.ACT)
+        estimator.record_command(0, CommandType.RD)
+        estimator.record_command(1, CommandType.WR)
+
+        breakdown = estimator.get_command_energy_breakdown()
+        assert 'act' in breakdown
+        assert 'rd' in breakdown
+        assert 'wr' in breakdown
+        assert breakdown['act'] > 0
+        assert breakdown['rd'] > 0
+        assert breakdown['wr'] > 0
+
+    def test_command_count_breakdown(self):
+        """Test command count breakdown"""
+        estimator = HBM4PowerEstimator(num_channels=2)
+
+        estimator.record_command(0, CommandType.ACT)
+        estimator.record_command(0, CommandType.ACT)
+        estimator.record_command(1, CommandType.RD)
+
+        counts = estimator.get_command_count_breakdown()
+        assert counts['act'] == 2
+        assert counts['rd'] == 1
+
     def test_bandwidth_efficiency(self):
         """Test bandwidth efficiency calculation"""
         estimator = HBM4PowerEstimator(num_channels=1)
@@ -310,12 +498,83 @@ class TestHBM4PowerEstimator:
         assert 'peak_power_w' in thermal
         assert thermal['ambient_temp_c'] == 45.0
 
+    def test_calculate_dynamic_power(self):
+        """Test dynamic power calculation"""
+        estimator = HBM4PowerEstimator(num_channels=4)
+
+        estimator.set_all_channels_state(PowerState.ACTIVE, cycles=1)
+
+        dynamic = estimator.calculate_dynamic_power(activity_factor=0.3)
+        assert dynamic > 0.0
+        assert dynamic < estimator.get_total_power_mw()
+
+    def test_calculate_power_efficiency(self):
+        """Test power efficiency calculation"""
+        estimator = HBM4PowerEstimator(num_channels=2)
+
+        estimator.set_channel_state(0, PowerState.ACTIVE, cycles=100)
+        estimator.set_channel_state(1, PowerState.IDLE, cycles=100)
+        estimator.tick(cycles=200)  # Advance cycle counter for average calculation
+
+        # GB/s per Watt
+        eff = estimator.calculate_power_efficiency(
+            achieved_bandwidth_gbs=500.0,
+            peak_bandwidth_gbs=1000.0,
+        )
+        assert eff > 0.0
+
+    def test_generate_report(self):
+        """Test power report generation"""
+        estimator = HBM4PowerEstimator(num_channels=2)
+
+        estimator.set_channel_state(0, PowerState.ACTIVE, cycles=100)
+        estimator.set_channel_state(1, PowerState.IDLE, cycles=100)
+        estimator.tick(cycles=200)  # Advance cycle counter for average calculation
+        estimator.record_command(0, CommandType.ACT)
+        estimator.record_command(0, CommandType.RD)
+
+        report = estimator.generate_report()
+
+        assert isinstance(report, PowerReport)
+        assert report.total_power_mw > 0.0
+        assert report.average_power_mw > 0.0  # Now > 0 since we ticked
+        assert report.num_channels == 2
+        assert report.command_counts['act'] == 1
+        assert report.command_counts['rd'] == 1
+
+    def test_report_to_text(self):
+        """Test text report generation"""
+        estimator = HBM4PowerEstimator(num_channels=1)
+        estimator.set_channel_state(0, PowerState.ACTIVE, cycles=10)
+
+        report = estimator.generate_report()
+        text = report.to_text()
+
+        assert 'HBM4 POWER CONSUMPTION REPORT' in text
+        assert 'POWER SUMMARY' in text
+        assert 'ENERGY SUMMARY' in text
+        assert 'COMMAND STATISTICS' in text
+
+    def test_report_to_dict(self):
+        """Test dictionary conversion"""
+        estimator = HBM4PowerEstimator(num_channels=1)
+        estimator.set_channel_state(0, PowerState.ACTIVE, cycles=10)
+
+        report = estimator.generate_report()
+        d = report.to_dict()
+
+        assert 'power' in d
+        assert 'energy' in d
+        assert 'commands' in d
+        assert 'thermal' in d
+
     def test_get_summary(self):
         """Test getting power summary"""
         estimator = HBM4PowerEstimator(num_channels=2)
 
         estimator.set_channel_state(0, PowerState.ACTIVE, cycles=100)
         estimator.set_channel_state(1, PowerState.IDLE, cycles=100)
+        estimator.record_command(0, CommandType.ACT)
 
         summary = estimator.get_summary()
 
@@ -326,8 +585,12 @@ class TestHBM4PowerEstimator:
         assert 'peak_power_mw' in summary
         assert 'total_energy_pj' in summary
         assert 'energy_breakdown_pj' in summary
+        assert 'command_energy_pj' in summary
+        assert 'command_counts' in summary
         assert 'efficiency' in summary
         assert 'thermal' in summary
+        assert 'process_scaling' in summary
+        assert 'temperature_scaling' in summary
 
     def test_reset(self):
         """Test resetting power counters"""
@@ -335,6 +598,7 @@ class TestHBM4PowerEstimator:
 
         estimator.set_channel_state(0, PowerState.ACTIVE, cycles=100)
         estimator.set_channel_state(1, PowerState.IDLE, cycles=50)
+        estimator.record_command(0, CommandType.ACT)
 
         estimator.reset()
 
@@ -342,6 +606,7 @@ class TestHBM4PowerEstimator:
         assert estimator.peak_power_mw == 0.0
         assert estimator.channels[0].active_time_cycles == 0
         assert estimator.channels[1].idle_time_cycles == 0
+        assert estimator.total_command_energy.act_count == 0
 
     def test_refresh_interval(self):
         """Test refresh interval tracking"""
@@ -366,6 +631,26 @@ class TestHBM4PowerEstimator:
 
         estimator.set_channel_state(0, PowerState.ACTIVE, cycles=1)
         assert estimator.peak_power_mw > initial_peak
+
+    def test_activity_tracking(self):
+        """Test activity cycle tracking"""
+        estimator = HBM4PowerEstimator(num_channels=1)
+
+        estimator.set_channel_state(0, PowerState.ACTIVE, cycles=100)
+        estimator.set_channel_state(0, PowerState.READ, cycles=50)
+        estimator.set_channel_state(0, PowerState.WRITE, cycles=25)
+
+        assert estimator.active_cycles == 100
+        assert estimator.read_cycles == 50
+        assert estimator.write_cycles == 25
+
+    def test_data_rate_tck(self):
+        """Test tCK calculation from data rate"""
+        estimator = HBM4PowerEstimator(data_rate_gtps=8.0)
+        assert estimator._get_tCK_ps() == pytest.approx(125.0, rel=0.01)
+
+        estimator = HBM4PowerEstimator(data_rate_gtps=16.0)
+        assert estimator._get_tCK_ps() == pytest.approx(62.5, rel=0.01)
 
     def test_repr(self):
         """Test string representation"""
@@ -406,6 +691,15 @@ class TestPowerPresets:
         assert params.vddq_voltage == 1.2
         assert params.active_power_ma == 500.0
 
+    def test_energy_scaling_with_voltage(self):
+        """Test energy scales with voltage"""
+        params_8 = POWER_PRESETS['8Gbps']
+        params_16 = POWER_PRESETS['16Gbps']
+
+        # Higher voltage should have higher energy
+        assert params_16.act_energy_pj > params_8.act_energy_pj
+        assert params_16.rd_energy_pj > params_8.rd_energy_pj
+
 
 class TestCreatePowerEstimator:
     """Tests for power estimator factory function"""
@@ -416,6 +710,7 @@ class TestCreatePowerEstimator:
 
         assert estimator.num_channels == 16
         assert estimator.params.vddq_voltage == 1.1
+        assert estimator.data_rate_gtps == 8.0
 
     def test_create_12gbps(self):
         """Test creating 12 Gbps estimator"""
@@ -423,6 +718,7 @@ class TestCreatePowerEstimator:
 
         assert estimator.num_channels == 16
         assert estimator.params.vddq_voltage == 1.15
+        assert estimator.data_rate_gtps == 12.0
 
     def test_create_16gbps(self):
         """Test creating 16 Gbps estimator"""
@@ -430,12 +726,46 @@ class TestCreatePowerEstimator:
 
         assert estimator.num_channels == 16
         assert estimator.params.vddq_voltage == 1.2
+        assert estimator.data_rate_gtps == 16.0
 
     def test_create_unknown_preset(self):
         """Test creating with unknown preset falls back to 8Gbps"""
         estimator = create_power_estimator(speed_grade='unknown', num_channels=8)
 
         assert estimator.params.vddq_voltage == 1.1  # Fallback to 8Gbps
+
+
+class TestCreatePowerEstimatorWithConfig:
+    """Tests for power estimator with custom config"""
+
+    def test_create_with_ss_corner(self):
+        """Test creating with slow-slow corner"""
+        estimator = create_power_estimator_with_config(
+            speed_grade='8Gbps',
+            process_corner='SS',
+            temperature_c=45.0,
+        )
+
+        assert estimator.params.process_corner == ProcessCorner.SS
+
+    def test_create_with_ff_corner(self):
+        """Test creating with fast-fast corner"""
+        estimator = create_power_estimator_with_config(
+            speed_grade='16Gbps',
+            process_corner='FF',
+            temperature_c=85.0,
+        )
+
+        assert estimator.params.process_corner == ProcessCorner.FF
+
+    def test_create_with_temperature(self):
+        """Test creating with custom temperature"""
+        estimator = create_power_estimator_with_config(
+            speed_grade='12Gbps',
+            temperature_c=75.0,
+        )
+
+        assert estimator.params.temperature_c == 75.0
 
 
 class TestDefaultEstimator:
@@ -496,6 +826,52 @@ class TestPowerEstimatorEdgeCases:
         power2 = estimator.get_total_power_mw()
 
         assert power1 == power2
+
+    def test_all_command_types_recorded(self):
+        """Test all command types can be recorded"""
+        estimator = HBM4PowerEstimator(num_channels=1)
+
+        commands = [
+            CommandType.ACT, CommandType.PRE, CommandType.RD, CommandType.WR,
+            CommandType.REFAB, CommandType.REFSB, CommandType.MRW,
+        ]
+
+        for cmd in commands:
+            estimator.record_command(0, cmd)
+
+        counts = estimator.get_command_count_breakdown()
+        for cmd in commands:
+            assert counts[cmd.value] == 1
+
+
+class TestPowerReport:
+    """Tests for PowerReport"""
+
+    def test_report_creation(self):
+        """Test report creation"""
+        report = PowerReport()
+        assert report.num_channels == 32
+
+    def test_report_text_format(self):
+        """Test report text formatting"""
+        report = PowerReport()
+        report.timestamp = "2024-01-01 12:00:00"
+        report.total_power_mw = 1000.0
+        report.average_power_mw = 800.0
+        report.peak_power_mw = 1200.0
+        report.command_counts = {"act": 100, "rd": 50}
+
+        text = report.to_text()
+        assert "HBM4 POWER CONSUMPTION REPORT" in text
+        assert "1000.00" in text
+
+    def test_report_dict_format(self):
+        """Test report dict conversion"""
+        report = PowerReport()
+        report.num_channels = 16
+
+        d = report.to_dict()
+        assert d['configuration']['num_channels'] == 16
 
 
 if __name__ == '__main__':

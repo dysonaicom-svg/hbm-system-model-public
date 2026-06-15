@@ -16,7 +16,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable, Dict, List, Optional, Tuple, Iterator
+from typing import Callable, Dict, List, Optional, Tuple, Iterator, Any
 from collections import deque
 import numpy as np
 
@@ -104,6 +104,87 @@ class TrafficConfig:
     channels: int = 32
     pseudo_channels: int = 64
     banks_per_channel: int = 16
+
+    def __post_init__(self):
+        """Validate traffic configuration parameters"""
+        # Validate read_write_ratio
+        if not 0.0 <= self.read_write_ratio <= 1.0:
+            raise ValueError(
+                f"read_write_ratio must be between 0.0 and 1.0, got {self.read_write_ratio}"
+            )
+
+        # Validate request_rate
+        if self.request_rate <= 0:
+            raise ValueError(
+                f"request_rate must be positive, got {self.request_rate}"
+            )
+
+        # Validate burst_size
+        if self.burst_size <= 0:
+            raise ValueError(
+                f"burst_size must be positive, got {self.burst_size}"
+            )
+
+        # Validate addresses
+        if self.base_address < 0:
+            raise ValueError(
+                f"base_address must be non-negative, got {self.base_address}"
+            )
+        if self.address_range <= 0:
+            raise ValueError(
+                f"address_range must be positive, got {self.address_range}"
+            )
+        if self.address_stride <= 0:
+            raise ValueError(
+                f"address_stride must be positive, got {self.address_stride}"
+            )
+        if self.base_address + self.address_range > (1 << 64):
+            raise ValueError(
+                f"Address range exceeds 64-bit address space"
+            )
+
+        # Validate QoS distribution
+        if not self.qos_distribution:
+            raise ValueError("qos_distribution cannot be empty")
+        total_prob = sum(self.qos_distribution.values())
+        if abs(total_prob - 1.0) > 0.001:
+            raise ValueError(
+                f"qos_distribution probabilities must sum to 1.0, got {total_prob}"
+            )
+        for qos, prob in self.qos_distribution.items():
+            if not 0 <= qos <= 15:
+                raise ValueError(f"QoS level must be 0-15, got {qos}")
+            if not 0.0 <= prob <= 1.0:
+                raise ValueError(f"QoS probability must be 0.0-1.0, got {prob}")
+
+        # Validate AI parameters
+        if self.batch_size <= 0:
+            raise ValueError(
+                f"batch_size must be positive, got {self.batch_size}"
+            )
+        if self.sequence_length <= 0:
+            raise ValueError(
+                f"sequence_length must be positive, got {self.sequence_length}"
+            )
+        if self.hidden_size <= 0:
+            raise ValueError(
+                f"hidden_size must be positive, got {self.hidden_size}"
+            )
+
+        # Validate HBM4 configuration
+        spec = HBM4Spec()
+        if self.channels <= 0 or self.channels > spec.channels:
+            raise ValueError(
+                f"channels must be 1-{spec.channels}, got {self.channels}"
+            )
+        if self.pseudo_channels <= 0 or self.pseudo_channels > spec.pseudo_channels:
+            raise ValueError(
+                f"pseudo_channels must be 1-{spec.pseudo_channels}, got {self.pseudo_channels}"
+            )
+        if self.banks_per_channel <= 0 or self.banks_per_channel > spec.banks_per_pseudo_channel:
+            raise ValueError(
+                f"banks_per_channel must be 1-{spec.banks_per_pseudo_channel}, got {self.banks_per_channel}"
+            )
 
 
 @dataclass
@@ -734,15 +815,28 @@ class TrafficGenerator:
 
         Args:
             config: Traffic configuration
+
+        Raises:
+            ValueError: If config parameters are invalid
         """
+        # Validate config before assignment
+        if config is not None:
+            try:
+                config.__post_init__()
+            except ValueError:
+                raise  # Re-raise validation errors from config
+
         self.config = config if config else TrafficConfig()
         self.hbm_spec = HBM4Spec()
 
-        # Initialize address generator
+        # Validate HBM4Spec compatibility
+        self._validate_hbm4_config()
+
+        # Initialize address generator using HBM4Spec constants
         self.addr_gen = AddressGenerator(
             base_address=self.config.base_address,
             address_range=self.config.address_range,
-            stride=self.config.address_stride,
+            stride=self.hbm_spec.row_size,  # Use HBM4Spec burst length
         )
 
         # Initialize patterns
@@ -786,6 +880,36 @@ class TrafficGenerator:
         # Thread safety
         self._lock = threading.Lock()
 
+        # Error logging
+        self._error_log: List[Dict[str, Any]] = []
+
+    def _validate_hbm4_config(self):
+        """Validate configuration against HBM4 specification
+
+        Raises:
+            ValueError: If configuration violates HBM4 spec
+        """
+        # Check channel count
+        if self.config.channels > self.hbm_spec.channels:
+            raise ValueError(
+                f"Configured channels ({self.config.channels}) exceeds "
+                f"HBM4 spec maximum ({self.hbm_spec.channels})"
+            )
+
+        # Check pseudo-channel count
+        if self.config.pseudo_channels > self.hbm_spec.pseudo_channels:
+            raise ValueError(
+                f"Configured pseudo_channels ({self.config.pseudo_channels}) exceeds "
+                f"HBM4 spec maximum ({self.hbm_spec.pseudo_channels})"
+            )
+
+        # Check banks per channel
+        if self.config.banks_per_channel > self.hbm_spec.banks_per_pseudo_channel:
+            raise ValueError(
+                f"Configured banks_per_channel ({self.config.banks_per_channel}) exceeds "
+                f"HBM4 spec maximum ({self.hbm_spec.banks_per_pseudo_channel})"
+            )
+
     def set_pattern(self, pattern: TrafficPattern):
         """Set traffic pattern
 
@@ -802,32 +926,77 @@ class TrafficGenerator:
         """Generate traffic requests
 
         Args:
-            count: Number of requests to generate
+            count: Number of requests to generate (must be positive)
             pattern: Optional pattern override
 
         Returns:
             List of HBMRequest objects
+
+        Raises:
+            ValueError: If count is not positive
         """
+        if count <= 0:
+            error_msg = f"count must be positive, got {count}"
+            self._log_error("invalid_parameter", error_msg)
+            raise ValueError(error_msg)
+
         with self._lock:
             p = pattern if pattern else self._current_pattern
 
-            # AI training patterns
-            if p in self._training_patterns:
-                requests = self._training_patterns[p].generate_requests(self.config, count)
-            # AI inference patterns
-            elif p in self._inference_patterns:
-                requests = self._inference_patterns[p].generate_requests(self.config, count)
-            # Synthetic patterns
-            elif p in self._patterns:
-                requests = self._patterns[p].generate_requests(self.config, count)
-            else:
-                # Default to fixed rate
-                requests = self._patterns[TrafficPattern.SYNTHETIC_FIXED_RATE].generate_requests(self.config, count)
+            try:
+                # AI training patterns
+                if p in self._training_patterns:
+                    requests = self._training_patterns[p].generate_requests(self.config, count)
+                # AI inference patterns
+                elif p in self._inference_patterns:
+                    requests = self._inference_patterns[p].generate_requests(self.config, count)
+                # Synthetic patterns
+                elif p in self._patterns:
+                    requests = self._patterns[p].generate_requests(self.config, count)
+                else:
+                    # Default to fixed rate
+                    requests = self._patterns[TrafficPattern.SYNTHETIC_FIXED_RATE].generate_requests(self.config, count)
 
-            # Update statistics
-            self._update_stats(requests)
+                # Update statistics
+                self._update_stats(requests)
 
-            return requests
+                return requests
+
+            except Exception as e:
+                # Log error instead of silently swallowing
+                error_msg = f"Error generating requests for pattern {p.name}: {str(e)}"
+                self._log_error("generation_error", error_msg)
+                # Re-raise the exception so caller knows about the error
+                raise
+
+    def _log_error(self, error_type: str, message: str) -> None:
+        """Log an error for diagnostics
+
+        Args:
+            error_type: Category of error
+            message: Error message
+        """
+        import logging
+        logger = logging.getLogger('hbm4.traffic_generator')
+        logger.error(message)
+
+        self._error_log.append({
+            'type': error_type,
+            'message': message,
+            'timestamp': time.time(),
+        })
+
+    def get_errors(self) -> List[Dict[str, Any]]:
+        """Get all recorded errors
+
+        Returns:
+            List of error records
+        """
+        return list(self._error_log)
+
+    def clear_errors(self) -> None:
+        """Clear error log"""
+        self._error_log = []
 
     def generate_stream(self, pattern: TrafficPattern = TrafficPattern.SYNTHETIC_FIXED_RATE,
                        batch_size: int = 32) -> Iterator[List[HBMRequest]]:

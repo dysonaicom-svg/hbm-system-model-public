@@ -54,11 +54,123 @@ class HBM3Timing:
     def clock_freq(self) -> float:
         """时钟频率 (Hz)"""
         return 1e12 / self.tCK_ps
-    
+
     @property
     def clock_period_ns(self) -> float:
         """时钟周期 (ns)"""
         return self.tCK_ps / 1000.0
+
+    # HBM4-compatible aliases (n-prefix)
+    @property
+    def nRCD(self) -> int:
+        """RAS to CAS delay - HBM4 compatible alias"""
+        return self.tRCD
+
+    @property
+    def nRCDRD(self) -> int:
+        """RAS to CAS delay (read)"""
+        return self.tRCD
+
+    @property
+    def nRCDWR(self) -> int:
+        """RAS to CAS delay (write)"""
+        return self.tRCD
+
+    @property
+    def nRP(self) -> int:
+        """Precharge time - HBM4 compatible alias"""
+        return self.tRP
+
+    @property
+    def nRAS(self) -> int:
+        """Active to precharge - HBM4 compatible alias"""
+        return self.tRAS
+
+    @property
+    def nRC(self) -> int:
+        """Row cycle time - HBM4 compatible alias"""
+        return self.tRC
+
+    @property
+    def nCCD(self) -> int:
+        """CAS to CAS delay - HBM4 compatible alias"""
+        return self.tCCD
+
+    @property
+    def nRRD(self) -> int:
+        """Rank row to rank delay - HBM4 compatible alias"""
+        return self.tRRD
+
+    @property
+    def nFAW(self) -> int:
+        """Four bank activation window - HBM4 compatible alias"""
+        return self.tFAW
+
+    @property
+    def nRFC(self) -> int:
+        """Refresh cycle - HBM4 compatible alias"""
+        return self.tRFC
+
+    @property
+    def nREFI(self) -> int:
+        """Refresh interval - HBM4 compatible alias"""
+        return self.tREFI
+
+    @property
+    def nBL(self) -> int:
+        """Burst length"""
+        return 4
+
+    @property
+    def nRTW(self) -> int:
+        """Read to write turnaround"""
+        return 4
+
+    @property
+    def nWTRS(self) -> int:
+        """Write to read (same BG)"""
+        return 4
+
+    @property
+    def nWTRL(self) -> int:
+        """Write to read (different BG)"""
+        return 5
+
+    @property
+    def nRRDS(self) -> int:
+        """RAS to RAS delay (same BG)"""
+        return 3
+
+    @property
+    def nRRDL(self) -> int:
+        """RAS to RAS delay (different BG)"""
+        return 4
+
+    # Additional HBM4-compatible aliases needed by CommandSequencer
+    @property
+    def nCCDS(self) -> int:
+        """Column command delay (same BG)"""
+        return self.tCCD
+
+    @property
+    def nCCDL(self) -> int:
+        """Column command delay (different BG)"""
+        return self.tCCD
+
+    @property
+    def nRTW(self) -> int:
+        """Read to write turnaround"""
+        return 4
+
+    @property
+    def nWTRS(self) -> int:
+        """Write to read (same BG)"""
+        return 4
+
+    @property
+    def nWTRL(self) -> int:
+        """Write to read (different BG)"""
+        return 5
     
     def cycles_to_ns(self, cycles: int) -> float:
         """Cycles 转换为 ns"""
@@ -218,6 +330,16 @@ class HBM4Timing:
         return int(ns * 1000 / self.tCK_ps + 0.5)
 
     # Aliases for backward compatibility with HBM3 naming
+    @property
+    def nRCDRD(self) -> int:
+        """RAS to CAS delay (read) - alias for nRCD"""
+        return self.nRCD
+
+    @property
+    def nRCDWR(self) -> int:
+        """RAS to CAS delay (write) - alias for nRCD"""
+        return self.nRCD
+
     @property
     def tRCD(self) -> int:
         return self.nRCD

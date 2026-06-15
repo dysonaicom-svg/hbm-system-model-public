@@ -1084,13 +1084,18 @@ class MBISTController:
         }
 
     def reset(self) -> None:
-        """Reset MBIST controller to IDLE state"""
+        """Reset MBIST controller to IDLE state
+
+        Clears all test state including injected faults.
+        """
         self.state = MBISTState.IDLE
         self.current_cycle = 0
         self.current_address = 0
         self.current_pattern_index = 0
         self.test_data = {}
         self.current_result = None
+        # Clear fault injection map on reset
+        self.fault_map = {}
 
     def inject_fault(
         self,
