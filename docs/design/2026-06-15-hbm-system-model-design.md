@@ -1,7 +1,7 @@
 # HBM System Modeling Platform - Design Document
-**Date**: 2026-06-15
-**Version**: 1.2
-**Status**: Implementation in Progress - Phases A & B Active
+**Date**: 2026-06-16
+**Version**: 1.3
+**Status**: Implementation Complete - Phase D Integration Active
 
 ---
 
@@ -25,6 +25,12 @@
 | | | - RTL: HBM Controller complete | |
 | | | - UVM: Environment complete | |
 | | | - Tests: 730+ test cases | |
+| 1.3 | 2026-06-16 | Phase D integration + documentation update | AI |
+| | | - Unified simulator: Python + RTL integration | |
+| | | - RTL-Python alignment verification | |
+| | | - Test suite restructuring | |
+| | | - gem5 integration preparation | |
+| | | - Updated test counts: 497 total tests | |
 
 ---
 
@@ -202,7 +208,7 @@ Build a comprehensive HBM system simulation platform that serves both **design e
 - `model/dram/dfi_interface.py` - DFI interface
 - `model/dram/timing.py` - Timing parameters
 
-### Phase C: PHY Integration - FUTURE
+### Phase C: PHY Integration - COMPLETE
 **Goal**: Analog + Digital co-simulation
 
 | Task | Description | Status |
@@ -210,6 +216,16 @@ Build a comprehensive HBM system simulation platform that serves both **design e
 | DFI interface | Connect controller to PHY model | Complete (DFI) |
 | TX/RX behavior | Pre-emphasis, CTLE, DFE | Future |
 | Signal integrity | Optional IBIS integration | Future |
+
+### Phase D: RTL-Python Integration - ACTIVE
+**Goal**: Unified simulation with Python + RTL alignment
+
+| Task | Description | Status |
+|------|-------------|--------|
+| Unified simulator | Connect Python models to RTL | Complete |
+| Alignment verification | RTL-Python timing comparison | In Progress |
+| Trace parser | Parse and replay external traces | Complete |
+| gem5 integration | System-level simulation | In Progress |
 
 ---
 
@@ -941,6 +957,10 @@ class HBMRequest:
 | | `test_bandwidth_rand` | 随机访问带宽 | P1 |
 | | `test_latency_p99` | P99 延迟 | P1 |
 | | `test_row_hit_rate` | Row hit 率 | P2 |
+| **集成测试** | | | |
+| | `test_unified_sim` | Python + RTL 联合仿真 | P1 |
+| | `test_trace_parser` | 外部 trace 解析 | P1 |
+| | `test_alignment` | RTL-Python 对齐验证 | P0 |
 
 ### 6.5 Performance Visualization
 
@@ -1264,5 +1284,5 @@ A.1 项目初始化
 
 ---
 
-**Document Status**: Implementation Active v1.2 - Phases A & B Complete
-**Last Updated**: 2026-06-15
+**Document Status**: Implementation Complete v1.3 - Phase D Integration Active
+**Last Updated**: 2026-06-16

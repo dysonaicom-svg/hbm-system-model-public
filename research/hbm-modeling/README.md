@@ -43,3 +43,18 @@ gem5 is chosen over DRAMSys because:
 - SystemC/TLM virtual platform integration is needed
 - Transaction-level SoC modeling is the goal
 - Faster DRAM-centric design-space exploration
+
+## Current Status
+
+The HBM modeling baseline is fully integrated with the main project:
+- Python models in `model/controller/` and `model/dram/`
+- RTL implementation in `rtl/`
+- Unified simulator in `sim/unified_simulator.py`
+- gem5 integration in progress (Task #11)
+
+## Recent Changes (2026-06-16)
+
+- Added Phase D: RTL-Python Integration
+- Unified simulator connects Python models to RTL
+- Trace parser for external trace replay
+- Test suite restructured with 497 total tests

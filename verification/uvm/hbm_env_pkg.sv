@@ -1,21 +1,20 @@
 // ------------------------------------------------------------
-// hbm_env_pkg.sv - HBM UVM Environment Package
-// Simplified for Verilator compatibility
+// HBM Environment Package
+// Comprehensive UVM environment for HBM controller verification
 // ------------------------------------------------------------
 package hbm_env_pkg;
 
 import uvm_pkg::*;
 `include "uvm_macros.svh"
 
-// Include coverage package
-`include "hbm_coverage.sv"
-
 // ------------------------------------------------------------
 // Constants and Types
 // ------------------------------------------------------------
 `define HBM_MAX_BANKS 16
 `define HBM_MAX_CHANNELS 8
+`define HBM_QUEUE_DEPTH 32
 
+// Command type enum - extended for full HBM command set
 typedef enum logic [2:0] {
     HBM_CMD_IDLE   = 3'b000,
     HBM_CMD_WRITE  = 3'b001,
@@ -515,6 +514,268 @@ class hbm_reg_model extends uvm_object;
 endclass
 
 // ------------------------------------------------------------
+// Coverage Configuration
+// ------------------------------------------------------------
+class coverage_config extends uvm_object;
+    `uvm_object_utils(coverage_config)
+
+    bit enable_bank_conflict_cov = 1;
+    bit enable_row_hit_cov = 1;
+    bit enable_queue_cov = 1;
+    bit enable_cmd_cov = 1;
+    bit enable_timing_cov = 1;
+
+    int bank_count = 16;
+    int queue_depth = 32;
+
+    function new(string name = "coverage_config");
+        super.new(name);
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// Simple Coverage (without covergroups - Verilator compatible)
+// Tracks transaction statistics for coverage analysis
+// ------------------------------------------------------------
+class hbm_coverage extends uvm_component;
+    `uvm_component_utils(hbm_coverage)
+
+    coverage_config cfg;
+
+    // Transaction tracking
+    hbm_transaction trans_history[$];
+    int max_history = 1000;
+
+    // Previous transaction for comparison
+    hbm_transaction prev_trans;
+
+    // Previous bank for conflict detection
+    bit [7:0] last_bank;
+
+    // Statistics counters
+    int row_hits = 0;
+    int row_misses = 0;
+    int row_conflicts = 0;
+    int bank_conflicts = 0;
+    int total_transactions = 0;
+
+    // Per-bank last activated row tracking
+    bit [15:0] last_act_row[16];
+    bit        bank_open[16];
+    int        banks_accessed[16];
+
+    // Queue fullness tracking
+    int queue_fill_level[$];
+    int max_queue_observed = 0;
+
+    // Command sequence tracking
+    int act_count = 0;
+    int pre_count = 0;
+    int rd_count = 0;
+    int wr_count = 0;
+    int ref_count = 0;
+
+    // Timing tracking
+    int idle_cycles = 0;
+    int prev_time = 0;
+
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+
+        // Initialize bank tracking
+        for (int i = 0; i < 16; i++) begin
+            last_act_row[i] = 0;
+            bank_open[i] = 0;
+            banks_accessed[i] = 0;
+        end
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+
+        if (!uvm_config_db #(coverage_config)::get(this, "", "coverage_cfg", cfg))
+            cfg = coverage_config::type_id::create("cfg");
+
+        `uvm_info(get_name(), "Coverage build complete", UVM_MEDIUM)
+    endfunction
+
+    // Write function - called for each transaction
+    function void write_transaction(hbm_transaction t);
+        bit hit = 0;
+        bit conflict = 0;
+
+        // Store transaction
+        trans_history.push_back(t);
+        if (trans_history.size() > max_history)
+            trans_history.pop_front();
+
+        total_transactions++;
+
+        // Update command counts
+        case (t.cmd)
+            hbm_transaction::READ:  rd_count++;
+            hbm_transaction::WRITE: wr_count++;
+            default: begin
+                if (t.cmd == hbm_transaction::READ) rd_count++;
+                else if (t.cmd == hbm_transaction::WRITE) wr_count++;
+            end
+        endcase
+
+        // Analyze row hit/miss for data commands
+        if (prev_trans != null) begin
+            if (t.addr_bank == prev_trans.addr_bank) begin
+                if (t.addr_row == prev_trans.addr_row) begin
+                    hit = 1;
+                    row_hits++;
+                end else begin
+                    conflict = 1;
+                    row_conflicts++;
+                    if (bank_open[t.addr_bank])
+                        row_conflicts++;  // Bank conflict
+                end
+            end else begin
+                bank_conflicts++;
+            end
+        end else begin
+            row_misses++;
+        end
+
+        // Update bank state tracking
+        banks_accessed[t.addr_bank]++;
+        last_bank = t.addr_bank;
+        prev_trans = t;
+
+        `uvm_info(get_name(), $sformatf(
+            "Coverage: hits=%0d misses=%0d conflicts=%0d bank_conflicts=%0d",
+            row_hits, row_misses, row_conflicts, bank_conflicts), UVM_FULL)
+    endfunction
+
+    // Record ACT command
+    function void record_act(bit [7:0] bank, bit [15:0] row);
+        act_count++;
+        last_act_row[bank] = row;
+        bank_open[bank] = 1;
+    endfunction
+
+    // Record PRE command
+    function void record_pre(bit [7:0] bank);
+        pre_count++;
+        bank_open[bank] = 0;
+    endfunction
+
+    // Record REF command
+    function void record_ref();
+        ref_count++;
+        for (int i = 0; i < 16; i++)
+            bank_open[i] = 0;
+    endfunction
+
+    // Update queue fullness from external source
+    function void update_queue_fullness(int fill_level);
+        queue_fill_level.push_back(fill_level);
+        if (queue_fill_level.size() > cfg.queue_depth)
+            queue_fill_level.pop_front();
+        if (fill_level > max_queue_observed)
+            max_queue_observed = fill_level;
+    endfunction
+
+    // Extract phase - calculate final statistics
+    function void extract_phase(uvm_phase phase);
+        real hit_rate;
+        super.extract_phase(phase);
+
+        hit_rate = row_hits * 100.0 / (row_hits + row_misses + row_conflicts + 0.001);
+
+        `uvm_info(get_name(), $sformatf("=== Coverage Summary === total=%0d hits=%0d misses=%0d conflicts=%0d bank_conf=%0d rate=%.2f%%",
+            total_transactions, row_hits, row_misses, row_conflicts, bank_conflicts, hit_rate), UVM_MEDIUM)
+    endfunction
+
+    // Report phase - final coverage report
+    function void report_phase(uvm_phase phase);
+        real hit_rate;
+        real conflict_rate;
+        super.report_phase(phase);
+
+        hit_rate = row_hits * 100.0 / (row_hits + row_misses + row_conflicts + 0.001);
+        conflict_rate = row_conflicts * 100.0 / (total_transactions + 0.001);
+
+        `uvm_info(get_name(), $sformatf("=== Final Coverage Report === total=%0d hits=%0d(%.2f%%) misses=%0d conflicts=%0d(%.2f%%) bank_conf=%0d",
+            total_transactions, row_hits, hit_rate, row_misses, row_conflicts, conflict_rate, bank_conflicts), UVM_MEDIUM)
+        `uvm_info(get_name(), $sformatf("Commands: ACT=%0d PRE=%0d RD=%0d WR=%0d REF=%0d", act_count, pre_count, rd_count, wr_count, ref_count), UVM_MEDIUM)
+        `uvm_info(get_name(), $sformatf("Queue: max_fill=%0d depth=%0d", max_queue_observed, cfg.queue_depth), UVM_MEDIUM)
+    endfunction
+            banks_accessed[4], banks_accessed[5], banks_accessed[6], banks_accessed[7],
+            banks_accessed[8], banks_accessed[9], banks_accessed[10], banks_accessed[11],
+            banks_accessed[12], banks_accessed[13], banks_accessed[14], banks_accessed[15]
+        ), UVM_MEDIUM)
+    endfunction
+
+    // Reset statistics
+    function void reset_stats();
+        row_hits = 0;
+        row_misses = 0;
+        row_conflicts = 0;
+        bank_conflicts = 0;
+        total_transactions = 0;
+        act_count = 0;
+        pre_count = 0;
+        rd_count = 0;
+        wr_count = 0;
+        ref_count = 0;
+        idle_cycles = 0;
+        max_queue_observed = 0;
+        trans_history.delete();
+        queue_fill_level.delete();
+        for (int i = 0; i < 16; i++) begin
+            last_act_row[i] = 0;
+            bank_open[i] = 0;
+            banks_accessed[i] = 0;
+        end
+        `uvm_info(get_name(), "Coverage statistics reset", UVM_MEDIUM)
+    endfunction
+endclass
+
+// ------------------------------------------------------------
+// Queue Coverage Agent (Simplified)
+// Monitors queue fullness independently
+// ------------------------------------------------------------
+class queue_coverage_agent extends uvm_component;
+    `uvm_component_utils(queue_coverage_agent)
+
+    int queue_depth;
+    int current_fill;
+    int max_fill_observed;
+
+    // Queue fill history
+    int fill_history[$];
+    int max_history = 100;
+
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+        queue_depth = 32;
+        current_fill = 0;
+        max_fill_observed = 0;
+    endfunction
+
+    function void write_transaction(hbm_transaction t);
+        // Estimate queue fill based on transaction type
+        if (t.cmd == hbm_transaction::READ || t.cmd == hbm_transaction::WRITE) begin
+            current_fill++;
+            if (current_fill > max_fill_observed)
+                max_fill_observed = current_fill;
+        end
+
+        fill_history.push_back(current_fill);
+        if (fill_history.size() > max_history)
+            fill_history.pop_front();
+
+        // Decrement on completion (simplified)
+        if (current_fill > 0)
+            current_fill--;
+    endfunction
+endclass
+
+// ------------------------------------------------------------
 // Environment
 // ------------------------------------------------------------
 class hbm_env extends uvm_env;
@@ -526,9 +787,13 @@ class hbm_env extends uvm_env;
     hbm_agent_config hbm_cfg;
     axi4_agent_config axi4_cfg;
     hbm_coverage    coverage;
+    queue_coverage_agent queue_cov;
 
     // Register model
     hbm_reg_model regmodel;
+
+    // Coverage configuration
+    coverage_config cov_cfg;
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
@@ -540,16 +805,25 @@ class hbm_env extends uvm_env;
         // Create configurations
         hbm_cfg = hbm_agent_config::type_id::create("hbm_cfg");
         axi4_cfg = axi4_agent_config::type_id::create("axi4_cfg");
+        cov_cfg = coverage_config::type_id::create("cov_cfg");
+        cov_cfg.queue_depth = `HBM_QUEUE_DEPTH;
+        cov_cfg.enable_bank_conflict_cov = 1;
+        cov_cfg.enable_row_hit_cov = 1;
+        cov_cfg.enable_queue_cov = 1;
+        cov_cfg.enable_cmd_cov = 1;
+        cov_cfg.enable_timing_cov = 1;
 
         // Set config DB
         uvm_config_db #(hbm_agent_config)::set(this, "hbm_agent_inst", "cfg", hbm_cfg);
         uvm_config_db #(axi4_agent_config)::set(this, "axi4_agent_inst", "cfg", axi4_cfg);
+        uvm_config_db #(coverage_config)::set(this, "coverage", "coverage_cfg", cov_cfg);
 
         // Create components
         hbm_agent_inst = hbm_agent::type_id::create("hbm_agent_inst", this);
         axi4_agent_inst = axi4_agent::type_id::create("axi4_agent_inst", this);
         scoreboard = hbm_scoreboard::type_id::create("scoreboard", this);
         coverage = hbm_coverage::type_id::create("coverage", this);
+        queue_cov = queue_coverage_agent::type_id::create("queue_cov", this);
 
         // Create register model
         regmodel = hbm_reg_model::type_id::create("regmodel");
@@ -568,6 +842,8 @@ class hbm_env extends uvm_env;
         hbm_agent_inst.monitor.ap.connect(scoreboard);
         // Connect monitor transactions to coverage
         hbm_agent_inst.monitor.ap.connect(coverage.item_export);
+        // Connect monitor transactions to queue coverage
+        hbm_agent_inst.monitor.ap.connect(queue_cov.item_export);
     endfunction
 
     function void end_of_elaboration_phase(uvm_phase phase);
@@ -576,6 +852,13 @@ class hbm_env extends uvm_env;
         if (regmodel != null) begin
             regmodel.print();
         end
+        `uvm_info(get_name(), $sformatf(
+            "Coverage enabled: bank_conflict=%b row_hit=%b queue=%b cmd=%b timing=%b",
+            cov_cfg.enable_bank_conflict_cov,
+            cov_cfg.enable_row_hit_cov,
+            cov_cfg.enable_queue_cov,
+            cov_cfg.enable_cmd_cov,
+            cov_cfg.enable_timing_cov), UVM_MEDIUM)
     endfunction
 
     function void report_phase(uvm_phase phase);

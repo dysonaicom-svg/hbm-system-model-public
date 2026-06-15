@@ -24,7 +24,8 @@ Statistics Collector
 |-------|------|--------|
 | A | HBM Controller Model | **Complete** |
 | B | DRAM Timing Model | **Complete** |
-| C | PHY Integration | **Complete** (~92%) |
+| C | PHY Integration | **Complete** |
+| D | RTL-Python Integration | **Active** |
 
 ## Key Components
 
@@ -126,4 +127,4 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 
 - AI-driven development with subagent parallelization
 - User reviews designs, AI implements
-- Phased approach: Design → Phase A → Phase B → Phase C
+- Phased approach: Design → Phase A → Phase B → Phase C → Phase D

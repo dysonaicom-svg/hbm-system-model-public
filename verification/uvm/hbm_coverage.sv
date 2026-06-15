@@ -1,186 +1,167 @@
-// ------------------------------------------------------------
-// hbm_coverage.sv - HBM Functional Coverage
-// Tracks command, bank, row hit/miss coverage
-// ------------------------------------------------------------
-// Copyright (c) 2026. All rights reserved.
+// ============================================================================
+// HBM Functional Coverage
+// ============================================================================
+// Covergroups for:
+// - Bank conflicts
+// - Row hit/miss rates
+// - Queue fullness
+// - Command types (ACT/PRE/RD/WR)
+// ============================================================================
 
+`ifndef HBM_COVERAGE_SV
+`define HBM_COVERAGE_SV
+
+// ============================================================================
+// Coverage Package
+// ============================================================================
 package hbm_coverage_pkg;
 
-import uvm_pkg::*;
-`include "uvm_macros.svh"
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
 
-// ------------------------------------------------------------
-// Coverage Monitor
-// ------------------------------------------------------------
-class hbm_coverage extends uvm_component;
-    `uvm_component_utils(hbm_coverage)
+  // ============================================================================
+  // Bank Conflict Coverage
+  // ============================================================================
+  covergroup bank_conflict_cg @(posedge clk);
+    option.per_instance = 1;
 
-    uvm_analysis_imp #(hbm_transaction, hbm_coverage) item_export;
+    bank_id: coverpoint bank_id {
+      bins banks[] = {[0:15]};
+    }
 
-    // Transaction tracking
-    hbm_transaction trans_history[$];
-    int max_history = 1000;
+    conflict_type: coverpoint conflict_type {
+      bins same_bank_different_row = {1};
+      bins same_row = {2};
+      bins different_bank = {0};
+    }
 
-    // Previous transaction for comparison
-    hbm_transaction prev_trans;
+    cross bank_id, conflict_type;
+  endgroup : bank_conflict_cg
 
-    // Covergroups
-    covergroup cmd_cg;
-        option.per_instance = 1;
-        coverpoint cmd {
-            bins read = {hbm_transaction::READ};
-            bins write = {hbm_transaction::WRITE};
-        }
-    endgroup
+  // ============================================================================
+  // Row Hit/Miss Coverage
+  // ============================================================================
+  covergroup row_hit_miss_cg @(posedge clk);
+    option.per_instance = 1;
 
-    covergroup bank_cg;
-        option.per_instance = 1;
-        coverpoint bank {
-            bins banks[] = {[0:15]};
-            bins low = {[0:3]};
-            bins med = {[4:11]};
-            bins high = {[12:15]};
-        }
-    endgroup
+    access_type: coverpoint access_type {
+      bins row_hit = {2};    // Same row already open
+      bins row_miss = {0};   // Bank idle, need ACT
+      bins row_conflict = {1}; // Different row, need PRE + ACT
+    }
 
-    covergroup row_cg;
-        option.per_instance = 1;
-        coverpoint row_idx {
-            bins low = {[0:255]};
-            bins med = {[256:16383]};
-            bins high = {[16384:65535]};
-        }
-    endgroup
+    channel: coverpoint channel_id {
+      bins channels[] = {[0:7]};
+    }
 
-    covergroup col_cg;
-        option.per_instance = 1;
-        coverpoint col {
-            bins col0 = {[0:0]};
-            bins col1 = {[1:1]};
-            bins col2 = {[2:2]};
-            bins col3 = {[3:3]};
-        }
-    endgroup
+    cross access_type, channel;
+  endgroup : row_hit_miss_cg
 
-    // Row hit/miss tracking
-    bit [15:0] last_row[16];  // Per bank
-    bit [7:0] last_bank = 0;
-    int row_hits = 0;
-    int row_misses = 0;
-    int row_conflicts = 0;
+  // ============================================================================
+  // Queue Fullness Coverage
+  // ============================================================================
+  covergroup queue_fullness_cg @(posedge clk);
+    option.per_instance = 1;
 
-    covergroup row_hit_cg;
-        option.per_instance = 1;
-        coverpoint hit_type {
-            bins hit = {1};
-            bins miss = {0};
-        }
-    endgroup
+    read_queue_depth: coverpoint read_queue_depth {
+      bins empty = {[0:4]};
+      bins low = {[5:10]};
+      bins medium = {[11:20]};
+      bins high = {[21:30]};
+      bins full = {[31:32]};
+    }
 
-    // Address patterns
-    covergroup addr_pattern_cg;
-        option.per_instance = 1;
-        coverpoint pattern {
-            bins sequential = {[0:15]};
-            bins random = {[16:31]};
-            bins hotspot = {[32:47]};
-            bins stride = {[48:63]};
-        }
-    endgroup
+    write_queue_depth: coverpoint write_queue_depth {
+      bins empty = {[0:4]};
+      bins low = {[5:10]};
+      bins medium = {[11:20]};
+      bins high = {[21:30]};
+      bins full = {[31:32]};
+    }
 
-    // Timing coverage
-    covergroup timing_cg;
-        option.per_instance = 1;
-        coverpoint idle_cycles {
-            bins idle0 = {0};
-            bins idle1_5 = {[1:5]};
-            bins idle6_10 = {[6:10]};
-            bins idle_gte10 = {[10:]} with (this >= 10);
-        }
-    endgroup
+    cross read_queue_depth, write_queue_depth;
+  endgroup : queue_fullness_cg
 
-    function new(string name, uvm_component parent);
-        super.new(name, parent);
-        item_export = new("item_export", this);
-    endfunction
+  // ============================================================================
+  // Command Type Coverage
+  // ============================================================================
+  covergroup command_type_cg @(posedge clk);
+    option.per_instance = 1;
 
-    function void build_phase(uvm_phase phase);
-        super.build_phase(phase);
-        `uvm_info(get_name(), "Coverage build complete", UVM_MEDIUM)
-    endfunction
+    cmd_type: coverpoint cmd_type {
+      bins activate = {3'b011};  // ACT
+      bins precharge = {3'b100}; // PRE
+      bins read = {3'b010};      // READ
+      bins write = {3'b001};     // WRITE
+      bins refresh = {3'b101};   // REFRESH
+      bins idle = {3'b000};      // IDLE
+    }
 
-    virtual function void write(hbm_transaction t);
-        // Store transaction
-        trans_history.push_back(t);
-        if (trans_history.size() > max_history) begin
-            trans_history.pop_front();
-        end
+    channel: coverpoint channel_id {
+      bins channels[] = {[0:7]};
+    }
 
-        // Analyze row hit/miss
-        if (prev_trans != null) begin
-            if (t.addr_bank == prev_trans.addr_bank) begin
-                if (t.addr_row == prev_trans.addr_row) begin
-                    row_hits++;
-                    `uvm_info(get_name(), "ROW HIT", UVM_FULL)
-                end else begin
-                    row_conflicts++;
-                    `uvm_info(get_name(), "ROW CONFLICT", UVM_FULL)
-                end
-            end else begin
-                row_misses++;
-            end
-        end else begin
-            row_misses++;  // First access is always a miss
-        end
+    cross cmd_type, channel;
+  endgroup : command_type_cg
 
-        // Update history
-        prev_trans = t;
-        last_bank = t.addr_bank;
-        last_row[t.addr_bank] = t.addr_row;
+  // ============================================================================
+  // Latency Coverage
+  // ============================================================================
+  covergroup latency_cg @(posedge clk);
+    option.per_instance = 1;
 
-        // Sample covergroups
-        cmd_cg.sample();
-        bank_cg.sample();
-        row_cg.sample();
-        col_cg.sample();
-        row_hit_cg.sample();
+    read_latency: coverpoint read_latency {
+      bins very_fast = {[0:20]};
+      bins fast = {[21:40]};
+      bins normal = {[41:60]};
+      bins slow = {[61:100]};
+      bins very_slow = {[101:$]};
+    }
 
-        `uvm_info(get_name(), $sformatf(
-            "Coverage: hits=%0d misses=%0d conflicts=%0d",
-            row_hits, row_misses, row_conflicts), UVM_FULL)
-    endfunction
+    write_latency: coverpoint write_latency {
+      bins very_fast = {[0:10]};
+      bins fast = {[11:20]};
+      bins normal = {[21:40]};
+      bins slow = {[41:60]};
+      bins very_slow = {[61:$]};
+    }
+  endgroup : latency_cg
 
-    function void extract_phase(uvm_phase phase);
-        super.extract_phase(phase);
-        `uvm_info(get_name(), $sformatf(
-            "=== Coverage Summary ===\n" //
-            "Row Hits: %0d\n" //
-            "Row Misses: %0d\n" //
-            "Row Conflicts: %0d\n" //
-            "Total Transactions: %0d\n" //
-            "Hit Rate: %0.2f%%",
-            row_hits, row_misses, row_conflicts,
-            trans_history.size(),
-            row_hits * 100.0 / (row_hits + row_misses + row_conflicts + 0.001)
-        ), UVM_MEDIUM)
-    endfunction
+  // ============================================================================
+  // Bandwidth Coverage
+  // ============================================================================
+  covergroup bandwidth_cg @(posedge clk);
+    option.per_instance = 1;
 
-    function void report_phase(uvm_phase phase);
-        real hit_rate;
-        super.report_phase(phase);
+    bandwidth_util: coverpoint bandwidth_util {
+      bins low = {[0:25]};       // 0-25%
+      bins medium = {[26:50]};    // 26-50%
+      bins high = {[51:75]};      // 51-75%
+      bins very_high = {[76:100]}; // 76-100%
+    }
+  endgroup : bandwidth_cg
 
-        hit_rate = row_hits * 100.0 / (row_hits + row_misses + row_conflicts + 0.001);
-        `uvm_info(get_name(), $sformatf(
-            "=== Final Coverage Report ===\n" //
-            "Total Transactions: %0d\n" //
-            "Row Hits: %0d (%0.2f%%)\n" //
-            "Row Misses: %0d\n" //
-            "Row Conflicts: %0d",
-            trans_history.size(),
-            row_hits, hit_rate,
-            row_misses, row_conflicts
-        ), UVM_MEDIUM)
-    endfunction
-endclass
+  // ============================================================================
+  // QoS Priority Coverage
+  // ============================================================================
+  covergroup qos_priority_cg @(posedge clk);
+    option.per_instance = 1;
+
+    priority: coverpoint priority {
+      bins critical = {4'd15};  // Highest priority
+      bins high = {[4'd12:4'd14]};
+      bins medium = {[4'd8:4'd11]};
+      bins low = {[4'd1:4'd7]};
+      bins background = {4'd0};
+    }
+
+    channel: coverpoint channel_id {
+      bins channels[] = {[0:7]};
+    }
+
+    cross priority, channel;
+  endgroup : qos_priority_cg
 
 endpackage : hbm_coverage_pkg
+
+`endif // HBM_COVERAGE_SV

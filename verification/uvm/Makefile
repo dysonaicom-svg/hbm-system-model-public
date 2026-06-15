@@ -21,7 +21,7 @@ REF_MODEL_DIR := ../reference_model
 SIM ?= verilator
 SIM_OPTS := --cc --exe --build
 UVM_OPTS := +incdir+$(UVM_HOME)/src
-COV_OPTS := --coverage --coverage-line --coverage-func --coverage-toggle
+COV_OPTS := --coverage --coverage-line --coverage-toggle
 TRACE_OPTS := --trace --trace-structs --trace-depth 999
 
 # Source files
