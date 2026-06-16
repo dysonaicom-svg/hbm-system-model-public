@@ -125,10 +125,7 @@ class ChannelHeatmap:
                 'datasets': [{
                     'label': 'Channel Utilization',
                     'data': heatmap_data,
-                    'backgroundColor': (ctx) => {
-                        const value = ctx.raw?.v || 0;
-                        return self._get_color_for_value(value);
-                    },
+                    'backgroundColor': self._get_color_for_value(util),
                 }]
             },
             'options': {
@@ -283,10 +280,7 @@ class ChannelHeatmap:
                 'datasets': [{
                     'label': 'Bank Group Activity',
                     'data': heatmap_data,
-                    'backgroundColor': (ctx) => {
-                        const value = ctx.raw?.v || 0;
-                        return self._get_color_for_value(value);
-                    },
+                    'backgroundColor': self._get_color_for_value(util),
                 }]
             },
             'options': {

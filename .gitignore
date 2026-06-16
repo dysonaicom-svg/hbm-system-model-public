@@ -1,4 +1,4 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,6 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
 # Virtual environments
 venv/
@@ -32,9 +33,11 @@ env/
 *.swp
 *.swo
 *~
+.DS_Store
 
 # Simulation outputs
 *.vcd
+*.fst
 *.fsdb
 *.wlf
 sim/results/
@@ -44,58 +47,33 @@ obj_dir/
 # Logs
 *.log
 *.jou
+*.trs
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# Test outputs
+tests/.coverage
+tests/coverage/
+tests/results/
 
 # OS
-.DS_Store
 Thumbs.db
-
-# Vivado
-vivado*.jou
-vivado*.log
-.Xil/
-phase13_ooc/
-vivado/
-
-# Claude development folder (contains AI agent memory, skills, workflows - PRIVATE)
-# This folder stores:
-# - Session memory and context
-# - Custom skills and workflows
-# - Project-specific configuration
-# - Development history and notes
-.claude/
-
-# MCP configuration (contains local paths and secrets - PRIVATE)
-.mcp.json
-.mcp/
-
-# Development notes and research (may contain sensitive info - PRIVATE)
-research/hbm4-logic-base-die/notes/
-research/hbm4-logic-base-die/.cache/
-research/hbm4-logic-base-die/implementation/plan.md
-research/hbm4-logic-base-die/implementation/implementation_plan.md
-docs/research/notes/
-docs/research/*.md
-
-# Experimental code (not ready for public - PRIVATE)
-research/experimental/
-research/ramulator2/  # External dependency, keep local
-
-# Claude settings (local development only - DO NOT COMMIT)
-.claude/settings.local.json
-.claude/settings.local.json.example
-.claude/scheduled_tasks.lock
-.claude/workflows/
+*.bak
 
 # Temporary files
 tmp/
 temp/
 *.tmp
+*.temp
 
-# MCP servers (runtime only, keep source)
-.claude/mcp-servers/
-!/.claude/mcp-servers/*.py
-
-# Simulation outputs and benchmarks
-seq_rd_comparison.json
-sim/benchmark_results.json
-benchmark_results*.json
+# Simulation artifacts
+*.wdb
+waveform.*
+transcript
+verilatorDbg*
