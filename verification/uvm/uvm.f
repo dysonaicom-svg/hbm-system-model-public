@@ -24,6 +24,7 @@
 /home/ic/JXTF/HBM/verification/uvm/tests/hbm_refresh_test_pkg.sv
 /home/ic/JXTF/HBM/verification/uvm/tests/hbm_bank_contention_test_pkg.sv
 /home/ic/JXTF/HBM/verification/uvm/tests/hbm_boundary_test_pkg.sv
+/home/ic/JXTF/HBM/verification/uvm/tests/hbm_new_tests_pkg.sv
 /home/ic/JXTF/HBM/verification/uvm/tests/test_multi_channel_seq.sv
 
 # Testbench top

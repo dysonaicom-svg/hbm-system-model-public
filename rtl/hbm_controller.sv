@@ -124,13 +124,16 @@ module hbm_controller #(
     // =============================================================================
     // Request Queue
     // =============================================================================
+    localparam QUEUE_PTR_WIDTH = $clog2(QUEUE_DEPTH);
+    localparam QUEUE_CNT_WIDTH = QUEUE_PTR_WIDTH + 1;  // Need extra bit to count to QUEUE_DEPTH
     req_entry_t [QUEUE_DEPTH-1:0] queue;
-    logic [$clog2(QUEUE_DEPTH)-1:0] enq_ptr;
-    logic [$clog2(QUEUE_DEPTH)-1:0] deq_ptr;
-    logic [$clog2(QUEUE_DEPTH)-1:0] queue_count;
+    logic [QUEUE_PTR_WIDTH-1:0] enq_ptr;
+    logic [QUEUE_PTR_WIDTH-1:0] deq_ptr;
+    logic [QUEUE_CNT_WIDTH-1:0] queue_count;
     logic [7:0] age_counter;
 
-    wire queue_full  = (queue_count >= QUEUE_DEPTH[$clog2(QUEUE_DEPTH)-1:0]);
+    // Queue full when count equals queue depth
+    wire queue_full  = (queue_count >= QUEUE_DEPTH);
     wire queue_empty = (queue_count == 0);
 
     // Queue count tracking
@@ -147,18 +150,20 @@ module hbm_controller #(
             else
                 age_counter <= age_counter + 1;
 
-            // Track queue entries
-            if (req_valid && req_ready && !queue_empty) begin
-                if (queue_count < QUEUE_DEPTH[$clog2(QUEUE_DEPTH)-1:0])
+            // Track queue entries - increment on enqueue
+            if (req_valid && req_ready) begin
+                if (queue_count < QUEUE_DEPTH)
                     queue_count <= queue_count + 1;
             end
+            // Decrement on dequeue
             if (grant_valid && !queue_empty) begin
                 if (queue_count > 0)
                     queue_count <= queue_count - 1;
                 deq_ptr <= deq_ptr + 1;
             end
+            // Update pointers for simultaneous enq/deq or individual operations
             if (req_valid && req_ready && grant_valid) begin
-                // simultaneous enq and deq
+                // simultaneous enq and deq - no pointer change needed
             end else if (req_valid && req_ready) begin
                 enq_ptr <= enq_ptr + 1;
             end else if (grant_valid && !queue_empty) begin
@@ -272,7 +277,7 @@ module hbm_controller #(
     endfunction
 
     // =============================================================================
-    // FR-FCFS Scheduler
+    // FR-FCFS Scheduler - only active when FSM is idle
     // =============================================================================
     logic [$clog2(QUEUE_DEPTH)-1:0] best_idx;
     logic [2:0] best_priority;
@@ -286,6 +291,7 @@ module hbm_controller #(
         best_priority = '0;
         best_age = '0;
         best_row_hit = 1'b0;
+        // Only assert grant_valid when FSM is idle
         grant_valid = 1'b0;
 
         for (int i = 0; i < QUEUE_DEPTH; i++) begin
@@ -294,7 +300,8 @@ module hbm_controller #(
             // Default row_hit to 0 when queue entry is invalid
             row_hit = 1'b0;
 
-            if (queue[i].valid) begin
+            // Only select requests when FSM is idle
+            if (queue[i].valid && (state == IDLE)) begin
                 // Check row hit for this queue entry
                 row_hit = check_row_hit(queue[i].addr);
 
@@ -340,15 +347,22 @@ module hbm_controller #(
     // Registered grant for timing
     logic [$clog2(QUEUE_DEPTH)-1:0] grant_idx;
     logic grant_row_hit;
+    logic [ADDR_WIDTH-1:0] grant_addr;  // Latch address at grant time
+    logic grant_rd_wr_n;                // Latch read/write at grant time
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             grant_idx <= 0;
             grant_row_hit <= 0;
+            grant_addr <= '0;
+            grant_rd_wr_n <= 1;
         end else begin
-            if (grant_valid) begin
+            if (grant_valid && fsm_ready) begin
                 grant_idx <= best_idx;
                 grant_row_hit <= best_row_hit;
+                // Latch current request fields at grant time
+                grant_addr <= queue[best_idx].addr;
+                grant_rd_wr_n <= queue[best_idx].rd_wr_n;
             end
         end
     end
@@ -384,12 +398,22 @@ module hbm_controller #(
 
         case (state)
             IDLE: begin
-                if (grant_valid && fsm_ready)
-                    next_state = grant_row_hit ? READ : ACTIVATE;
+                // Use registered grant signals for stable FSM decision
+                if (grant_valid && fsm_ready) begin
+                    // For row hit (open row), skip ACTIVATE and go directly to READ/WRITE
+                    // For row miss (closed row), need to ACTIVATE first
+                    if (grant_row_hit) begin
+                        // Determine READ or WRITE based on latched rd_wr_n
+                        next_state = grant_rd_wr_n ? READ : WRITE;
+                    end else begin
+                        next_state = ACTIVATE;
+                    end
+                end
             end
 
             ACTIVATE: begin
-                next_state = READ;
+                // After ACTIVATE, go to READ or WRITE based on latched command
+                next_state = grant_rd_wr_n ? READ : WRITE;
             end
 
             READ: begin
@@ -426,6 +450,7 @@ module hbm_controller #(
     logic do_read;
     logic do_write;
     logic do_precharge;
+    logic txn_started;  // High when a new transaction has started (ID captured)
 
     assign fsm_ready = (state == IDLE);
     assign do_activate = (state == ACTIVATE);
@@ -446,19 +471,31 @@ module hbm_controller #(
             dram_cmd <= 4'd0;
             cur_id <= 0;
             cur_rd_wr_n <= 1;
+            txn_started <= 0;
         end else begin
             dram_cmd <= 4'd0;
 
             if (do_activate) begin
                 dram_cmd <= 4'd1;  // CMD_ACT
-                cur_id <= queue[grant_idx].id;
-                cur_rd_wr_n <= queue[grant_idx].rd_wr_n;
             end else if (do_read) begin
                 dram_cmd <= 4'd2;  // CMD_READ
             end else if (do_write) begin
                 dram_cmd <= 4'd3;  // CMD_WRITE
             end else if (do_precharge) begin
                 dram_cmd <= 4'd4;  // CMD_PRE
+            end
+
+            // Capture request info when new transaction starts
+            // Only capture once per transaction until response is issued
+            if (grant_valid && fsm_ready && !txn_started) begin
+                cur_id <= queue[grant_idx].id;
+                cur_rd_wr_n <= grant_rd_wr_n;
+                txn_started <= 1;
+            end
+
+            // Clear txn_started when response is issued
+            if (resp_valid) begin
+                txn_started <= 0;
             end
         end
     end
@@ -472,12 +509,16 @@ module hbm_controller #(
             dram_pch  <= '0;
             dram_row  <= '0;
         end else begin
+            // Use latched grant address for stable output
             if (grant_valid && fsm_ready) begin
-                dram_ch   <= dec_ch;
-                dram_bg   <= dec_bg;
-                dram_bank <= dec_bank;
-                dram_pch  <= dec_pch;
-                dram_row  <= dec_row;
+                dram_ch   <= grant_addr[CH_ADDR_WIDTH+BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                                  BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                dram_bg   <= grant_addr[BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                                  BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                dram_bank <= grant_addr[BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:
+                                  ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                dram_pch  <= grant_addr[BG_ADDR_WIDTH+BK_ADDR_WIDTH+ROW_ADDR_WIDTH+COL_ADDR_WIDTH];
+                dram_row  <= grant_addr[ROW_ADDR_WIDTH+COL_ADDR_WIDTH-1:COL_ADDR_WIDTH];
             end
         end
     end
@@ -499,25 +540,31 @@ module hbm_controller #(
     // =============================================================================
     // Response Generation
     // =============================================================================
-    logic [31:0] resp_id_q;
-    logic resp_success_q;
+    // resp_id must be updated on the same cycle as resp_valid
+    // to ensure correct ID is returned with the response
+    // Use resp_issued to prevent multiple responses per transaction
+
+    logic resp_issued;  // High after response is issued for current transaction
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             resp_valid <= 0;
-            resp_id_q <= 0;
-            resp_success_q <= 0;
+            resp_id <= 0;
+            resp_success <= 0;
             resp_status <= 0;
+            resp_issued <= 0;
         end else begin
+            // Clear response at start of new cycle
             resp_valid <= 0;
-            if (state == COMPLETE) begin
+            resp_issued <= 0;
+
+            if (state == COMPLETE && !resp_issued) begin
                 resp_valid <= 1;
-                resp_id_q <= cur_id;
-                resp_success_q <= 1;
+                resp_id <= cur_id;
+                resp_success <= 1;
                 resp_status <= 8'd0;  // Success
+                resp_issued <= 1;    // Mark as issued to prevent duplicates
             end
-            resp_id <= resp_id_q;
-            resp_success <= resp_success_q;
         end
     end
 
@@ -569,11 +616,19 @@ module hbm_controller #(
     `ifdef ASSERT_ON
     `ifdef VERILATOR
     `else
-    // 1. Reset behavior assertions
+    // =============================================================================
+    // 1. Reset Behavior Assertions
+    // =============================================================================
     assert property (@(posedge clk) rst_n === 1'b0 |=> rst_n[*0:$] throughout req_ready == 1'b1)
         else $error("Controller should be ready after reset");
 
-    // 2. Queue behavior assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == IDLE)
+        else $error("FSM should be in IDLE after reset");
+
+    // =============================================================================
+    // 2. Queue Behavior Assertions
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         req_valid && req_ready |-> queue_count < QUEUE_DEPTH)
         else $error("Should not enqueue when queue is full");
@@ -582,15 +637,19 @@ module hbm_controller #(
         grant_valid |-> queue_count > 0)
         else $error("Should not grant when queue is empty");
 
-    // 3. FSM state transition assertions
     assert property (@(posedge clk) disable iff (!rst_n)
-        state == IDLE && grant_valid |=> state inside {ACTIVATE, READ})
-        else $error("IDLE should transition to ACTIVATE or READ on grant");
+        req_valid && req_ready |-> queue_count <= QUEUE_DEPTH)
+        else $error("Queue count should not exceed depth");
 
+    // =============================================================================
+    // 3. FSM State Transition Assertions (Critical Timing Paths)
+    // =============================================================================
+    // ACT -> READ/WRITE path (row miss case)
     assert property (@(posedge clk) disable iff (!rst_n)
-        state == ACTIVATE |=> state == READ)
-        else $error("ACTIVATE should transition to READ");
+        state == ACTIVATE |=> state == READ || state == WRITE)
+        else $error("ACTIVATE should transition to READ or WRITE based on command");
 
+    // READ -> READ_WF -> PRECHARGE -> COMPLETE path
     assert property (@(posedge clk) disable iff (!rst_n)
         state == READ |=> state == READ_WF)
         else $error("READ should transition to READ_WF");
@@ -599,6 +658,7 @@ module hbm_controller #(
         state == READ_WF |=> state == PRECHARGE)
         else $error("READ_WF should transition to PRECHARGE");
 
+    // WRITE -> WRITE_WF -> PRECHARGE path
     assert property (@(posedge clk) disable iff (!rst_n)
         state == WRITE |=> state == WRITE_WF)
         else $error("WRITE should transition to WRITE_WF");
@@ -607,6 +667,7 @@ module hbm_controller #(
         state == WRITE_WF |=> state == PRECHARGE)
         else $error("WRITE_WF should transition to PRECHARGE");
 
+    // PRECHARGE -> COMPLETE -> IDLE path
     assert property (@(posedge clk) disable iff (!rst_n)
         state == PRECHARGE |=> state == COMPLETE)
         else $error("PRECHARGE should transition to COMPLETE");
@@ -615,7 +676,19 @@ module hbm_controller #(
         state == COMPLETE |=> state == IDLE)
         else $error("COMPLETE should transition to IDLE");
 
-    // 4. DRAM command validity assertions
+    // Row hit path: IDLE -> READ/WRITE (skipping ACTIVATE)
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == IDLE && grant_valid && grant_row_hit |=> state == READ || state == WRITE)
+        else $error("Row hit should skip ACTIVATE and go directly to READ/WRITE");
+
+    // Row miss path: IDLE -> ACTIVATE
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == IDLE && grant_valid && !grant_row_hit |=> state == ACTIVATE)
+        else $error("Row miss should go to ACTIVATE");
+
+    // =============================================================================
+    // 4. DRAM Command Validity Assertions
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         dram_cmd inside {4'd0, 4'd1, 4'd2, 4'd3, 4'd4})
         else $error("DRAM command should be valid (NOP, ACT, READ, WRITE, or PRE)");
@@ -640,7 +713,37 @@ module hbm_controller #(
         state == PRECHARGE |-> dram_cmd == 4'd4)
         else $error("PRECHARGE state should issue CMD_PRE");
 
-    // 5. Address channel range assertions
+    // =============================================================================
+    // 5. Critical Timing Path: ACT->RD/WR->PRE Sequence
+    // =============================================================================
+    // Verify ACT command precedes READ for row miss
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == READ && $past(state) == ACTIVATE |-> $past(dram_cmd) == 4'd1)
+        else $error("READ should follow ACT command");
+
+    // Verify ACT command precedes WRITE for row miss
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == WRITE && $past(state) == ACTIVATE |-> $past(dram_cmd) == 4'd1)
+        else $error("WRITE should follow ACT command");
+
+    // Verify PRE command follows READ_WF
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == PRECHARGE && $past(state) == READ_WF |-> $past(dram_cmd) == 4'd2)
+        else $error("PRECHARGE should follow READ_WF with READ command");
+
+    // Verify PRE command follows WRITE_WF
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == PRECHARGE && $past(state) == WRITE_WF |-> $past(dram_cmd) == 4'd3)
+        else $error("PRECHARGE should follow WRITE_WF with WRITE command");
+
+    // Verify PRE is issued before returning to IDLE
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state == COMPLETE |-> $past(state) == PRECHARGE)
+        else $error("COMPLETE should follow PRECHARGE");
+
+    // =============================================================================
+    // 6. Address Channel Range Assertions
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         grant_valid |-> dram_ch < (1 << CH_ADDR_WIDTH))
         else $error("DRAM channel index out of range");
@@ -657,7 +760,9 @@ module hbm_controller #(
         grant_valid |-> dram_pch < (1 << PCH_ADDR_WIDTH))
         else $error("DRAM pseudo-channel index out of range");
 
-    // 6. Response validity assertions
+    // =============================================================================
+    // 7. Response Validity Assertions
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         resp_valid |-> resp_id != 0)
         else $error("Response ID should not be zero");
@@ -666,7 +771,13 @@ module hbm_controller #(
         resp_valid |-> resp_status == 8'd0)
         else $error("Response status should be success (0)");
 
-    // 7. Row buffer consistency assertions
+    assert property (@(posedge clk) disable iff (!rst_n)
+        resp_valid |-> resp_success == 1'b1)
+        else $error("Response success flag should be set");
+
+    // =============================================================================
+    // 8. Row Buffer Consistency Assertions
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         row_open == 1'b1 |-> open_bank_reg[get_ch_idx(dec_ch)] != '0)
         else $error("Row open but bank register is invalid");
@@ -675,20 +786,50 @@ module hbm_controller #(
         row_open == 1'b1 |-> open_row_reg[get_ch_idx(dec_ch)] != '0)
         else $error("Row open but row register is invalid");
 
-    // 8. One-hot grant assertions
+    // =============================================================================
+    // 9. Grant Signal Consistency
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         grant_valid |-> 1'b1)
         else $error("Grant should be valid when selected");
 
-    // 9. Priority encoding assertions
+    // =============================================================================
+    // 10. Priority Encoding Assertions
+    // =============================================================================
     assert property (@(posedge clk) disable iff (!rst_n)
         req_valid |-> req_priority <= 3'd7)
         else $error("Request priority should be 3-bit value (0-7)");
 
-    // 10. Queue entry state consistency
+    // =============================================================================
+    // 11. Transaction Atomicity
+    // =============================================================================
+    // Queue entry should remain valid during entire transaction (ACT path)
     assert property (@(posedge clk) disable iff (!rst_n)
-        queue[grant_idx].valid throughout (IDLE[*0:$] ##1 (ACTIVATE |-> ##1 (READ |-> ##1 (READ_WF |-> ##1 COMPLETE))))
-        else $error("Queue entry should remain valid during transaction");
+        grant_valid && fsm_ready && state == IDLE && !grant_row_hit
+        |->
+        queue[grant_idx].valid throughout (ACTIVATE[*1:$] ##1 (READ[*0:$] or WRITE[*0:$] ##1 READ_WF[*0:$] or WRITE_WF[*0:$] ##1 PRECHARGE ##1 COMPLETE)))
+        else $error("Queue entry should remain valid during ACT->RD/WR->PRE transaction");
+
+    // Queue entry should remain valid during row hit transaction
+    assert property (@(posedge clk) disable iff (!rst_n)
+        grant_valid && fsm_ready && state == IDLE && grant_row_hit
+        |->
+        queue[grant_idx].valid throughout ((READ[*0:$] or WRITE[*0:$]) ##1 (READ_WF[*0:$] or WRITE_WF[*0:$]) ##1 PRECHARGE ##1 COMPLETE))
+        else $error("Queue entry should remain valid during row hit transaction");
+
+    // =============================================================================
+    // 12. No Back-to-Back Grants (One transaction at a time)
+    // =============================================================================
+    assert property (@(posedge clk) disable iff (!rst_n)
+        state != IDLE |-> !grant_valid || fsm_ready)
+        else $error("Should not grant new transaction while FSM is busy");
+
+    // =============================================================================
+    // 13. Write Data Validity
+    // =============================================================================
+    assert property (@(posedge clk) disable iff (!rst_n)
+        dram_cmd == 4'd3 |-> dram_wr_data != '0)
+        else $error("Write data should be valid during WRITE command");
 
     `endif  // VERILATOR
     `endif  // ASSERT_ON

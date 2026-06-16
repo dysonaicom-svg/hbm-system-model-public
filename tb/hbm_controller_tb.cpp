@@ -7,6 +7,8 @@
 #include "Vhbm_controller.h"
 #include <iostream>
 #include <cstdlib>
+#include <cstdint>
+#include <iomanip>
 
 // Global time
 vluint64_t main_time = 0;
@@ -68,6 +70,8 @@ int main(int argc, char** argv) {
     dut->rst_n = 1;
     for (int i = 0; i < 10; i++) tick();
 
+    std::cout << "--- Reset Complete ---" << std::endl;
+
     // Send request task
     auto send_req = [&](uint32_t id, uint32_t addr, bool rd_wr_n, uint16_t len, uint8_t prio) {
         // Wait for ready
@@ -91,7 +95,20 @@ int main(int argc, char** argv) {
         tick();
         dut->req_valid = 0;
 
-        std::cout << "  Sent request: id=" << id << " addr=0x" << std::hex << addr << std::dec << std::endl;
+        std::cout << "  Sent request: id=" << id << " addr=0x" << std::hex << std::setw(8) << std::setfill('0') << addr << std::dec << std::endl;
+    };
+
+    // Wait for FSM to be ready
+    auto wait_fsm_ready = [&]() {
+        int wait_count = 0;
+        while (wait_count < 1000) {
+            tick();
+            // FSM is ready when response is valid (completed a transaction)
+            if (dut->resp_valid) {
+                // Continue to let FSM process
+            }
+            wait_count++;
+        }
     };
 
     // =============================================================================
@@ -148,7 +165,7 @@ int main(int argc, char** argv) {
     }
 
     // =============================================================================
-    // Test 4: FR-FCFS Scheduling
+    // Test 4: FR-FCFS Scheduling - Row Hit/Miss
     // =============================================================================
     {
         test_count++;
@@ -156,20 +173,30 @@ int main(int argc, char** argv) {
 
         // Open row
         send_req(300, 0x00071000, true, 64, 2);
-        for (int i = 0; i < 100; i++) tick();
+        for (int i = 0; i < 200; i++) tick();
+
+        std::cout << "  After first request:" << std::endl;
+        std::cout << "    cmd=" << (int)dut->dram_cmd
+                  << " ch=" << (int)dut->dram_ch
+                  << " bank=" << (int)dut->dram_bank
+                  << " row=0x" << std::hex << dut->dram_row << std::dec << std::endl;
+        std::cout << "    resp_valid=" << (int)dut->resp_valid
+                  << " resp_success=" << (int)dut->resp_success << std::endl;
 
         // Same row (should hit)
         send_req(301, 0x00071000, true, 64, 2);
-        for (int i = 0; i < 100; i++) tick();
+        for (int i = 0; i < 200; i++) tick();
+
+        std::cout << "  After second request (same row):" << std::endl;
+        std::cout << "    cmd=" << (int)dut->dram_cmd << std::endl;
 
         // Different row (should miss)
         send_req(302, 0x00072000, true, 64, 2);
-        for (int i = 0; i < 100; i++) tick();
+        for (int i = 0; i < 200; i++) tick();
 
-        std::cout << "  DRAM commands seen:" << std::endl;
-        std::cout << "    cmd=" << (int)dut->dram_cmd
-                  << " ch=" << (int)dut->dram_ch
-                  << " bank=" << (int)dut->dram_bank << std::endl;
+        std::cout << "  After third request (different row):" << std::endl;
+        std::cout << "    cmd=" << (int)dut->dram_cmd << std::endl;
+
         std::cout << "[PASS] FR-FCFS scheduling executed" << std::endl;
         pass_count++;
     }
@@ -181,12 +208,15 @@ int main(int argc, char** argv) {
         test_count++;
         std::cout << "\n=== Test 5: Address Decoder ===" << std::endl;
 
+        // Test address: ch=3, bg=1, bank=3, row=5, col=0xABCD
         uint32_t test_addr = (3 << 29) | (1 << 26) | (3 << 24) | (5 << 21) | (0xABCD << 5) | 0x2A;
         send_req(500, test_addr, true, 64, 2);
 
         for (int i = 0; i < 100; i++) tick();
 
+        std::cout << "  Input addr: 0x" << std::hex << std::setw(8) << std::setfill('0') << test_addr << std::dec << std::endl;
         std::cout << "  Decoded: ch=" << (int)dut->dram_ch
+                  << " bg=" << (int)dut->dram_bg
                   << " bank=" << (int)dut->dram_bank << std::endl;
         std::cout << "[PASS] Address decoded correctly" << std::endl;
         pass_count++;
@@ -200,10 +230,41 @@ int main(int argc, char** argv) {
         std::cout << "\n=== Test 6: Write Request ===" << std::endl;
 
         send_req(700, 0x000A0000, false, 64, 2);  // Write
-        for (int i = 0; i < 100; i++) tick();
+        for (int i = 0; i < 200; i++) tick();
 
+        std::cout << "  Write request cmd=" << (int)dut->dram_cmd << std::endl;
         std::cout << "[PASS] Write request processed" << std::endl;
         pass_count++;
+    }
+
+    // =============================================================================
+    // Test 7: Response Generation
+    // =============================================================================
+    {
+        test_count++;
+        std::cout << "\n=== Test 7: Response Generation ===" << std::endl;
+
+        send_req(800, 0x000B0000, true, 64, 2);
+
+        bool resp_seen = false;
+        for (int i = 0; i < 500; i++) {
+            tick();
+            if (dut->resp_valid) {
+                resp_seen = true;
+                std::cout << "  Response: id=" << dut->resp_id
+                          << " success=" << (int)dut->resp_success
+                          << " status=" << (int)dut->resp_status << std::endl;
+                break;
+            }
+        }
+
+        if (resp_seen) {
+            std::cout << "[PASS] Response generated" << std::endl;
+            pass_count++;
+        } else {
+            std::cout << "[FAIL] No response received" << std::endl;
+            fail_count++;
+        }
     }
 
     // Run a few more cycles
@@ -217,10 +278,15 @@ int main(int argc, char** argv) {
     std::cout << "  Failed: " << fail_count << std::endl;
     std::cout << "========================================" << std::endl;
 
+    std::cout << "\nStatistics:" << std::endl;
+    std::cout << "  Requests:    " << dut->stat_requests << std::endl;
+    std::cout << "  Completed:   " << dut->stat_completed << std::endl;
+    std::cout << "  Hit Rate:    " << (int)dut->stat_hit_rate << "%" << std::endl;
+
     if (fail_count == 0) {
-        std::cout << "ALL TESTS PASSED!" << std::endl;
+        std::cout << "\nALL TESTS PASSED!" << std::endl;
     } else {
-        std::cout << "SOME TESTS FAILED!" << std::endl;
+        std::cout << "\nSOME TESTS FAILED!" << std::endl;
     }
 
     // Cleanup

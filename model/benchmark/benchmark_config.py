@@ -10,7 +10,10 @@ from typing import List, Dict, Optional, Tuple
 from enum import Enum
 
 
-class TestPattern(Enum):
+# =============================================================================
+# Traffic Pattern Enum - Marked to prevent pytest collection
+# =============================================================================
+class _TrafficPatternEnum(Enum):
     """Traffic pattern for benchmarking"""
     SEQUENTIAL = "sequential"      # Consecutive addresses
     RANDOM = "random"             # Random addresses
@@ -18,6 +21,13 @@ class TestPattern(Enum):
     HOTSPOT = "hotspot"            # Frequently accessed region
     BANK_CONFLICT = "bank_conflict" # Intentional bank conflicts
     ROW_HIT = "row_hit"           # All accesses to same row
+
+
+# Alias for backward compatibility - use this in tests
+TestPattern = _TrafficPatternEnum
+
+# Also export as TrafficPattern for cleaner naming
+TrafficPattern = _TrafficPatternEnum
 
 
 class SpeedGrade(Enum):

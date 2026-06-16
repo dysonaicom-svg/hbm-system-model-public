@@ -71,6 +71,7 @@
 `define uvm_send(ITEM)
 `define uvm_rand_send(ITEM)
 `define uvm_do(ITEM)
+`define uvm_do_with(ITEM, CONS)
 `define uvm_do_with_priority(ITEM, PRIORITY)
 `define uvm_send_with_priority(ITEM, PRIORITY)
 `define uvm_do_callbacks(T, CB, METHOD)

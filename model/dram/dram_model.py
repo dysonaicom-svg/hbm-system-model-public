@@ -225,14 +225,18 @@ class DRAMModel:
         return self.stacks[stack_id].get_bank(channel_id, ps_id, bg_id, bank_in_group)
 
     def set_time(self, current_time: int):
-        """设置当前时间
+        """Set current time
+
+        OPTIMIZATION: This no longer propagates to all banks.
+        Time is passed directly to bank operations when needed.
 
         Args:
-            current_time: 当前时间 (cycles)
+            current_time: Current time (cycles)
         """
+        # Only update the top-level time reference
         time_s = self.timing.cycles_to_s(current_time)
         for stack in self.stacks:
-            stack.set_time(time_s)
+            stack.current_time = time_s
 
     def check_bank_available(
         self,
@@ -265,21 +269,23 @@ class DRAMModel:
         row_id: int,
         current_time: int,
     ) -> DRAMResponse:
-        """执行激活命令
+        """Execute activate command
 
         Args:
             stack_id: Stack ID
             channel_id: Channel ID
             bank_id: Bank ID
-            row_id: 行 ID
-            current_time: 当前时间 (cycles)
+            row_id: Row ID
+            current_time: Current time (cycles)
 
         Returns:
             DRAMResponse
         """
         try:
-            self.set_time(current_time)
+            # Set time on the specific bank being accessed
+            time_s = self.timing.cycles_to_s(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
+            bank.set_time(time_s)
 
             success, error_msg = bank.activate(row_id)
 
@@ -301,42 +307,44 @@ class DRAMModel:
         current_time: int,
         length: int = 32,
     ) -> DRAMResponse:
-        """执行读命令
+        """Execute read command
 
         Args:
             stack_id: Stack ID
             channel_id: Channel ID
             bank_id: Bank ID
-            col_id: 列 ID
-            current_time: 当前时间 (cycles)
-            length: 读数据长度 (bytes)
+            col_id: Column ID
+            current_time: Current time (cycles)
+            length: Read data length (bytes)
 
         Returns:
             DRAMResponse
         """
         try:
-            self.set_time(current_time)
+            # Set time on the specific bank being accessed
+            time_s = self.timing.cycles_to_s(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
+            bank.set_time(time_s)
 
-            # 检查 bank 状态
+            # Check bank state
             if bank.bank.state != BankStateEnum.ACTIVE:
                 return DRAMResponse(success=False, error="Bank not activated")
 
-            # 检查时序
+            # Check timing
             if not bank.can_read():
                 return DRAMResponse(success=False, error="Read timing violation")
 
-            # 读取数据
+            # Read data
             data = self._read_memory(stack_id, channel_id, bank_id, bank.bank.open_row, col_id, length)
 
-            # 更新统计 (per-channel)
+            # Update stats (per-channel)
             self.stats.add_read_to_channel(channel_id)
             if bank.is_row_hit(col_id):
                 self.stats.add_hit()
             else:
                 self.stats.add_conflict()
 
-            # 计算延迟 (突发 + tCCD)
+            # Calculate latency (burst + tCCD)
             latency = self.timing.tCCD * (length // (self.config['bus_width'] // 8))
 
             return DRAMResponse(
@@ -357,35 +365,37 @@ class DRAMModel:
         data: bytes,
         current_time: int,
     ) -> DRAMResponse:
-        """执行写命令
+        """Execute write command
 
         Args:
             stack_id: Stack ID
             channel_id: Channel ID
             bank_id: Bank ID
-            col_id: 列 ID
-            data: 写数据
-            current_time: 当前时间 (cycles)
+            col_id: Column ID
+            data: Write data
+            current_time: Current time (cycles)
 
         Returns:
             DRAMResponse
         """
         try:
-            self.set_time(current_time)
+            # Set time on the specific bank being accessed
+            time_s = self.timing.cycles_to_s(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
+            bank.set_time(time_s)
 
-            # 检查 bank 状态
+            # Check bank state
             if bank.bank.state != BankStateEnum.ACTIVE:
                 return DRAMResponse(success=False, error="Bank not activated")
 
-            # 检查时序
+            # Check timing
             if not bank.can_write():
                 return DRAMResponse(success=False, error="Write timing violation")
 
-            # 写入数据
+            # Write data
             self._write_memory(stack_id, channel_id, bank_id, bank.bank.open_row, col_id, data)
 
-            # 更新统计 (per-channel)
+            # Update stats (per-channel)
             self.stats.add_write_to_channel(channel_id)
 
             return DRAMResponse(success=True, latency_cycles=self.timing.tCCD)
@@ -400,20 +410,22 @@ class DRAMModel:
         bank_id: int,
         current_time: int,
     ) -> DRAMResponse:
-        """执行预充电命令
+        """Execute precharge command
 
         Args:
             stack_id: Stack ID
             channel_id: Channel ID
             bank_id: Bank ID
-            current_time: 当前时间 (cycles)
+            current_time: Current time (cycles)
 
         Returns:
             DRAMResponse
         """
         try:
-            self.set_time(current_time)
+            # Set time on the specific bank being accessed
+            time_s = self.timing.cycles_to_s(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
+            bank.set_time(time_s)
 
             success = bank.precharge()
 
@@ -433,28 +445,30 @@ class DRAMModel:
         bank_id: int,
         current_time: int,
     ) -> DRAMResponse:
-        """执行刷新命令
+        """Execute refresh command
 
         Args:
             stack_id: Stack ID
             channel_id: Channel ID
             bank_id: Bank ID
-            current_time: 当前时间 (cycles)
+            current_time: Current time (cycles)
 
         Returns:
             DRAMResponse
         """
         try:
-            self.set_time(current_time)
+            # Set time on the specific bank being accessed
+            time_s = self.timing.cycles_to_s(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
+            bank.set_time(time_s)
 
-            # 刷新期间 bank 不可用
+            # During refresh, bank is unavailable
             self.stats.total_refreshes += 1
 
-            # 简化: 刷新完成后行失效
+            # Simplified: after refresh, row is invalidated
             bank.bank.state = BankStateEnum.IDLE
             bank.bank.open_row = None
-            bank.bank.precharge_time = self.timing.cycles_to_s(current_time)
+            bank.bank.precharge_time = time_s
 
             return DRAMResponse(success=True, latency_cycles=self.timing.tRFC)
 

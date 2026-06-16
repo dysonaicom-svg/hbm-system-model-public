@@ -1,0 +1,17 @@
+# Optional Dependencies
+# Install with: pip install -r requirements.txt -r requirements-optional.txt
+
+# For UVM integration (requires specific Python version)
+# Note: systemverilog-parser may not be available on all platforms
+# systemverilog-parser>=0.9.0
+
+# Development tools
+black>=22.0.0
+pylint>=2.14.0
+mypy>=0.960
+
+# Reference model analysis (research/)
+pandas>=1.3.0
+polars>=0.15.0
+seaborn>=0.11.0
+psutil>=5.9.0

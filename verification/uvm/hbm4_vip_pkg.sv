@@ -290,7 +290,7 @@ package hbm4_vip_pkg;
 
         virtual protected task sample_transaction(int ch);
             hbm4_transaction tx;
-            tx = hbm4_transaction::type_id::create("tx");
+            tx = new("tx");
             tx.channel_id = ch;
             tx.address = vif.address[ch];
             case (vif.cmd_type[ch])
@@ -321,9 +321,9 @@ package hbm4_vip_pkg;
 
         function void build_phase(uvm_phase phase);
             super.build_phase(phase);
-            monitor = hbm4_monitor::type_id::create("monitor", this);
-            driver = hbm4_driver::type_id::create("driver", this);
-            sequencer = uvm_sequencer #(hbm4_transaction)::type_id::create("sequencer", this);
+            monitor = hbm4_monitornew("monitor", this);
+            driver = hbm4_drivernew("driver", this);
+            sequencer = uvm_sequencer #(hbm4_transaction)new("sequencer", this);
         endfunction
 
         function void connect_phase(uvm_phase phase);
@@ -433,12 +433,12 @@ package hbm4_vip_pkg;
         function void build_phase(uvm_phase phase);
             super.build_phase(phase);
 
-            cfg = hbm4_vip_config::type_id::create("cfg");
+            cfg = hbm4_vip_confignew("cfg");
             uvm_config_db #(hbm4_vip_config)::set(this, "*", "cfg", cfg);
 
-            agent = hbm4_agent::type_id::create("agent", this);
-            scoreboard = hbm4_scoreboard::type_id::create("scoreboard", this);
-            coverage = hbm4_coverage::type_id::create("coverage", this);
+            agent = hbm4_agentnew("agent", this);
+            scoreboard = hbm4_scoreboardnew("scoreboard", this);
+            coverage = hbm4_coveragenew("coverage", this);
         endfunction
 
         function void connect_phase(uvm_phase phase);
@@ -461,13 +461,13 @@ package hbm4_vip_pkg;
 
         function void build_phase(uvm_phase phase);
             super.build_phase(phase);
-            env = hbm4_env::type_id::create("env", this);
+            env = hbm4_envnew("env", this);
         endfunction
 
         task run_phase(uvm_phase phase);
             hbm4_independent_channel_seq seq;
             phase.raise_objection(this);
-            seq = hbm4_independent_channel_seq::type_id::create("seq");
+            seq = hbm4_independent_channelnew("seq");
             fork
                 seq.start(env.agent.sequencer);
             join_none
@@ -490,13 +490,13 @@ package hbm4_vip_pkg;
 
         function void build_phase(uvm_phase phase);
             super.build_phase(phase);
-            env = hbm4_env::type_id::create("env", this);
+            env = hbm4_envnew("env", this);
         endfunction
 
         task run_phase(uvm_phase phase);
             hbm4_pam3_training_seq seq;
             phase.raise_objection(this);
-            seq = hbm4_pam3_training_seq::type_id::create("seq");
+            seq = hbm4_pam3_trainingnew("seq");
             seq.start(env.agent.sequencer);
             #50us;
             phase.drop_objection(this);

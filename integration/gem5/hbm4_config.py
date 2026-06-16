@@ -53,6 +53,9 @@ class HBM4Timing:
     tDQSCK = 3  # DQS capture skew
     tQH = 0.4   # Data valid window quarter
 
+    # Burst length (HBM uses 2-blocks per burst = 32 bytes)
+    nBL = 2
+
 
 class HBM4Config:
     """HBM4 configuration for gem5"""

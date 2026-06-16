@@ -1,91 +1,198 @@
 # HBM System Modeling Platform
 
-## Project Overview
+High Bandwidth Memory (HBM) system simulation platform for chip design exploration and verification alignment.
 
-HBM (High Bandwidth Memory) 系统仿真平台，支持芯片设计探索和验证对齐。项目包含两条主线：
+## Features
 
-- **Python 事务级/时序近似模型**：覆盖 HBM controller、DRAM bank/channel/stack 结构、refresh、调度和地址解码
-- **Ramulator2 trace-driven baseline**：使用 CMU-SAFARI Ramulator2 子模块运行 HBM3 访问模式实验
-
-## Project Status
-
-All phases are now **Complete** :
-
-| Phase | Goal | Status |
-|-------|------|--------|
-| A | HBM Controller Model | **Complete** |
-| B | DRAM Timing Model | **Complete** |
-| C | PHY Integration | **Complete** |
-| D | RTL-Python Integration | **Active** |
-
-## Architecture
-
-```
-                    ┌─────────────────────────────┐
-                    │   Traffic Generator /       │
-                    │   Trace Reader              │
-                    └─────────────┬───────────────┘
-                                  │
-                                  ▼
-                    ┌─────────────────────────────┐
-                    │   Interconnect              │
-                    │   (NoC / AXI)               │
-                    └─────────────┬───────────────┘
-                                  │
-                                  ▼
-                    ┌─────────────────────────────┐
-                    │   HBM Controller             │
-                    │   - Address Decoder         │
-                    │   - Request Queue           │
-                    │   - FR-FCFS / QoS Scheduler │
-                    │   - Refresh Scheduler       │
-                    └─────────────┬───────────────┘
-                                  │
-                    ┌─────────────┴───────────────┐
-                    │          DFI Interface        │
-                    └─────────────┬───────────────┘
-                                  │
-                    ┌─────────────────────────────┐
-                    │   HBM DRAM Model             │
-                    │   - Channel Model            │
-                    │   - Bank State Machine       │
-                    │   - PHY Training             │
-                    │   - ECC/CRC                  │
-                    │   - Lane Repair             │
-                    └─────────────┬───────────────┘
-                                  │
-                                  ▼
-                    ┌─────────────────────────────┐
-                    │   Statistics Collector      │
-                    └─────────────────────────────┘
-```
+- **HBM3 and HBM4 Support** - Full controller, DRAM model, DFI interface, and PHY-level simulation
+- **32-Channel Architecture** - 2x HBM3 channel count for increased bandwidth
+- **Speed Grades** - 8 Gbps, 12 Gbps, 16 Gbps data rates
+- **2 TB/s Peak Bandwidth** - Aggregate bandwidth at 16 Gbps
+- **Multi-Channel Load Balancing** - Adaptive channel selection and fair bandwidth distribution
+- **Signal Integrity Analysis** - TX pre-emphasis, RX CTLE, DFE, IBIS models, eye diagram analysis
+- **DFI 5.0 Interface** - Complete controller-PHY interface specification
 
 ## Quick Start
 
-### Setup
+### Installation
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Initialize submodules
-git submodule update --init --recursive
+# Install as editable package (recommended)
+pip install -e .
 ```
 
-### Run Simulations
+### Basic Usage
 
-```bash
-# Functional simulation
-python -m sim.simulator --mode functional
+```python
+from model.controller.hbm4_controller import HBM4Controller
 
-# Unified simulation (Python + RTL)
-python -m sim.unified_simulator
+# Create controller
+controller = HBM4Controller()
 
-# Run benchmark
-python -m sim.benchmark
+# Submit read request
+request_id = controller.submit_request(
+    addr=0x0001_0000_0000_0000,
+    is_read=True,
+    qos_level=8,
+)
+
+# Run simulation
+for _ in range(100):
+    responses = controller.tick()
+    for resp in responses:
+        print(f"Completed: {resp.request_id}")
+
+# Get statistics
+stats = controller.get_stats()
+print(f"Row hit rate: {stats['controller']['row_hit_rate']:.2%}")
 ```
 
-### Run Tests
+### Multi-Channel Load Balancing
+
+```python
+from model.multi_channel import MultiChannelTrafficGenerator, ChannelSelector
+
+# Create channel selector with adaptive load balancing
+channel_selector = ChannelSelector(
+    num_channels=32,
+    strategy=ChannelSelector.ADAPTIVE
+)
+
+# Create traffic generator
+traffic_gen = MultiChannelTrafficGenerator(
+    config=sim_config,
+    num_channels=32,
+    channel_selector=channel_selector
+)
+
+# Generate requests with balanced channel distribution
+requests = traffic_gen.generate_burst()
+
+# Check load balance metrics
+jain_fairness = simulator.get_jains_fairness_index()
+print(f"Jain's fairness index: {jain_fairness:.3f}")
+```
+
+### Signal Integrity Analysis
+
+```python
+from model.phy.signal_integrity import SignalIntegrityConfig, TXPreEmphasis, RXCTLE
+from model.phy.eye_analyzer import EyeAnalyzer
+
+# Create signal integrity components
+config = SignalIntegrityConfig(sample_rate=32e9, ui_ns=0.125)
+tx = TXPreEmphasis()
+rx_ctle = RXCTLE()
+
+# Configure pre-emphasis
+tx.set_taps([-0.2, 1.0, -0.1])  # Pre, main, post cursor
+
+# Generate eye diagram
+eye_data = tx.estimate_tx_eye(prbs_length=1024)
+
+# Analyze eye metrics
+analyzer = EyeAnalyzer()
+metrics = analyzer.analyze_eye(eye_data)
+print(f"Eye width: {metrics.eye_width:.3f} UI")
+print(f"Eye height: {metrics.eye_height:.3f} V")
+```
+
+### Full System Simulation
+
+```python
+from sim.simulator import HBMSimulator, SimulationConfig, TrafficPattern
+
+# Create simulation configuration
+config = SimulationConfig(
+    simulation_time_us=100.0,
+    traffic_pattern=TrafficPattern.RANDOM,
+    request_rate=0.5,
+    read_ratio=0.7,
+    max_requests_per_cycle=4,
+)
+
+# Create and run simulator
+sim = HBMSimulator(config)
+stats = sim.run()
+
+# Get results
+print(f"Throughput: {stats.throughput_gbps:.2f} GB/s")
+print(f"Row hit rate: {stats.row_hit_rate:.2%}")
+print(f"Efficiency: {stats.efficiency:.2%}")
+```
+
+## Architecture
+
+### System Architecture
+
+```
+                    +-----------------------------+
+                    |   Traffic Generator /       |
+                    |   Trace Reader              |
+                    +-------------+---------------+
+                                  |
+                                  v
+                    +-----------------------------+
+                    |   Multi-Channel Load       |
+                    |   Balancer                  |
+                    +-------------+---------------+
+                                  |
+                                  v
+                    +-----------------------------+
+                    |   HBM Controller            |
+                    |   - Address Decoder         |
+                    |   - Request Queue           |
+                    |   - FR-FCFS / QoS Scheduler |
+                    |   - Refresh Scheduler       |
+                    +-------------+---------------+
+                                  |
+                    +-------------+---------------+
+                    |          DFI Interface       |
+                    |         (DFI 5.0/5.1)       |
+                    +-------------+---------------+
+                                  |
+                    +-----------------------------+
+                    |   HBM DRAM Model            |
+                    |   - Channel Model           |
+                    |   - Bank State Machine      |
+                    |   - PHY Training            |
+                    |   - ECC/CRC                 |
+                    |   - Lane Repair             |
+                    +-------------+---------------+
+                                  |
+                    +-----------------------------+
+                    |   Signal Integrity Module   |
+                    +-------------+---------------+
+                                  |
+                                  v
+                    +-----------------------------+
+                    |   Statistics Collector      |
+                    +-----------------------------+
+```
+
+### Key Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| HBM4 Controller | `model/controller/hbm4_controller.py` | Main controller with QoS/FR-FCFS |
+| Address Decoder | `model/controller/hbm4_address_decoder.py` | RBC/BCR/CRB address mapping |
+| QoS Scheduler | `model/controller/hbm4_qos_scheduler.py` | 16-level priority scheduling |
+| Refresh Scheduler | `model/controller/hbm4_refresh_scheduler.py` | All-bank/per-bank refresh |
+| DFI Interface | `model/dram/dfi_interface.py` | DFI 5.0/5.1 protocol |
+| Channel Model | `model/dram/hbm4_channel_model.py` | Per-channel timing model |
+| Bank State Machine | `model/dram/bank_state_machine.py` | Per-bank state tracking |
+| Lane Repair | `model/dram/lane_repair.py` | Redundant lane mapping |
+| ECC/CRC | `model/dram/ecc_crc.py` | Error detection/correction |
+| PHY Training | `model/dram/phy_training.py` | Calibration sequences |
+| Signal Integrity | `model/phy/signal_integrity.py` | TX/RX equalization |
+| Eye Analyzer | `model/phy/eye_analyzer.py` | Eye diagram metrics |
+| Interconnect | `sim/interconnect/` | AXI crossbar and NoC mesh |
+| Trace Parser | `sim/trace/` | External trace replay |
+
+## Running Tests
 
 ```bash
 # All tests
@@ -95,193 +202,98 @@ pytest tests/ -v
 pytest tests/controller/ -v    # Controller tests
 pytest tests/dram/ -v          # DRAM tests
 pytest tests/hbm4/ -v          # HBM4 tests
+pytest tests/phy/ -v            # PHY/Signal Integrity tests
 pytest tests/integration/ -v    # Integration tests
-pytest tests/coverage/ -v       # Coverage tests
+pytest tests/benchmark/ -v     # Benchmark tests
+
+# Specific module tests
+pytest tests/hbm4/test_pam3.py -v           # PAM3 encoding tests
+pytest tests/hbm4/test_logic_base_die.py -v # LBD integration tests
+pytest tests/hbm4/test_channel_timing.py -v # Channel timing tests
 ```
 
-### RTL Simulation
+## RTL Simulation
 
 ```bash
 # Compile RTL with Verilator
 cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 
-# Run UVM verification
-cd verification/uvm && make
+# Run simulation
+cd rtl && make sim
+
+# Lint check
+cd rtl && make lint
+
+# Build with waveform
+cd rtl && make sim-debug
 ```
 
-### Ramulator2 Baseline (Optional)
+## Troubleshooting
 
-```bash
-# Build Ramulator2
-cd research/ramulator2
-cmake -S . -B build -DCMAKE_CXX_COMPILER=/usr/bin/clang++-18
-cmake --build build -j
+### Queue Full Errors
 
-# Run HBM3 baseline experiments
-research/hbm-modeling/scripts/run_baseline.sh
-```
-
-## Test Results Summary
-
-| Category | Tests | Status |
-|----------|-------|--------|
-| Controller Tests | 98 | Passing |
-| DRAM Tests | 22 | Passing |
-| HBM4 DFI Tests | 34 | Passing |
-| HBM4 PHY/TSV/Lane | 225+ | Passing |
-| Simulation Tests | 72 | Passing |
-| Integration Tests | 46 | Passing |
-| **Total** | **463** | **All Passing** |
-
-## HBM4 Support
-
-| Feature | Status |
-|---------|--------|
-| 32-channel architecture (2x HBM3) | Complete |
-| Speed grades: 8 Gbps, 12 Gbps, 16 Gbps | Complete |
-| Pseudo-channel support | Complete |
-| Bank group organization | Complete |
-| ECC/CRC error detection | Complete |
-| Lane repair capabilities | Complete |
-| PHY training sequences | Complete |
-| MBIST support | Complete |
-| DFI interface | Complete |
-
-## Key Components
-
-### Python Models
-
-| Component | Files | Status |
-|-----------|-------|--------|
-| Controller | `controller.py`, `hbm4_controller.py` | Complete |
-| Address Decoder | `address_decoder.py`, `hbm4_address_decoder.py` | Complete |
-| QoS Scheduler | `qos_scheduler.py`, `hbm4_qos_scheduler.py` | Complete |
-| Refresh Scheduler | `refresh_scheduler.py`, `hbm4_refresh_scheduler.py` | Complete |
-| Request Queue | `queue.py`, `request.py` | Complete |
-| DRAM Timing | `timing.py`, `hbm4_spec.py` | Complete |
-| Channel Model | `channel_model.py`, `hbm4_channel_model.py` | Complete |
-| Bank State Machine | `bank_state_machine.py` | Complete |
-| PHY Training | `phy_training.py` | Complete |
-| MBIST Controller | `mbist_controller.py` | Complete |
-| Power Estimator | `power_estimator.py` | Complete |
-| ECC/CRC | `ecc_crc.py` | Complete |
-| Lane Repair | `lane_repair.py` | Complete |
-| DFI Interface | `dfi_interface.py` | Complete |
-
-### RTL Components
-
-| Component | File | Status |
-|-----------|------|--------|
-| Type Definitions | `hbm_types.svh` | Complete |
-| UVM Package | `hbm_pkg.sv` | Complete |
-| DRAM Model | `dram_model.sv` | Complete |
-| Controller RTL | `hbm_controller.sv` | Complete |
-| Testbench | `hbm_controller_tb.cpp` | Complete |
-
-### UVM Verification
-
-| Component | Status |
-|-----------|--------|
-| Environment Package | Complete |
-| Test Package | Complete |
-| Testbench | Complete |
-| Reference Models | Complete |
-
-## Directory Structure
-
-```
-.
-├── model/
-│   ├── controller/          # HBM controller 事务级模型
-│   │   ├── controller.py
-│   │   ├── hbm4_controller.py
-│   │   ├── address_decoder.py
-│   │   ├── hbm4_address_decoder.py
-│   │   ├── qos_scheduler.py
-│   │   ├── hbm4_qos_scheduler.py
-│   │   ├── refresh_scheduler.py
-│   │   ├── hbm4_refresh_scheduler.py
-│   │   ├── queue.py
-│   │   └── request.py
-│   ├── dram/                # DRAM timing、bank/channel 模型
-│   │   ├── dram_model.py
-│   │   ├── hbm4_channel_model.py
-│   │   ├── hbm4_spec.py
-│   │   ├── timing.py
-│   │   ├── bank_state_machine.py
-│   │   ├── phy_training.py
-│   │   ├── mbist_controller.py
-│   │   ├── power_estimator.py
-│   │   ├── ecc_crc.py
-│   │   ├── lane_repair.py
-│   │   └── dfi_interface.py
-│   └── interconnect/        # NoC/AXI 互联模型占位
-├── rtl/                      # RTL 实现
-│   ├── hbm_types.svh
-│   ├── hbm_pkg.sv
-│   ├── hbm_controller.sv
-│   ├── dram_model.sv
-│   └── hbm_controller_tb.cpp
-├── verification/
-│   ├── reference_model/     # 参考模型
-│   └── uvm/                  # UVM 验证环境
-├── research/
-│   ├── hbm-modeling/         # Ramulator2 HBM3 baseline
-│   ├── hbm4-logic-base-die/ # HBM4 logic base die 参考
-│   └── ramulator2/           # CMU-SAFARI Ramulator2
-├── tests/                    # Python 测试
-│   ├── controller/
-│   ├── dram/
-│   ├── hbm4/
-│   ├── sim/
-│   ├── coverage/
-│   └── integration/
-├── docs/                     # 设计文档
-├── sim/                       # 仿真输出
-│   ├── unified_simulator.py  # Python + RTL 联合仿真
-│   ├── interconnect/         # 互联模型
-│   └── trace/               # Trace 解析器
-└── scripts/                   # 工具脚本
-```
-
-## Key Documents
-
-- [Design Document](docs/design/2026-06-15-hbm-system-model-design.md) - 完整设计规范
-- [HBM3 Spec](docs/specs/hbm3_spec.md) - HBM3 参数参考
-- [Ramulator2](research/ramulator2/) - 参考模拟器
-
-## Example Usage
+If `submit_request()` returns `None`, the request queue is full:
 
 ```python
-from model.controller.config import HBM3_DEFAULT
-from model.controller.controller import HBMController
-from model.controller.request import HBMRequest
-
-# Create controller
-controller = HBMController(HBM3_DEFAULT)
-
-# Submit request
-request = HBMRequest(addr=0x1000, length=64, is_read=True)
-controller.submit_request(request)
-
-# Run simulation
-for _ in range(100):
-    controller.tick()
-
-# Get statistics
-print(controller.get_stats())
+# Check queue depth before submitting
+stats = controller.get_stats()
+if stats['queues']['read_depth'] < 256:
+    controller.submit_request(...)
 ```
 
-## Development Model
+### Address Alignment Errors
 
-- AI-driven development with subagent parallelization
-- User reviews designs, AI implements
-- Phased approach: Design -> Phase A -> Phase B -> Phase C
+Ensure addresses are 8-byte aligned:
 
-## Future Directions
+```python
+addr = original_addr & ~0x7  # Align to 8-byte boundary
+controller.submit_request(addr=addr, ...)
+```
 
-- Add trace parser and automatic summary generation
-- Connect Python controller and DRAM models in unified simulation loop
-- Add AXI/NoC interconnect model and multiple traffic sources
-- Integrate with gem5 or DRAMSys for system-level simulation
-- Push key protocol constraints to SystemVerilog/UVM verification environment
+### Timing Violations
+
+If `can_activate()` returns `False`, wait for timing constraints:
+
+```python
+while not bank.can_activate():
+    channel.tick()
+```
+
+### DFI Not Ready
+
+Wait for DFI to be ready before issuing commands:
+
+```python
+while not controller.dfi_ready:
+    controller.tick()
+```
+
+## Examples
+
+See the `examples/` directory for working examples:
+
+| Example | Description |
+|---------|-------------|
+| `basic_controller.py` | Simple read/write operations |
+| `multi_channel.py` | Multi-channel parallelism |
+| `qos_scheduling.py` | Priority-based scheduling |
+| `refresh_scheduling.py` | Refresh management |
+| `bandwidth_benchmark.py` | Performance benchmarking |
+| `dfi_interface.py` | DFI protocol usage |
+| `address_decoding.py` | Address mapping examples |
+| `dram_features.py` | DRAM timing and features |
+
+Run any example:
+
+```bash
+python3 examples/basic_controller.py
+python3 examples/multi_channel.py
+python3 examples/qos_scheduling.py
+```
+
+## References
+
+- JEDEC JESD270-4A HBM4 Specification
+- Synopsys DesignWare HBM4/4E Controller IP
+- CMU-SAFARI Ramulator2
+- DFI 5.0/5.1 Specification

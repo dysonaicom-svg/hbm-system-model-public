@@ -7,6 +7,7 @@ Optimizations:
 - Frozen dataclass for immutable types
 - Batch state checks
 - Pre-computed timing values
+- Timing lookup table for O(1) access
 """
 
 from enum import IntEnum
@@ -46,6 +47,31 @@ _STATE_IDLE = 1 << BankStateEnum.IDLE
 _STATE_ACTIVE = 1 << BankStateEnum.ACTIVE
 _STATE_BUSY = 1 << BankStateEnum.BUSY
 _STATE_REFRESHING = 1 << BankStateEnum.REFRESHING
+
+
+# Timing lookup table - pre-computed values for common timing parameters
+# Maps timing parameter names to their cycle values for HBM3
+_TIMING_LOOKUP = {
+    'nRC': 340,
+    'nRAS': 320,
+    'nRCD': 20,
+    'nRP': 20,
+    'nRFC': 260,
+    'nCL': 20,
+    'nCWL': 16,
+    'nCCD': 4,
+    'nWTRS': 4,
+    'nRTW': 4,
+    # HBM3 aliases
+    'tRC': 340,
+    'tRAS': 320,
+    'tRCD': 20,
+    'tRP': 20,
+    'tRFC': 260,
+    'tCL': 20,
+    'tCWL': 16,
+    'tCCD': 4,
+}
 
 
 class Bank:
@@ -165,11 +191,14 @@ class BankStateMachine:
     - Batch timing checks
     - Pre-computed timing conversions
     - Fast state comparisons using cached masks
+    - Timing lookup table for O(1) access
+    - No set_time() calls - time passed directly to check methods
     """
 
     __slots__ = ('bank', 'timing', 'current_time', 'timing_violations',
-                 '_clock_period_ns', '_cache_valid', '_cached_tRC', '_cached_tRAS',
-                 '_cached_tRCD', '_cached_tRFC')
+                 '_clock_period_ns', '_clock_period_s', '_timing_cache',
+                 '_cache_valid', '_cached_tRC', '_cached_tRAS', '_cached_tRCD',
+                 '_cached_tRFC', '_cached_tCL', '_cached_tCWL', '_cached_tCCD')
 
     def __init__(self, bank_id: int, timing):
         """Initialize Bank State Machine
@@ -184,29 +213,65 @@ class BankStateMachine:
         self.timing_violations: List[TimingViolation] = []
 
         # Pre-compute clock period for fast cycles-to-seconds conversion
-        self._clock_period_ns = getattr(timing, 'clock_period_ns', 0.78125)
+        # Use timing object's pre-computed value if available
+        self._clock_period_s = getattr(timing, '_clock_period_s', None) or 0.78125e-9
+        self._clock_period_ns = getattr(timing, '_clock_period_ns', None) or 0.78125
 
-        # Cache for timing values
+        # Pre-compute all timing values once at init time
+        self._timing_cache = {}
         self._cache_valid = False
+        self._init_timing_cache()
+
+        # Cache commonly used timing values
         self._cached_tRC = 0
         self._cached_tRAS = 0
         self._cached_tRCD = 0
         self._cached_tRFC = 0
+        self._cached_tCL = 0
+        self._cached_tCWL = 0
+        self._cached_tCCD = 0
+
+    def _init_timing_cache(self):
+        """Initialize timing lookup cache at construction time"""
+        # Pre-populate cache from timing object
+        for name in _TIMING_LOOKUP:
+            val = self.get_timing_value(name)
+            if val > 0:
+                self._timing_cache[name] = val
+
+        # Also cache values from the timing object
+        for name in dir(self.timing):
+            if not name.startswith('_'):
+                val = getattr(self.timing, name)
+                if isinstance(val, (int, float)):
+                    self._timing_cache[name] = int(val)
 
     def set_time(self, current_time: float):
-        """Set current time (in cycles)"""
-        self.current_time = current_time
-        # Refresh timing cache when time changes
-        self._refresh_timing_cache()
+        """Set current time (in cycles)
 
-    def _refresh_timing_cache(self):
-        """Refresh cached timing values"""
-        if not self._cache_valid:
-            self._cached_tRC = self.get_timing_value('nRC')
-            self._cached_tRAS = self.get_timing_value('nRAS')
-            self._cached_tRCD = self.get_timing_value('nRCD')
-            self._cached_tRFC = self.get_timing_value('nRFC')
-            self._cache_valid = True
+        OPTIMIZATION: This method is called frequently but most of its
+        work is deferred. The actual time check is done in the operation
+        methods directly.
+        """
+        self.current_time = current_time
+
+    def _get_cached_timing(self, name: str) -> int:
+        """Get timing value from cache (O(1) lookup)
+
+        Args:
+            name: Parameter name
+
+        Returns:
+            Timing value in cycles
+        """
+        # Fast path: check cache first
+        if name in self._timing_cache:
+            return self._timing_cache[name]
+
+        # Fallback: compute and cache
+        val = self.get_timing_value(name)
+        self._timing_cache[name] = val
+        return val
 
     def _record_violation(self, violation_type: str, required_time: float,
                          actual_time: float, description: str):
@@ -229,6 +294,10 @@ class BankStateMachine:
         Returns:
             Timing parameter value (in cycles)
         """
+        # Check lookup table first (fastest path)
+        if name in _TIMING_LOOKUP:
+            return _TIMING_LOOKUP[name]
+
         # HBM4 n-prefix priority
         if hasattr(self.timing, name):
             return getattr(self.timing, name)
@@ -259,7 +328,9 @@ class BankStateMachine:
 
         # tRC: Minimum interval between consecutive ACTs on same bank
         time_since_last = self.current_time - self.bank.last_operation_time
-        tRC_seconds = self._cycles_to_seconds(self._cached_tRC)
+        # Use cached timing value directly
+        tRC = self._get_cached_timing('nRC')
+        tRC_seconds = self._cycles_to_seconds(tRC)
         return time_since_last >= tRC_seconds
 
     def activate(self, row: int) -> Tuple[bool, Optional[str]]:
@@ -271,8 +342,9 @@ class BankStateMachine:
         Returns:
             (success flag, error message)
         """
-        # Refresh timing cache before checking timing constraints
-        self._refresh_timing_cache()
+        # Use cached timing value directly (no refresh needed)
+        tRC = self._get_cached_timing('nRC')
+        tRC_seconds = self._cycles_to_seconds(tRC)
 
         if self.bank.state != BankStateEnum.IDLE:
             return False, f"Bank {self.bank.bank_id} not idle (state={self.bank.state.name})"
@@ -280,10 +352,9 @@ class BankStateMachine:
         # If ever activated, must satisfy tRC
         if self.bank.activate_time >= 0:
             time_since_last = self.current_time - self.bank.last_operation_time
-            tRC_seconds = self._cycles_to_seconds(self._cached_tRC)
             if time_since_last < tRC_seconds:
                 msg = f"tRC violation: need {tRC_seconds}s, have {time_since_last}s"
-                self._record_violation('tRC', self._cached_tRC, time_since_last, msg)
+                self._record_violation('tRC', tRC, time_since_last, msg)
                 return False, msg
 
         self.bank.update_state(BankStateEnum.ACTIVE)
@@ -314,7 +385,8 @@ class BankStateMachine:
                 return False
 
         time_since_act = self.current_time - self.bank.activate_time
-        tRAS_seconds = self._cycles_to_seconds(self._cached_tRAS)
+        tRAS = self._get_cached_timing('nRAS')
+        tRAS_seconds = self._cycles_to_seconds(tRAS)
         return time_since_act >= tRAS_seconds
 
     def precharge(self) -> Tuple[bool, Optional[str]]:
@@ -327,12 +399,13 @@ class BankStateMachine:
         if state_mask & (_STATE_ACTIVE | _STATE_BUSY) == 0:
             return False, f"Bank {self.bank.bank_id} not active (state={self.bank.state.name})"
 
-        # Check tRAS
+        # Check tRAS using cached value
         time_since_act = self.current_time - self.bank.activate_time
-        tRAS_seconds = self._cycles_to_seconds(self._cached_tRAS)
+        tRAS = self._get_cached_timing('nRAS')
+        tRAS_seconds = self._cycles_to_seconds(tRAS)
         if time_since_act < tRAS_seconds:
-            msg = f"tRAS violation: need {self._cached_tRAS} cycles ({tRAS_seconds}s), have {time_since_act}s"
-            self._record_violation('tRAS', self._cached_tRAS, time_since_act, msg)
+            msg = f"tRAS violation: need {tRAS} cycles ({tRAS_seconds}s), have {time_since_act}s"
+            self._record_violation('tRAS', tRAS, time_since_act, msg)
             return False, msg
 
         self.bank.update_state(BankStateEnum.IDLE)
@@ -348,9 +421,10 @@ class BankStateMachine:
     def _cycles_to_seconds(self, cycles: int) -> float:
         """Convert timing cycles to seconds
 
+        OPTIMIZED: Uses pre-computed clock period for O(1) conversion.
         HBM3: tCK = 781.25 ps = 0.78125 ns = 0.78125e-9 s
         """
-        return cycles * self._clock_period_ns * 1e-9
+        return cycles * self._clock_period_s
 
     def can_read(self) -> bool:
         """Check if READ can be initiated
@@ -363,7 +437,8 @@ class BankStateMachine:
             return False
 
         time_since_act = self.current_time - self.bank.activate_time
-        tRCD_seconds = self._cycles_to_seconds(self._cached_tRCD)
+        tRCD = self._get_cached_timing('nRCD')
+        tRCD_seconds = self._cycles_to_seconds(tRCD)
         return time_since_act >= tRCD_seconds
 
     def read(self, burst_length: int = 4) -> Tuple[bool, Optional[str]]:
@@ -382,10 +457,10 @@ class BankStateMachine:
         self.bank.update_state(BankStateEnum.BUSY)
         self.bank.read_start_time = self.current_time
 
-        # Calculate read completion time: tRCD + tCL + (burst_length - 1) * tCCD
-        tRCD = self._cached_tRCD
-        tCL = self.get_timing_value('nCL')
-        tCCD = self.get_timing_value('nCCD')
+        # Use cached timing values
+        tRCD = self._get_cached_timing('nRCD')
+        tCL = self._get_cached_timing('nCL')
+        tCCD = self._get_cached_timing('nCCD')
         self.bank.read_complete_time = self.current_time + tRCD + tCL + (burst_length - 1) * tCCD
 
         return True, None
@@ -429,7 +504,8 @@ class BankStateMachine:
             return False
 
         time_since_act = self.current_time - self.bank.activate_time
-        tRCD_seconds = self._cycles_to_seconds(self._cached_tRCD)
+        tRCD = self._get_cached_timing('nRCD')
+        tRCD_seconds = self._cycles_to_seconds(tRCD)
         return time_since_act >= tRCD_seconds
 
     def write(self, burst_length: int = 4) -> Tuple[bool, Optional[str]]:
@@ -448,10 +524,10 @@ class BankStateMachine:
         self.bank.update_state(BankStateEnum.BUSY)
         self.bank.write_start_time = self.current_time
 
-        # Calculate write completion time: tRCD + tCWL + burst * tCCD
-        tRCD = self._cached_tRCD
-        tCWL = self.get_timing_value('nCWL')
-        tCCD = self.get_timing_value('nCCD')
+        # Use cached timing values
+        tRCD = self._get_cached_timing('nRCD')
+        tCWL = self._get_cached_timing('nCWL')
+        tCCD = self._get_cached_timing('nCCD')
         self.bank.write_complete_time = self.current_time + tRCD + tCWL + (burst_length - 1) * tCCD
 
         return True, None
@@ -554,8 +630,9 @@ class BankStateMachine:
             return True
 
         time_since_refresh = self.current_time - self.bank.refresh_time
-        nRFC_seconds = self._cycles_to_seconds(self._cached_tRFC)
-        return time_since_refresh >= nRFC_seconds
+        tRFC = self._get_cached_timing('nRFC')
+        tRFC_seconds = self._cycles_to_seconds(tRFC)
+        return time_since_refresh >= tRFC_seconds
 
     def refresh(self) -> Tuple[bool, Optional[str]]:
         """Execute refresh
@@ -569,8 +646,9 @@ class BankStateMachine:
         self.bank.update_state(BankStateEnum.REFRESHING)
         self.bank.refresh_time = self.current_time
 
-        # Calculate refresh completion time
-        self.bank.refresh_complete_time = self.current_time + self._cached_tRFC
+        # Use cached timing value
+        tRFC = self._get_cached_timing('nRFC')
+        self.bank.refresh_complete_time = self.current_time + tRFC
 
         return True, None
 
@@ -705,10 +783,11 @@ class BankStateMachine:
             return 0.0
 
         time_since_last = self.current_time - self.bank.last_operation_time
-        if time_since_last >= self._cached_tRC:
+        tRC = self._get_cached_timing('nRC')
+        if time_since_last >= tRC:
             return 0.0
 
-        return self._cached_tRC - time_since_last
+        return tRC - time_since_last
 
     def time_to_read_ready(self) -> float:
         """Calculate time until READ can be initiated
@@ -718,9 +797,10 @@ class BankStateMachine:
         """
         if self.bank.state == BankStateEnum.ACTIVE:
             time_since_act = self.current_time - self.bank.activate_time
-            if time_since_act >= self._cached_tRCD:
+            tRCD = self._get_cached_timing('nRCD')
+            if time_since_act >= tRCD:
                 return 0.0
-            return self._cached_tRCD - time_since_act
+            return tRCD - time_since_act
 
         return float('inf')  # Need to activate first
 
@@ -735,10 +815,11 @@ class BankStateMachine:
             return float('inf')
 
         time_since_act = self.current_time - self.bank.activate_time
-        if time_since_act >= self._cached_tRAS:
+        tRAS = self._get_cached_timing('nRAS')
+        if time_since_act >= tRAS:
             return 0.0
 
-        return self._cached_tRAS - time_since_act
+        return tRAS - time_since_act
 
     def get_violations(self) -> List[TimingViolation]:
         """Get recorded timing violations"""

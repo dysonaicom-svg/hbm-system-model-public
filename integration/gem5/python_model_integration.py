@@ -15,8 +15,9 @@ import time
 import argparse
 from typing import List, Dict, Any, Optional
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path for imports
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, _project_root)
 
 from model.controller.controller import HBMController
 from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT
@@ -29,7 +30,7 @@ from integration.gem5.bridge import (
     HBMBridge, BridgeConfig, MemoryRequest, MemoryResponse,
     RequestType, DualSimulatorBridge
 )
-from integration.gem5.hbm4_config import HBM4Presets, HBM4Timing
+# Note: HBM4Presets is for gem5 config; for timing, use model.dram.timing
 
 
 class PythonHBMBridge:

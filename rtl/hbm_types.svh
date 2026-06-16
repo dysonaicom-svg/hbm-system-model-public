@@ -3,12 +3,21 @@
 // =============================================================================
 // Type definitions for High Bandwidth Memory (HBM) SystemVerilog model
 // Supports HBM2, HBM3, and HBM4 specifications
+// DFI 5.0/5.1 Compliance for HBM4 Controller-PHY Interface
+// Reference: DFI 5.0 Specification, JEDEC JESD270-4A
 // =============================================================================
 
 `ifndef HBM_TYPES_SVH
 `define HBM_TYPES_SVH
 
 // verilator lint_off SYMRSVDWORD
+
+// =============================================================================
+// DFI 5.0 Version and Compliance
+// =============================================================================
+`define DFI_VERSION_MAJOR  5
+`define DFI_VERSION_MINOR  0
+`define DFI_COMPLIANT
 
 // =============================================================================
 // HBM4 Command Encoding (4-bit, aligned with Python hbm4_channel_model.py)
@@ -24,6 +33,180 @@ typedef enum logic [3:0] {
     CMD_RFM    = 4'd7,   // Row flash memory (refresh)
     CMD_MRS    = 4'd8    // Mode register set
 } hbm_cmd_t;
+
+// =============================================================================
+// DFI 5.0 Command Encoding
+// DFI commands are the interface protocol between controller and PHY
+// Reference: DFI 5.0 Specification Table 4-1
+// =============================================================================
+typedef enum logic [3:0] {
+    DFI_CMD_NOP    = 4'b0000,  // No operation
+    DFI_CMD_ACT   = 4'b0001,  // Activate
+    DFI_CMD_PRE   = 4'b0010,  // Precharge
+    DFI_CMD_PREA  = 4'b0011,  // Precharge all
+    DFI_CMD_RD    = 4'b0100,  // Read
+    DFI_CMD_WR    = 4'b0101,  // Write
+    DFI_CMD_RDA   = 4'b0110,  // Read with auto-precharge
+    DFI_CMD_WRA   = 4'b0111,  // Write with auto-precharge
+    DFI_CMD_REFab = 4'b1000,  // All-bank refresh
+    DFI_CMD_REFsb = 4'b1001,  // Per-bank refresh
+    DFI_CMD_RFMab = 4'b1010,  // All-bank row flash memory refresh
+    DFI_CMD_RFMsb = 4'b1011,  // Per-bank row flash memory refresh
+    DFI_CMD_MRS   = 4'b1100,  // Mode register set
+    DFI_CMD_SRE   = 4'b1101,  // Self-refresh entry
+    DFI_CMD_SRX   = 4'b1110,  // Self-refresh exit
+    DFI_CMD_PDE   = 4'b1111   // Power-down entry
+} dfi_cmd_t;
+
+// =============================================================================
+// DFI 5.0 Low Power State Machine States
+// Reference: DFI 5.0 Specification Section 3.4
+// =============================================================================
+typedef enum logic [1:0] {
+    DFI_LP_IDLE          = 2'b00,  // Normal operation state
+    DFI_LP_CTRL          = 2'b01,  // Controller low-power state (PHY still active)
+    DFI_LP_DATA          = 2'b10,  // Data path low-power state
+    DFI_LP_FREQ_CHANGE   = 2'b11   // Frequency change in progress
+} dfi_lp_state_t;
+
+// =============================================================================
+// DFI 5.0 Frequency Change State Machine States
+// Reference: DFI 5.0 Specification Section 3.5
+// =============================================================================
+typedef enum logic [2:0] {
+    DFI_FC_IDLE      = 3'b000,  // Normal operation, no frequency change
+    DFI_FC_REQUESTED = 3'b001,  // Frequency change requested
+    DFI_FC_ENTERING  = 3'b010,  // Entering frequency change state
+    DFI_FC_ACTIVE    = 3'b011,  // In frequency change (PHY being reconfigured)
+    DFI_FC_EXITING   = 3'b100,  // Exiting frequency change state
+    DFI_FC_LOCKING   = 3'b101,  // PLL/DLL re-locking phase
+    DFI_FC_COMPLETE  = 3'b110   // Frequency change complete
+} dfi_fc_state_t;
+
+// =============================================================================
+// DFI 5.0 Signal Bundles
+// Complete signal definitions for Controller-to-PHY and PHY-to-Controller
+// Reference: DFI 5.0 Specification Tables 4-1 through 4-4
+// =============================================================================
+
+// DFI Address type - expanded for HBM4 42-bit addressing
+typedef struct packed {
+    logic [15:0] row;            // Row address (16 bits, 64K rows)
+    logic [5:0]  col;           // Column address (6 bits, 64 columns)
+    logic [3:0]  bank;          // Bank address (4 bits, 16 banks)
+    logic [2:0]  bank_group;   // Bank group address (3 bits, 8 groups)
+    logic        pseudo_ch;     // Pseudo-channel (1 bit, 2 per channel)
+    logic [4:0]  channel;      // Channel address (5 bits, 32 channels)
+    logic [1:0]  stack;        // Stack identifier (2 bits, 4 stacks)
+} dfi_addr_t;
+
+// DFI Control Update Signals (DFI 5.0)
+typedef struct packed {
+    logic        ctrlupd_req;      // Controller requests control update
+    logic        ctrlupd_ack;      // PHY acknowledges control update
+    logic        ctrlupd_auto;     // Auto-control update enable
+} dfi_ctrlupd_t;
+
+// DFI Frequency Change Signals (DFI 5.0)
+typedef struct packed {
+    logic        freq_change_en;   // Controller requests frequency change
+    logic        freq_change_ack;  // PHY acknowledges frequency change
+    logic [7:0]  freq_target;     // Target frequency (in 100 MHz units)
+    logic [7:0]  freq_current;    // Current frequency indicator
+} dfi_freq_change_t;
+
+// DFI Power Management Signals (DFI 5.0)
+typedef struct packed {
+    logic        pwr_up_req;       // Controller requests power up
+    logic        pwr_up_done;      // Power-up sequence complete
+    logic        pwr_down_req;     // Controller requests power down
+    logic        pwr_down_ack;     // PHY acknowledges power down
+    logic [1:0]  pwr_state;       // Power state indicator
+} dfi_power_t;
+
+// DFI Low Power State Signals (DFI 5.0)
+typedef struct packed {
+    logic        lp_req;           // Low power entry request
+    logic        lp_ack;           // Low power acknowledgment
+    logic        lp_wakeup;        // Low power wakeup signal
+    logic [1:0]  lp_state;        // Current low power state
+    logic        lp_force_cmd;     // Force commands during LP exit
+} dfi_lp_ctrl_t;
+
+// DFI Training and Calibration Signals (DFI 5.0)
+typedef struct packed {
+    logic        training_req;     // Training request
+    logic        training_ack;     // Training acknowledgment
+    logic        cal_req;          // Calibration request
+    logic        cal_done;         // Calibration complete
+    logic [3:0]  training_mode;   // Training mode selector
+    logic        training_start;  // Training sequence start
+} dfi_training_t;
+
+// DFI Data Control Signals
+typedef struct packed {
+    logic        wrdata_en;        // Write data enable
+    logic        wrdata_mask;      // Write data mask
+    logic        rddata_en;        // Read data enable
+    logic        rddata_valid;     // Read data valid
+    logic [7:0]  rddata_offset;   // Read data offset compensation
+} dfi_data_ctrl_t;
+
+// DFI Complete Signal Bundle (Controller to PHY)
+typedef struct packed {
+    // Command and address
+    logic        cmd_en;           // Command enable
+    logic [3:0]  cmd;              // Command code
+    dfi_addr_t   addr;             // Address
+    logic [3:0]  bank;             // Bank address (redundant for convenience)
+    logic        chip;             // Chip select
+
+    // Control update (DFI 5.0)
+    logic        ctrlupd_req;      // Control update request
+
+    // Frequency change (DFI 5.0)
+    logic        freq_change_en;   // Frequency change enable
+
+    // Power management (DFI 5.0)
+    logic        pwr_up_req;       // Power up request
+    logic        pwr_down_req;     // Power down request
+
+    // Low power (DFI 5.0)
+    logic        lp_req;           // Low power request
+    logic        lp_wakeup;        // Low power wakeup
+
+    // Training (DFI 5.0)
+    logic        training_req;     // Training request
+    logic        cal_req;          // Calibration request
+
+    // Data control
+    logic        wrdata_en;        // Write data enable
+    logic        rddata_en;        // Read data enable
+} dfi_ctrl_phy_t;
+
+// DFI Complete Signal Bundle (PHY to Controller)
+typedef struct packed {
+    // Status
+    logic        phy_ready;        // PHY ready indicator
+    logic        lp_ack;           // Low power acknowledgment
+    logic        ctrlupd_ack;      // Control update acknowledgment
+    logic        freq_change_ack;  // Frequency change acknowledgment
+    logic        pwr_up_done;      // Power up done
+    logic        pwr_down_ack;    // Power down acknowledgment
+
+    // Training status (DFI 5.0)
+    logic        training_ack;     // Training acknowledgment
+    logic        cal_done;        // Calibration done
+    logic [1:0]  cal_status;      // Calibration status
+    logic        training_complete;// Training sequence complete
+
+    // Data status
+    logic        rddata_valid;     // Read data valid
+    logic        rddata_en;        // Read data enable
+
+    // LP state indicator
+    logic [1:0]  lp_state;        // Current low power state
+} dfi_phy_ctrl_t;
 
 // -----------------------------------------------------------------------------
 // Address Structure - HBM4 RBC (Row-Bank-Channel) Mapping
@@ -136,6 +319,46 @@ typedef struct packed {
     logic [15:0] cycle_complete;  // Cycle when request completed
 } hbm_req_t;
 
+// =============================================================================
+// DFI 5.0 Timing Parameters
+// Reference: DFI 5.0 Specification Table 3-1
+// All values in clock cycles @ dfi_clk
+// =============================================================================
+
+typedef struct packed {
+    // PHY write latency parameters
+    logic [7:0] tPHY_wrlAT;      // PHY write data ready time (default: 5 cycles)
+    logic [7:0] tPHY_wrlAT_max;  // Maximum write latency (default: 10 cycles)
+
+    // PHY read latency parameters
+    logic [7:0] tPHY_rdLat;      // PHY read data delay (default: 5 cycles)
+    logic [7:0] tPHY_rdLat_max;  // Maximum read latency (default: 10 cycles)
+
+    // Frequency change timing (DFI 5.0)
+    logic [7:0] tFC_LATENCY;     // Frequency change latency (default: 8 cycles)
+    logic [7:0] tFC_EXIT;        // Exit frequency change (default: 4 cycles)
+
+    // Low power entry/exit timing (DFI 5.0)
+    logic [7:0] tLP_CTRL_ENTER;  // LP_CTRL entry latency (default: 2 cycles)
+    logic [7:0] tLP_CTRL_EXIT;   // LP_CTRL exit latency (default: 2 cycles)
+    logic [7:0] tLP_DATA_ENTER;  // LP_DATA entry latency (default: 4 cycles)
+    logic [7:0] tLP_DATA_EXIT;   // LP_DATA exit latency (default: 4 cycles)
+
+    // Control update timing (DFI 5.0)
+    logic [7:0] tCTRLUPD_LATENCY;// Control update acknowledgment latency (default: 4 cycles)
+
+    // Power management timing (DFI 5.0)
+    logic [7:0] tPWR_UP;         // Power-up latency (default: 2 cycles)
+    logic [7:0] tPWR_DOWN;       // Power-down latency (default: 2 cycles)
+} dfi_timing_t;
+
+// DFI 5.0 Default Timing Parameters
+`define DFI_TIMING_DEFAULT  5,10,5,10,8,4,2,2,4,4,4,2,2
+// tPHY_wrlAT, tPHY_wrlAT_max, tPHY_rdLat, tPHY_rdLat_max,
+// tFC_LATENCY, tFC_EXIT,
+// tLP_CTRL_ENTER, tLP_CTRL_EXIT, tLP_DATA_ENTER, tLP_DATA_EXIT,
+// tCTRLUPD_LATENCY, tPWR_UP, tPWR_DOWN
+
 // -----------------------------------------------------------------------------
 // System Configuration Constants - HBM4 Specification
 // -----------------------------------------------------------------------------
@@ -149,6 +372,44 @@ typedef struct packed {
 `define NUM_BANK_GROUPS 8
 // Number of banks per bank group (16 for HBM4)
 `define NUM_BANKS       16
+
+// =============================================================================
+// DFI 5.0 Interface Configuration Constants
+// =============================================================================
+`define DFI_MAX_FREQ_RATIO    4     // Maximum frequency ratio supported
+`define DFI_MIN_LATENCY       2     // Minimum latency in cycles
+`define DFI_MAX_LATENCY       255   // Maximum latency value
+`define DFI_LP_TIMEOUT        1000  // Low power timeout in cycles
+`define DFI_CTRLUPD_TIMEOUT   256   // Control update timeout
+
+// DFI 5.0 Frequency Change Configuration
+`define DFI_FC_MIN_FREQ       100   // Minimum frequency (100 MHz)
+`define DFI_FC_MAX_FREQ       1600  // Maximum frequency (1600 MHz)
+`define DFI_FC_FREQ_STEP      100   // Frequency step size (100 MHz)
+
+// DFI 5.0 Training Mode Definitions
+typedef enum logic [3:0] {
+    DFI_TRAIN_NONE       = 4'h0,  // No training active
+    DFI_TRAIN_WRLVL      = 4'h1,  // Write leveling
+    DFI_TRAIN_GATE       = 4'h2,  // Gate training
+    DFI_TRAIN_RDLVL      = 4'h3,  // Read leveling
+    DFI_TRAIN_WEDGE      = 4'h4,  // Write eye centering
+    DFI_TRAIN_REDD       = 4'h5,  // Read data eye deskew
+    DFI_TRAIN_WRREYE     = 4'h6,  // Write/read data eye
+    DFI_TRAIN_ADDR_CMD    = 4'h7,  // Address/command training
+    DFI_TRAIN_MPR        = 4'h8,  // MPR pattern training
+    DFI_TRAIN_RDDQS      = 4'h9,  // Read DQS training
+    DFI_TRAIN_WR_DQ      = 4'hA,  // Write DQ training
+    DFI_TRAIN_RD_DQ      = 4'hB   // Read DQ training
+} dfi_training_mode_t;
+
+// DFI 5.0 Calibration Status Codes
+typedef enum logic [1:0] {
+    DFI_CAL_NOT_STARTED = 2'b00,  // Calibration not started
+    DFI_CAL_IN_PROGRESS = 2'b01,  // Calibration in progress
+    DFI_CAL_COMPLETE    = 2'b10,  // Calibration complete
+    DFI_CAL_FAILED      = 2'b11   // Calibration failed
+} dfi_cal_status_t;
 
 // -----------------------------------------------------------------------------
 // Default Timing Parameters - HBM4 JEDEC Values

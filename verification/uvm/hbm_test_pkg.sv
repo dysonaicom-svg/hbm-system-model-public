@@ -15,11 +15,12 @@ import hbm_env_pkg::*;
 `include "tests/test_write_seq.sv"
 `include "tests/test_bank_conflict_seq.sv"
 `include "tests/test_refresh_seq.sv"
+`include "tests/test_stress_seq.sv"
 
 // ------------------------------------------------------------
 // Base Sequence with Register Access
 // ------------------------------------------------------------
-class hbm_base_sequence extends uvm_sequence #(hbm_transaction);
+class hbm_base_sequence extends uvm_sequence;
     `uvm_object_utils(hbm_base_sequence)
 
     hbm_reg_model regmodel;
@@ -37,11 +38,6 @@ class hbm_base_sequence extends uvm_sequence #(hbm_transaction);
         transaction_id++;
         return transaction_id;
     endfunction
-
-    task wait_for_idle();
-        // Wait for DUT to be idle
-        repeat(10) @(posedge clk);
-    endtask
 endclass
 
 // ------------------------------------------------------------
@@ -56,7 +52,7 @@ class single_read_seq extends hbm_base_sequence;
 
     task body();
         hbm_transaction req;
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             cmd == hbm_transaction::READ;
@@ -89,7 +85,7 @@ class single_write_seq extends hbm_base_sequence;
 
     task body();
         hbm_transaction req;
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             cmd == hbm_transaction::WRITE;
@@ -122,7 +118,7 @@ class random_traffic_seq extends hbm_base_sequence;
 
     task body();
         hbm_transaction req;
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
 
         for (int i = 0; i < num_requests; i++) begin
             start_item(req);
@@ -159,7 +155,7 @@ class write_read_seq extends hbm_base_sequence;
 
         for (int i = 0; i < num_iterations; i++) begin
             // Write pattern
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 cmd == hbm_transaction::WRITE;
@@ -176,7 +172,7 @@ class write_read_seq extends hbm_base_sequence;
             finish_item(req);
 
             // Read back for verification
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 cmd == hbm_transaction::READ;
@@ -215,7 +211,7 @@ class bank_stress_seq extends hbm_base_sequence;
         // Round-robin through all banks
         for (int bank = 0; bank < num_banks; bank++) begin
             for (int i = 0; i < requests_per_bank; i++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
                 if (!req.randomize() with {
                     addr_bank == bank;
@@ -252,7 +248,7 @@ class hotspot_seq extends hbm_base_sequence;
 
     task body();
         hbm_transaction req;
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
 
         for (int i = 0; i < num_requests; i++) begin
             start_item(req);
@@ -386,7 +382,7 @@ class hbm_single_read_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
         begin
-            seq = single_read_seq::type_id::create("seq");
+            seq = new("seq");
             seq.set_regmodel(env.regmodel);
             seq.start(env.hbm_agent_inst.sequencer);
         end
@@ -409,7 +405,7 @@ class hbm_single_write_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
         begin
-            seq = single_write_seq::type_id::create("seq");
+            seq = new("seq");
             seq.set_regmodel(env.regmodel);
             seq.start(env.hbm_agent_inst.sequencer);
         end
@@ -432,7 +428,7 @@ class hbm_write_read_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
         begin
-            seq = write_read_seq::type_id::create("seq");
+            seq = new("seq");
             seq.num_iterations = 20;
             seq.set_regmodel(env.regmodel);
             seq.start(env.hbm_agent_inst.sequencer);
@@ -456,7 +452,7 @@ class hbm_hotspot_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
         begin
-            seq = hotspot_seq::type_id::create("seq");
+            seq = new("seq");
             seq.num_requests = 100;
             seq.set_regmodel(env.regmodel);
             seq.start(env.hbm_agent_inst.sequencer);
@@ -480,7 +476,7 @@ class hbm_bank_stress_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
         begin
-            seq = bank_stress_seq::type_id::create("seq");
+            seq = new("seq");
             seq.num_banks = 16;
             seq.requests_per_bank = 10;
             seq.set_regmodel(env.regmodel);
@@ -505,7 +501,7 @@ class hbm_register_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
         begin
-            seq = register_test_seq::type_id::create("seq");
+            seq = new("seq");
             seq.set_regmodel(env.regmodel);
             fork
                 seq.start(null);  // Standalone register sequence
@@ -533,7 +529,7 @@ class hbm_comprehensive_test extends hbm_base_test;
         begin
             // Register configuration
             register_test_seq reg_seq;
-            reg_seq = register_test_seq::type_id::create("reg_seq");
+            reg_seq = new("reg_seq");
             reg_seq.set_regmodel(env.regmodel);
             reg_seq.start(null);
         end
@@ -541,7 +537,7 @@ class hbm_comprehensive_test extends hbm_base_test;
         begin
             // Random traffic
             random_traffic_seq rand_seq;
-            rand_seq = random_traffic_seq::type_id::create("rand_seq");
+            rand_seq = new("rand_seq");
             rand_seq.num_requests = 50;
             rand_seq.set_regmodel(env.regmodel);
             rand_seq.start(env.hbm_agent_inst.sequencer);
@@ -550,13 +546,40 @@ class hbm_comprehensive_test extends hbm_base_test;
         begin
             // Hotspot traffic
             hotspot_seq hot_seq;
-            hot_seq = hotspot_seq::type_id::create("hot_seq");
+            hot_seq = new("hot_seq");
             hot_seq.num_requests = 30;
             hot_seq.set_regmodel(env.regmodel);
             hot_seq.start(env.hbm_agent_inst.sequencer);
         end
         join
 
+        phase.drop_objection(this);
+    endtask
+endclass
+
+// ------------------------------------------------------------
+// Stress Test
+// ------------------------------------------------------------
+class hbm_stress_test extends hbm_base_test;
+    `uvm_component_utils(hbm_stress_test)
+
+    function new(string name = "hbm_stress_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        test_stress_seq seq;
+        super.run_phase(phase);
+        phase.raise_objection(this);
+        begin
+            seq = new("seq");
+            seq.num_iterations = 100;
+            seq.requests_per_bank = 10;
+            seq.num_banks = 16;
+            seq.read_write_ratio = 4'b1010;  // 50/50
+            seq.set_regmodel(env.regmodel);
+            seq.start(env.hbm_agent_inst.sequencer);
+        end
         phase.drop_objection(this);
     endtask
 endclass

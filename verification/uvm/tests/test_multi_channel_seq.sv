@@ -6,6 +6,7 @@ package hbm_multi_channel_pkg;
 
 import uvm_pkg::*;
 import hbm_env_pkg::*;
+import hbm_test_pkg::*;
 `include "uvm_macros.svh"
 
 // ------------------------------------------------------------
@@ -84,7 +85,7 @@ class multi_channel_interleave_seq extends hbm_multi_channel_base_sequence;
 
                 for (int round = 0; round < requests_per_channel; round++) begin
                     for (int ch = 0; ch < num_channels; ch++) begin
-                        req = hbm_transaction::type_id::create("req");
+                        req = new("req");
                         start_item(req);
 
                         if (!req.randomize() with {
@@ -115,7 +116,7 @@ class multi_channel_interleave_seq extends hbm_multi_channel_base_sequence;
                 // High priority channels first
                 for (int ch = 0; ch < 8; ch++) begin  // Top 8 channels get high priority
                     for (int i = 0; i < 5; i++) begin
-                        req = hbm_transaction::type_id::create("req");
+                        req = new("req");
                         start_item(req);
 
                         if (!req.randomize() with {
@@ -140,7 +141,7 @@ class multi_channel_interleave_seq extends hbm_multi_channel_base_sequence;
                 // Low priority channels
                 for (int ch = 8; ch < num_channels; ch++) begin
                     for (int i = 0; i < 5; i++) begin
-                        req = hbm_transaction::type_id::create("req");
+                        req = new("req");
                         start_item(req);
 
                         if (!req.randomize() with {
@@ -165,7 +166,7 @@ class multi_channel_interleave_seq extends hbm_multi_channel_base_sequence;
                 `uvm_info(get_name(), "Mode: Random channel interleaving", UVM_MEDIUM)
 
                 for (int i = 0; i < (num_channels * requests_per_channel); i++) begin
-                    req = hbm_transaction::type_id::create("req");
+                    req = new("req");
                     start_item(req);
 
                     if (!req.randomize()) begin
@@ -223,7 +224,7 @@ class channel_conflict_seq extends hbm_multi_channel_base_sequence;
         // Each channel targets the same bank (worst case)
         for (int ch = 0; ch < num_channels; ch++) begin
             for (int i = 0; i < 10; i++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -273,7 +274,7 @@ class hbm_multi_channel_interleave_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = multi_channel_interleave_seq::type_id::create("seq");
+        seq = new();
         seq.num_channels = 32;
         seq.requests_per_channel = 5;
         seq.interleave_mode = 0;  // Round-robin
@@ -299,7 +300,7 @@ class hbm_channel_conflict_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = channel_conflict_seq::type_id::create("seq");
+        seq = new();
         seq.num_channels = 32;
         seq.target_bank = 0;
         seq.set_regmodel(env.regmodel);

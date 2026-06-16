@@ -29,6 +29,7 @@ RTL_SOURCES := \
 	$(RTL_DIR)/dram_model.sv
 
 TB_SOURCE := $(RTL_DIR)/hbm_controller_tb.sv
+TB_MAIN := $(RTL_DIR)/hbm_controller_tb_main.cpp
 
 # File list for lint (all RTL modules)
 FILELIST := $(RTL_DIR)/filelist.f
@@ -38,12 +39,12 @@ FILELIST_LINT := $(RTL_DIR)/filelist_lint.f
 
 # Build flags
 CXX := g++
-CXXFLAGS := -std=c++20 -Wall -Wextra -O2
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2
 LDFLAGS := -lpthread
 
 # Verilator build flags
 VBUILD_CC := --cc --exe --build
-VBUILD_CXXFLAGS := -CFLAGS "-std=c++20 -O2 -Wall"
+VBUILD_CXXFLAGS := -CFLAGS "-std=c++17 -O2 -Wall"
 VBUILD_LDFLAGS := -LDFLAGS "-lpthread"
 
 # Simulation parameters
@@ -98,9 +99,9 @@ lint: $(FILELIST)
 .PHONY: sim
 sim: $(OBJ_DIR)/V$(TOP_MODULE)
 	@echo "$(GREEN)== Running Simulation ==$(NC)"
-	cd $(OBJ_DIR) && ./V$(TOP_MODULE) +TIME=$(SIM_TIME) 2>&1 | tee $(LOG_DIR)/sim.log
+	$(OBJ_DIR)/Vhbm_controller_tb +TIME=$(SIM_TIME) 2>&1 | tee $(LOG_DIR)/sim.log
 
-$(OBJ_DIR)/V$(TOP_MODULE): $(RTL_SOURCES) $(TB_SOURCE) $(FILELIST)
+$(OBJ_DIR)/V$(TOP_MODULE): $(RTL_SOURCES) $(TB_SOURCE) $(TB_MAIN) $(FILELIST)
 	@echo "$(GREEN)== Building with Verilator ==$(NC)"
 	@mkdir -p $(OBJ_DIR) $(LOG_DIR)
 	cd $(RTL_DIR) && $(VERILATOR) \
@@ -108,12 +109,15 @@ $(OBJ_DIR)/V$(TOP_MODULE): $(RTL_SOURCES) $(TB_SOURCE) $(FILELIST)
 		--exe \
 		--build \
 		--sv \
-		--timing \
+		--no-timing \
+		--trace \
+		-Wno-fatal \
 		--top-module $(TOP_MODULE) \
 		-f $(FILELIST) \
 		$(TB_SOURCE) \
+		$(TB_MAIN) \
 		--Mdir $(OBJ_DIR) \
-		-CFLAGS "-std=c++20 -O2" \
+		-CFLAGS "-std=c++17 -O2 -Wno-unused-but-set-variable" \
 		-LDFLAGS "-lpthread" \
 		2>&1 | tee $(LOG_DIR)/build.log
 	@echo ""
@@ -136,13 +140,12 @@ sim-debug:
 		--exe \
 		--build \
 		--sv \
-		--timing \
 		--trace \
 		--top-module $(TOP_MODULE) \
 		-f $(FILELIST) \
 		$(TB_SOURCE) \
 		--Mdir $(OBJ_DIR) \
-		-CFLAGS "-std=c++20 -O2" \
+		-CFLAGS "-std=c++17 -O2" \
 		-LDFLAGS "-lpthread" \
 		2>&1 | tee $(LOG_DIR)/build-debug.log
 

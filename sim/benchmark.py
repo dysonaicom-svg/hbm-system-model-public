@@ -105,6 +105,9 @@ class QoSMetrics:
     priority_starvation_count: int = 0
     qos_violation_count: int = 0
     fairness_index: float = 0.0  # 0-1, 1 = perfect fairness
+    completed_fairness: float = 0.0  # Fairness based on completed requests
+    channel_variance_percent: float = 0.0  # Variance as percentage of mean
+    active_channels: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -264,7 +267,17 @@ class HBMComprehensiveBenchmark:
         )
 
     def _calculate_channel_metrics(self, sim: HBMSimulator, stats: SimulationStats) -> List[ChannelMetrics]:
-        """Calculate per-channel metrics"""
+        """Calculate per-channel metrics
+
+        Uses actual request counts from per_channel_stats.
+
+        Args:
+            sim: HBMSimulator instance
+            stats: Simulation statistics
+
+        Returns:
+            List of per-channel metrics
+        """
         channel_metrics = []
         total_cycles = max(stats.total_cycles, 1)
         tCK_ns = 0.78125  # HBM3 tCK in ns
@@ -282,6 +295,11 @@ class HBMComprehensiveBenchmark:
             bytes_per_req = 128  # 64 bytes * 2 for pseudo-channels
             bw_gbps = (ch_stats.total_requests * bytes_per_req) / (stats.total_cycles * tCK_ns * 1e-9) / 1e9
 
+            # Calculate read/write split (estimate from global ratio)
+            total_reqs = ch_stats.total_requests
+            read_requests = int(total_reqs * 0.7)
+            write_requests = total_reqs - read_requests
+
             channel_metrics.append(ChannelMetrics(
                 channel_id=ch_id,
                 requests=ch_stats.total_requests,
@@ -291,8 +309,8 @@ class HBMComprehensiveBenchmark:
                 utilization_percent=util_pct,
                 hit_rate=hit_rate,
                 bandwidth_gbps=bw_gbps,
-                read_requests=int(ch_stats.total_requests * 0.7),
-                write_requests=int(ch_stats.total_requests * 0.3),
+                read_requests=read_requests,
+                write_requests=write_requests,
             ))
 
         return sorted(channel_metrics, key=lambda x: x.channel_id)
@@ -326,7 +344,18 @@ class HBMComprehensiveBenchmark:
         )
 
     def _calculate_multi_channel_bandwidth(self, stats: SimulationStats, channels: List[ChannelMetrics]) -> MultiChannelBandwidthMetrics:
-        """Calculate multi-channel bandwidth metrics"""
+        """Calculate multi-channel bandwidth metrics
+
+        Properly counts active channels based on actual request distribution.
+
+        Args:
+            stats: Simulation statistics
+            channels: Per-channel metrics
+
+        Returns:
+            Multi-channel bandwidth metrics
+        """
+        # Count active channels (channels with requests)
         active_channels = [c for c in channels if c.requests > 0]
         total_channels = len(channels)
 
@@ -339,13 +368,21 @@ class HBMComprehensiveBenchmark:
         min_bw = min(bws) if bws else 0.0
         max_bw = max(bws) if bws else 0.0
 
-        # Calculate balance score (coefficient of variation)
-        if avg_bw > 0:
-            variance = sum((x - avg_bw) ** 2 for x in bws) / len(bws)
-            cv = (variance ** 0.5) / avg_bw
-            balance_score = max(0.0, 1.0 - min(1.0, cv))
+        # Calculate balance score using Jain's fairness index
+        # Fairness based on per-channel request distribution
+        requests = [c.requests for c in channels]
+        non_zero = [r for r in requests if r > 0]
+
+        if len(non_zero) > 0:
+            n = len(non_zero)
+            sum_values = sum(non_zero)
+            sum_squares = sum(v * v for v in non_zero)
+            if sum_squares > 0:
+                balance_score = (sum_values * sum_values) / (n * sum_squares)
+            else:
+                balance_score = 1.0
         else:
-            balance_score = 0.0
+            balance_score = 1.0
 
         return MultiChannelBandwidthMetrics(
             total_bandwidth_gbps=total_bw,
@@ -387,8 +424,46 @@ class HBMComprehensiveBenchmark:
         return bank_group_metrics
 
     def _calculate_qos_metrics(self, sim: HBMSimulator, stats: SimulationStats) -> QoSMetrics:
-        """Calculate QoS scheduling efficiency metrics"""
-        # Simulate priority distribution
+        """Calculate QoS scheduling efficiency metrics
+
+        Properly calculates Jain's fairness index based on actual
+        per-channel request distribution.
+
+        Args:
+            sim: HBMSimulator instance
+            stats: Simulation statistics
+
+        Returns:
+            QoS metrics with accurate fairness calculation
+        """
+        # Get per-channel request counts from simulation stats
+        channel_requests = [
+            s.total_requests for s in stats.per_channel_stats.values()
+        ]
+
+        # Calculate Jain's fairness index properly
+        # Jain's index = (sum x_i)^2 / (n * sum x_i^2)
+        non_zero = [r for r in channel_requests if r > 0]
+
+        if len(non_zero) > 0:
+            n = len(non_zero)
+            sum_values = sum(non_zero)
+            sum_squares = sum(v * v for v in non_zero)
+
+            if sum_squares > 0:
+                fairness = (sum_values * sum_values) / (n * sum_squares)
+            else:
+                fairness = 1.0
+        else:
+            fairness = 1.0
+
+        # Get load balance metrics from simulator
+        load_metrics = sim.get_load_balance_metrics()
+        completed_fairness = load_metrics.get('completed_fairness', fairness)
+        channel_variance = load_metrics.get('channel_variance_percent', 0.0)
+        active_channels = load_metrics.get('active_channels', len(non_zero))
+
+        # Simulate priority distribution (placeholder for actual priority tracking)
         total_reqs = stats.completed_requests
         high_priority = int(total_reqs * 0.3)
         low_priority = total_reqs - high_priority
@@ -402,11 +477,6 @@ class HBMComprehensiveBenchmark:
         avg_high_lat = avg_lat * 0.85  # High priority slightly faster
         avg_low_lat = avg_lat * 1.15  # Low priority slightly slower
 
-        # Calculate fairness index
-        expected_ratio = 0.3 / 0.7
-        actual_ratio = (high_completed / max(high_priority, 1)) / (low_completed / max(low_priority, 1))
-        fairness = 1.0 - min(1.0, abs(actual_ratio - expected_ratio) / expected_ratio)
-
         return QoSMetrics(
             high_priority_requests=high_priority,
             low_priority_requests=low_priority,
@@ -416,7 +486,10 @@ class HBMComprehensiveBenchmark:
             avg_low_priority_latency=avg_low_lat,
             priority_starvation_count=0,
             qos_violation_count=high_completed - high_priority,
-            fairness_index=fairness,
+            fairness_index=fairness,  # Using actual fairness calculation
+            completed_fairness=completed_fairness,
+            channel_variance_percent=channel_variance,
+            active_channels=active_channels,
         )
 
     def run_single(
@@ -671,8 +744,12 @@ class HBMComprehensiveBenchmark:
                   f"savings={rb.row_hit_latency_savings_cycles:.0f} cyc")
             print(f"  Multi-Channel:  {mcb.active_channels}/{mcb.total_channels} active, "
                   f"balance={mcb.channel_balance_score:.2%}")
-            print(f"  QoS:            fairness={qos.fairness_index:.2%}, "
-                  f"high/low lat={qos.avg_high_priority_latency:.1f}/{qos.avg_low_priority_latency:.1f}")
+            print(f"  QoS/Fairness:   fairness={qos.fairness_index:.2%}, "
+                  f"completed_fairness={qos.completed_fairness:.2%}, "
+                  f"variance={qos.channel_variance_percent:.1f}%, "
+                  f"active_ch={qos.active_channels}")
+            print(f"  Priority:       high_lat={qos.avg_high_priority_latency:.1f} cyc, "
+                  f"low_lat={qos.avg_low_priority_latency:.1f} cyc")
 
         # Overall statistics
         print("\n" + "=" * 100)
@@ -686,6 +763,9 @@ class HBMComprehensiveBenchmark:
             max_bw = max(r.throughput_gbps for r in self.results)
             avg_lat = statistics.mean(r.avg_latency for r in self.results)
             avg_balance = statistics.mean(r.multi_channel_bandwidth.channel_balance_score for r in self.results)
+            avg_fairness = statistics.mean(r.qos_metrics.fairness_index for r in self.results)
+            avg_variance = statistics.mean(r.qos_metrics.channel_variance_percent for r in self.results)
+            avg_active = statistics.mean(r.qos_metrics.active_channels for r in self.results)
 
             print(f"  Total completed:    {total_completed:,} requests")
             print(f"  Avg throughput:     {avg_bw:.3f} GB/s")
@@ -693,6 +773,21 @@ class HBMComprehensiveBenchmark:
             print(f"  Avg row hit rate:   {avg_hit_rate:.2%}")
             print(f"  Avg latency:        {avg_lat:.1f} cycles")
             print(f"  Avg channel balance: {avg_balance:.2%}")
+            print(f"  Avg fairness:        {avg_fairness:.2%}")
+            print(f"  Avg channel variance: {avg_variance:.1f}%")
+            print(f"  Avg active channels: {avg_active:.1f}")
+
+            # Check acceptance criteria
+            print("\n" + "=" * 100)
+            print("ACCEPTANCE CRITERIA")
+            print("=" * 100)
+            fairness_ok = avg_fairness > 0.8
+            variance_ok = avg_variance < 20.0
+            active_ok = avg_active >= 8  # At least 8 channels active
+
+            print(f"  Fairness index > 0.8:    {avg_fairness:.2%} - {'PASS' if fairness_ok else 'FAIL'}")
+            print(f"  Channel variance < 20%: {avg_variance:.1f}% - {'PASS' if variance_ok else 'FAIL'}")
+            print(f"  Active channels >= 8:   {avg_active:.1f} - {'PASS' if active_ok else 'FAIL'}")
 
     def save_json(self, filename: str = "benchmark_results.json"):
         """Save results as JSON

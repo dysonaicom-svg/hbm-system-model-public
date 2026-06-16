@@ -260,17 +260,23 @@ class CommandSequencer:
         return bank_state.open_row == request.row_id
 
     def calculate_turnaround_penalty(self, new_command: DRAMCommand,
-                                     bank_group_id: int = 0) -> int:
+                                     bank_group_id: int = 0,
+                                     channel_id: int = None) -> int:
         """Calculate turnaround penalty between commands
 
         Args:
             new_command: The new command to be issued
             bank_group_id: Bank group ID for the new command (for BG-aware timing)
+            channel_id: Channel ID for cross-channel optimization (no penalty for different channels)
 
         Returns:
             Number of cycles penalty (0 if no penalty)
         """
         if self.last_command is None:
+            return 0
+
+        # No turnaround penalty for different channels (parallel access)
+        if channel_id is not None and self.last_bank != channel_id:
             return 0
 
         # Only RD and WR commands have turnaround penalties
@@ -358,9 +364,9 @@ class CommandSequencer:
         # RD or WR command
         rd_wr_command = DRAMCommand.RD if request.is_read else DRAMCommand.WR
 
-        # Calculate turnaround penalty with bank group awareness
+        # Calculate turnaround penalty with bank group awareness and cross-channel optimization
         turnaround = self.calculate_turnaround_penalty(
-            rd_wr_command, request.bank_group_id
+            rd_wr_command, request.bank_group_id, request.channel_id
         )
         current_cycle += turnaround
 
@@ -437,9 +443,9 @@ class CommandSequencer:
         # RD or WR command (no ACT needed for row hit)
         rd_wr_command = DRAMCommand.RD if request.is_read else DRAMCommand.WR
 
-        # Calculate turnaround penalty with bank group awareness
+        # Calculate turnaround penalty with bank group awareness and cross-channel optimization
         turnaround = self.calculate_turnaround_penalty(
-            rd_wr_command, request.bank_group_id
+            rd_wr_command, request.bank_group_id, request.channel_id
         )
         current_cycle += turnaround
 

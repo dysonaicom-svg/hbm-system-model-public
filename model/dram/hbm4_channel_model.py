@@ -888,6 +888,24 @@ class HBM4Channel:
             if pc.state in [PseudoChannelState.READING, PseudoChannelState.WRITING]:
                 pc.state = PseudoChannelState.ACTIVE
 
+    def reset(self):
+        """Reset channel to initial state"""
+        self.current_cycle = 0
+        self.state = HBM4ChannelState.IDLE
+        # Reset all pseudo-channels
+        for pc in self.pseudo_channels:
+            pc.state = PseudoChannelState.IDLE
+            pc.current_cycle = 0
+            # Reset all banks
+            for bank in pc.banks:
+                bank.bank.state = BankStateEnum.IDLE
+                bank.bank.open_row = -1
+                bank.bank.activate_time = 0
+                bank.bank.precharge_time = 0
+            # Reset bank groups
+            for bg in pc.bank_groups:
+                bg.last_act_cycle = -1
+
     def get_bank(self, pseudo_channel: int, bank: int) -> Optional[BankStateMachine]:
         """Get a specific bank state machine
 
@@ -1206,6 +1224,11 @@ class HBM4ChannelArray:
         """Advance all channels by one cycle"""
         for ch in self.channels:
             ch.tick()
+
+    @property
+    def num_channels(self) -> int:
+        """Number of channels in the array"""
+        return len(self.channels)
 
     @property
     def total_bandwidth_gbs(self) -> float:

@@ -78,7 +78,7 @@ class refresh_conflict_seq extends hbm_refresh_base_sequence;
         // Interleave refresh commands with traffic
         for (int i = 0; i < num_traffic_requests; i++) begin
             // Send traffic request
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == (i % 16);
@@ -203,7 +203,7 @@ class per_bank_refresh_seq extends hbm_refresh_base_sequence;
 
             // Refresh each bank individually
             for (int bank = 0; bank < num_banks; bank++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -255,7 +255,7 @@ class refresh_during_active_seq extends hbm_refresh_base_sequence;
 
         // Open rows in all banks
         for (int bank = 0; bank < num_banks; bank++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             if (!req.randomize() with {
@@ -278,7 +278,7 @@ class refresh_during_active_seq extends hbm_refresh_base_sequence;
                   UVM_MEDIUM)
 
         // Issue full refresh
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 0;
@@ -292,7 +292,7 @@ class refresh_during_active_seq extends hbm_refresh_base_sequence;
 
         // Verify banks are still accessible after refresh
         for (int bank = 0; bank < num_banks; bank++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             if (!req.randomize() with {
@@ -338,7 +338,7 @@ class auto_refresh_seq extends hbm_refresh_base_sequence;
         // Generate continuous traffic
         for (int i = 0; i < num_traffic_cycles; i++) begin
             if (i % 1000 == 0) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -391,7 +391,7 @@ class hbm_refresh_conflict_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = refresh_conflict_seq::type_id::create("seq");
+        seq = refresh_conflictnew("seq");
         seq.num_traffic_requests = 100;
         seq.num_refresh_commands = 5;
         seq.set_regmodel(env.regmodel);
@@ -416,7 +416,7 @@ class hbm_refresh_timing_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = refresh_timing_violation_seq::type_id::create("seq");
+        seq = refresh_timing_violationnew("seq");
         seq.num_refresh = 10;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -440,7 +440,7 @@ class hbm_per_bank_refresh_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = per_bank_refresh_seq::type_id::create("seq");
+        seq = per_bank_refreshnew("seq");
         seq.num_banks = 16;
         seq.num_bank_refresh_cycles = 3;
         seq.set_regmodel(env.regmodel);
@@ -465,7 +465,7 @@ class hbm_refresh_during_active_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = refresh_during_active_seq::type_id::create("seq");
+        seq = refresh_during_activenew("seq");
         seq.num_banks = 16;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -489,7 +489,7 @@ class hbm_auto_refresh_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = auto_refresh_seq::type_id::create("seq");
+        seq = auto_refreshnew("seq");
         seq.num_traffic_cycles = 50000;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);

@@ -25,21 +25,12 @@ typedef enum logic [2:0] {
 class hbm_qos_transaction extends hbm_transaction;
     `uvm_object_utils(hbm_qos_transaction)
 
-    rand qos_priority_t priority;
+    rand qos_priority_t qos_prio;
     rand bit [7:0] deadline;      // Relative deadline in cycles
     rand bit [15:0] flow_id;     // Flow identifier
 
     constraint deadline_range {
         deadline inside {[1:1000]};
-    }
-
-    constraint priority_distribution {
-        priority dist {
-            PRIO_CRITICAL := 5,
-            PRIO_HIGH := 15,
-            PRIO_NORMAL := 60,
-            PRIO_LOW := 20
-        };
     }
 
     function new(string name = "hbm_qos_transaction");
@@ -49,8 +40,8 @@ class hbm_qos_transaction extends hbm_transaction;
     function string convert2string();
         return {
             super.convert2string(),
-            $sformatf(" prio=%s deadline=%0d flow_id=%h",
-                      priority.name(), deadline, flow_id)
+            $sformatf(" qos_prio=%s deadline=%0d flow_id=%h",
+                      qos_prio.name(), deadline, flow_id)
         };
     endfunction
 
@@ -58,7 +49,7 @@ class hbm_qos_transaction extends hbm_transaction;
         hbm_qos_transaction tr;
         super.do_copy(rhs);
         if ($cast(tr, rhs)) begin
-            priority = tr.priority;
+            qos_prio = tr.qos_prio;
             deadline = tr.deadline;
             flow_id = tr.flow_id;
         end
@@ -71,16 +62,16 @@ endclass
 class hbm_qos_base_sequence extends hbm_base_sequence;
     `uvm_object_utils(hbm_qos_base_sequence)
 
-    int high_priority_requests = 0;
-    int low_priority_requests = 0;
+    int high_prio_requests = 0;
+    int low_prio_requests = 0;
 
     function new(string name = "hbm_qos_base_sequence");
         super.new(name);
     endfunction
 
     function void set_priorities(int high, int low);
-        high_priority_requests = high;
-        low_priority_requests = low;
+        high_prio_requests = high;
+        low_prio_requests = low;
     endfunction
 endclass
 
@@ -88,14 +79,14 @@ endclass
 // Priority Inheritance Test Sequence
 // Tests that high-priority requests are served first
 // ------------------------------------------------------------
-class priority_inheritance_seq extends hbm_qos_base_sequence;
-    `uvm_object_utils(priority_inheritance_seq)
+class qos_inheritance_seq extends hbm_qos_base_sequence;
+    `uvm_object_utils(qos_inheritance_seq)
 
-    int num_low_priority = 50;
-    int num_high_priority = 10;
+    int num_low_prio = 50;
+    int num_high_prio = 10;
     int interleave_count = 10;
 
-    function new(string name = "priority_inheritance_seq");
+    function new(string name = "qos_inheritance_seq");
         super.new(name);
     endfunction
 
@@ -105,8 +96,8 @@ class priority_inheritance_seq extends hbm_qos_base_sequence;
         `uvm_info(get_name(), "Starting priority inheritance test", UVM_MEDIUM)
 
         // Send multiple low-priority requests first
-        for (int i = 0; i < num_low_priority; i++) begin
-            req = hbm_transaction::type_id::create("req");
+        for (int i = 0; i < num_low_prio; i++) begin
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == (i % 16);
@@ -116,7 +107,7 @@ class priority_inheritance_seq extends hbm_qos_base_sequence;
                 `uvm_error(get_name(), "Randomization failed")
             end
             req.transaction_id = get_next_id();
-            req.req_priority = 1'b0;  // Low priority
+            req.req_qos_prio = 1'b0;  // Low priority
             `uvm_info(get_name(), $sformatf("Low priority request %0d", i), UVM_HIGH)
             finish_item(req);
             #5;
@@ -125,7 +116,7 @@ class priority_inheritance_seq extends hbm_qos_base_sequence;
         // Send high-priority requests interspersed with low-priority
         for (int i = 0; i < interleave_count; i++) begin
             // Low priority request
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == (i + 100);
@@ -133,12 +124,12 @@ class priority_inheritance_seq extends hbm_qos_base_sequence;
                 `uvm_error(get_name(), "Low priority randomization failed")
             end
             req.transaction_id = get_next_id();
-            req.req_priority = 1'b0;
+            req.req_qos_prio = 1'b0;
             finish_item(req);
             #5;
 
             // High priority request (should be served first)
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == (i + 200);
@@ -146,15 +137,15 @@ class priority_inheritance_seq extends hbm_qos_base_sequence;
                 `uvm_error(get_name(), "High priority randomization failed")
             end
             req.transaction_id = get_next_id();
-            req.req_priority = 1'b1;  // High priority
+            req.req_qos_prio = 1'b1;  // High priority
             `uvm_info(get_name(), $sformatf("High priority request %0d", i), UVM_MEDIUM)
             finish_item(req);
             #5;
         end
 
         // Send remaining low-priority requests
-        for (int i = 0; i < (num_low_priority - interleave_count); i++) begin
-            req = hbm_transaction::type_id::create("req");
+        for (int i = 0; i < (num_low_prio - interleave_count); i++) begin
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == (i + 300);
@@ -162,7 +153,7 @@ class priority_inheritance_seq extends hbm_qos_base_sequence;
                 `uvm_error(get_name(), "Randomization failed")
             end
             req.transaction_id = get_next_id();
-            req.req_priority = 1'b0;
+            req.req_qos_prio = 1'b0;
             finish_item(req);
             #5;
         end
@@ -178,8 +169,8 @@ endclass
 class starvation_prevention_seq extends hbm_qos_base_sequence;
     `uvm_object_utils(starvation_prevention_seq)
 
-    int num_high_priority = 100;
-    int num_low_priority = 10;
+    int num_high_prio = 100;
+    int num_low_prio = 10;
     int max_wait_cycles = 500;
 
     function new(string name = "starvation_prevention_seq");
@@ -188,16 +179,16 @@ class starvation_prevention_seq extends hbm_qos_base_sequence;
 
     task body();
         hbm_transaction req;
-        int low_priority_started;
-        int low_priority_completed;
-        int high_priority_started;
-        int high_priority_completed;
+        int low_prio_started;
+        int low_prio_completed;
+        int high_prio_started;
+        int high_prio_completed;
 
         `uvm_info(get_name(), "Starting starvation prevention test", UVM_MEDIUM)
 
         // Phase 1: Start low-priority requests
-        for (int i = 0; i < num_low_priority; i++) begin
-            req = hbm_transaction::type_id::create("req");
+        for (int i = 0; i < num_low_prio; i++) begin
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == i;
@@ -206,18 +197,18 @@ class starvation_prevention_seq extends hbm_qos_base_sequence;
                 `uvm_error(get_name(), "Low priority randomization failed")
             end
             req.transaction_id = get_next_id();
-            req.req_priority = 1'b0;
+            req.req_qos_prio = 1'b0;
             `uvm_info(get_name(), $sformatf("Started low-priority request %0d", i), UVM_HIGH)
             finish_item(req);
-            low_priority_started++;
+            low_prio_started++;
             #10;
         end
 
         // Phase 2: Continuous high-priority traffic
         fork
         begin
-            for (int i = 0; i < num_high_priority; i++) begin
-                req = hbm_transaction::type_id::create("req");
+            for (int i = 0; i < num_high_prio; i++) begin
+                req = new("req");
                 start_item(req);
                 if (!req.randomize() with {
                     addr_bank == (i % 16);
@@ -225,17 +216,17 @@ class starvation_prevention_seq extends hbm_qos_base_sequence;
                     `uvm_error(get_name(), "High priority randomization failed")
                 end
                 req.transaction_id = get_next_id();
-                req.req_priority = 1'b1;
+                req.req_qos_prio = 1'b1;
                 finish_item(req);
-                high_priority_started++;
+                high_prio_started++;
                 #5;
             end
         end
         join
 
         `uvm_info(get_name(), $sformatf("Starvation test: started=%0d high=%0d low=%0d",
-                                         high_priority_started, low_priority_started,
-                                         low_priority_completed), UVM_MEDIUM)
+                                         high_prio_started, low_prio_started,
+                                         low_prio_completed), UVM_MEDIUM)
     endtask
 endclass
 
@@ -258,15 +249,16 @@ class deadline_miss_seq extends hbm_qos_base_sequence;
         hbm_transaction req;
         int deadline_misses = 0;
         int deadline_hits = 0;
+        int is_short_deadline = 0;
 
         `uvm_info(get_name(), "Starting deadline miss test", UVM_MEDIUM)
 
         for (int i = 0; i < num_requests; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             // Alternate between short and long deadlines
-            bit is_short_deadline = (i % 2 == 0);
+            is_short_deadline = (i % 2 == 0);
 
             if (!req.randomize() with {
                 addr_bank == i;
@@ -276,7 +268,7 @@ class deadline_miss_seq extends hbm_qos_base_sequence;
             req.transaction_id = get_next_id();
 
             // Set priority based on deadline
-            req.req_priority = is_short_deadline ? 1'b1 : 1'b0;
+            req.req_qos_prio = is_short_deadline ? 1'b1 : 1'b0;
 
             `uvm_info(get_name(), $sformatf("Request %0d: deadline=%0d cycles",
                                              i, is_short_deadline ? short_deadline : long_deadline),
@@ -317,16 +309,18 @@ class mixed_traffic_qos_seq extends hbm_qos_base_sequence;
         int high_prio_count = 0;
         int normal_prio_count = 0;
         int low_prio_count = 0;
+        int flow_id;
+        int is_high_prio;
 
         `uvm_info(get_name(), "Starting mixed traffic QoS test", UVM_MEDIUM)
 
         for (int i = 0; i < total_requests; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             // Determine priority based on address pattern (simulated flow)
-            bit [7:0] flow_id = i[7:0];
-            bit is_high_priority = (flow_id < (traffic_mix_ratio * 255 / 100));
+            flow_id = i[7:0];
+            is_high_prio = (flow_id < (traffic_mix_ratio * 255 / 100));
 
             if (!req.randomize() with {
                 addr_bank == (i % 16);
@@ -335,16 +329,16 @@ class mixed_traffic_qos_seq extends hbm_qos_base_sequence;
                 `uvm_error(get_name(), "Randomization failed")
             end
             req.transaction_id = get_next_id();
-            req.req_priority = is_high_priority;
+            req.req_qos_prio = is_high_prio;
 
-            if (is_high_priority) begin
+            if (is_high_prio) begin
                 high_prio_count++;
             end else begin
                 normal_prio_count++;
             end
 
             `uvm_info(get_name(), $sformatf("Request %0d: flow=%h prio=%b",
-                                             i, flow_id, req.req_priority), UVM_DEBUG)
+                                             i, flow_id, req.req_qos_prio), UVM_DEBUG)
             finish_item(req);
             #5;
         end
@@ -366,13 +360,13 @@ class hbm_qos_priority_test extends hbm_base_test;
     endfunction
 
     task run_phase(uvm_phase phase);
-        priority_inheritance_seq seq;
+        qos_inheritance_seq seq;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = priority_inheritance_seq::type_id::create("seq");
-        seq.num_low_priority = 30;
-        seq.num_high_priority = 10;
+        seq = qos_inheritancenew("seq");
+        seq.num_low_prio = 30;
+        seq.num_high_prio = 10;
         seq.interleave_count = 5;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -396,9 +390,9 @@ class hbm_qos_starvation_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = starvation_prevention_seq::type_id::create("seq");
-        seq.num_high_priority = 50;
-        seq.num_low_priority = 5;
+        seq = starvation_preventionnew("seq");
+        seq.num_high_prio = 50;
+        seq.num_low_prio = 5;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 
@@ -421,7 +415,7 @@ class hbm_qos_deadline_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = deadline_miss_seq::type_id::create("seq");
+        seq = deadline_missnew("seq");
         seq.num_requests = 30;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -445,7 +439,7 @@ class hbm_qos_mixed_traffic_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = mixed_traffic_qos_seq::type_id::create("seq");
+        seq = mixed_traffic_qosnew("seq");
         seq.total_requests = 100;
         seq.traffic_mix_ratio = 30;  // 30% high-priority
         seq.set_regmodel(env.regmodel);

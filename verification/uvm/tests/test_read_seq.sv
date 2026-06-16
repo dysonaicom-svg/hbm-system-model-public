@@ -23,7 +23,7 @@ class test_read_seq extends hbm_base_sequence;
         `uvm_info(get_name(), $sformatf("Starting READ sequence with %0d transactions", repeat_count), UVM_MEDIUM)
 
         repeat (repeat_count) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             if (!req.randomize() with {

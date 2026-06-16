@@ -80,7 +80,7 @@ class bank_group_conflict_seq extends hbm_bank_contention_base_sequence;
                 bit [3:0] bank_in_group = (bg * 2) + (i % 2);
                 bit [15:0] row = i / 2;
 
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -141,7 +141,7 @@ class bank_activation_conflict_seq extends hbm_bank_contention_base_sequence;
 
         for (int bank = 0; bank < banks_to_test; bank++) begin
             for (int act = 0; act < activations_per_bank; act++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -209,7 +209,7 @@ class bank_round_robin_seq extends hbm_bank_contention_base_sequence;
         // Generate interleaved requests to all banks
         for (int round = 0; round < num_requests_per_bank; round++) begin
             for (int bank = 0; bank < banks_to_test; bank++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -270,7 +270,7 @@ class bank_open_close_seq extends hbm_bank_contention_base_sequence;
 
         for (int bank = 0; bank < num_banks; bank++) begin
             for (int op = 0; op < operations_per_bank; op++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {
@@ -330,7 +330,7 @@ class cross_bank_scheduling_seq extends hbm_bank_contention_base_sequence;
         `uvm_info(get_name(), "Starting cross-bank scheduling test", UVM_MEDIUM)
 
         for (int i = 0; i < num_requests; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             if (!req.randomize() with {
@@ -385,12 +385,13 @@ class bank_contention_stress_seq extends hbm_bank_contention_base_sequence;
         int bank_busy_count = 0;
         int total_wait_cycles = 0;
         int max_wait_cycles = 0;
+        int wait_cycles = 0;
 
         `uvm_info(get_name(), "Starting bank contention stress test", UVM_MEDIUM)
 
         // Generate high-stress traffic pattern
         for (int i = 0; i < total_requests; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             // Random bank and row selection for maximum contention
@@ -405,7 +406,7 @@ class bank_contention_stress_seq extends hbm_bank_contention_base_sequence;
             finish_item(req);
 
             // Track simulated wait times
-            int wait_cycles = $urandom() % 100;
+            wait_cycles = $urandom() % 100;
             total_wait_cycles += wait_cycles;
             if (wait_cycles > max_wait_cycles) begin
                 max_wait_cycles = wait_cycles;
@@ -440,7 +441,7 @@ class hbm_bank_group_conflict_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = bank_group_conflict_seq::type_id::create("seq");
+        seq = bank_group_conflictnew("seq");
         seq.requests_per_bank_group = 15;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -464,7 +465,7 @@ class hbm_bank_activation_conflict_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = bank_activation_conflict_seq::type_id::create("seq");
+        seq = bank_activation_conflictnew("seq");
         seq.banks_to_test = 8;
         seq.activations_per_bank = 3;
         seq.set_regmodel(env.regmodel);
@@ -489,7 +490,7 @@ class hbm_bank_round_robin_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = bank_round_robin_seq::type_id::create("seq");
+        seq = bank_round_robinnew("seq");
         seq.num_requests_per_bank = 8;
         seq.banks_to_test = 16;
         seq.set_regmodel(env.regmodel);
@@ -514,7 +515,7 @@ class hbm_bank_open_close_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = bank_open_close_seq::type_id::create("seq");
+        seq = bank_open_closenew("seq");
         seq.num_banks = 16;
         seq.operations_per_bank = 8;
         seq.set_regmodel(env.regmodel);
@@ -539,7 +540,7 @@ class hbm_cross_bank_scheduling_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = cross_bank_scheduling_seq::type_id::create("seq");
+        seq = cross_bank_schedulingnew("seq");
         seq.num_requests = 100;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -563,7 +564,7 @@ class hbm_bank_contention_stress_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = bank_contention_stress_seq::type_id::create("seq");
+        seq = bank_contention_stressnew("seq");
         seq.total_requests = 200;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);

@@ -1,4 +1,5 @@
 # HBM System Model Dependencies
+# Core dependencies - required for basic functionality
 
 # Core
 numpy>=1.21.0
@@ -11,17 +12,12 @@ pyyaml>=6.0
 pytest>=7.0.0
 pytest-cov>=3.0.0
 
-# Visualization (optional)
+# Visualization
 matplotlib>=3.5.0
 plotly>=5.0.0
 
 # Logging
 python-json-logger>=2.0.0
 
-# For UVM integration
-systemverilog-parser>=0.9.0  # Optional
-
-# Development
-black>=22.0.0
-pylint>=2.14.0
-mypy>=0.960
+# Terminal output (optional - for colored output)
+colorama>=0.4.0

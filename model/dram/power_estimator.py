@@ -1037,25 +1037,167 @@ POWER_PRESETS = {
 }
 
 
+# =============================================================================
+# HBM3 Power Presets (JEDEC JESD238)
+# =============================================================================
+# HBM3 specifications at 6.4 Gbps (tCK = 156.25 ps)
+# Based on JEDEC JESD238 HBM3 specification
+# Active power: ~120mW/channel
+# Read power: ~80mW/channel
+# Write power: ~95mW/channel
+# Refresh power: ~150mW/channel
+# Idle power: ~25mW/channel
+
+HBM3_POWER_PRESETS = {
+    "hbm3_64": PowerParameters(  # 6.4 Gbps - HBM3 baseline
+        # Active Power (per channel)
+        active_power_ma=109.0,   # ~120mW at 1.1V
+        read_power_ma=73.0,      # ~80mW at 1.1V
+        write_power_ma=86.0,     # ~95mW at 1.1V
+
+        # Idle/Standby Power (per channel)
+        idle_power_ma=23.0,      # ~25mW at 1.1V
+        standby_power_ma=10.0,   # CKE low standby
+
+        # Refresh Power
+        refresh_power_ma=136.0,  # ~150mW at 1.1V
+
+        # Self-Refresh Power
+        self_refresh_power_ma=5.0,  # Self-refresh mode
+
+        # Power-Down Power
+        power_down_power_ma=3.0,    # Power-down mode
+
+        # Voltage Rails
+        vddq_voltage=1.1,           # VDDQ voltage (V)
+        vddq2_voltage=1.1,          # VDDQ2 voltage (V)
+        vpp_voltage=2.5,            # VPP voltage (V)
+
+        # Per-Command Energy (pJ)
+        # Based on HBM3 timing parameters
+        act_energy_pj=180.0,        # Activate energy (pJ)
+        pre_energy_pj=50.0,         # Precharge energy (pJ)
+        prea_energy_pj=85.0,        # Precharge all energy (pJ)
+        rd_energy_pj=120.0,         # Read energy (pJ per burst)
+        wr_energy_pj=135.0,         # Write energy (pJ per burst)
+        rda_energy_pj=145.0,        # Read with auto-precharge
+        wra_energy_pj=160.0,        # Write with auto-precharge
+        refab_energy_pj=320.0,      # All-bank refresh (pJ)
+        refsb_energy_pj=45.0,       # Per-bank refresh (pJ)
+        rfmab_energy_pj=350.0,      # Row flash refresh all-bank
+        rfmsb_energy_pj=55.0,       # Row flash refresh per-bank
+        mrw_energy_pj=80.0,         # Mode register write
+        mrr_energy_pj=70.0,         # Mode register read
+        pdn_entry_energy_pj=30.0,   # Power-down entry
+        pdn_exit_energy_pj=50.0,    # Power-down exit
+        sref_entry_energy_pj=40.0,  # Self-refresh entry
+        sref_exit_energy_pj=60.0,   # Self-refresh exit
+    ),
+    "hbm3_8g": PowerParameters(  # 8.0 Gbps - HBM3 high speed
+        active_power_ma=127.0,
+        read_power_ma=85.0,
+        write_power_ma=100.0,
+        idle_power_ma=27.0,
+        standby_power_ma=12.0,
+        refresh_power_ma=158.0,
+        self_refresh_power_ma=6.0,
+        power_down_power_ma=4.0,
+        vddq_voltage=1.2,
+        act_energy_pj=216.0,
+        pre_energy_pj=60.0,
+        rd_energy_pj=144.0,
+        wr_energy_pj=162.0,
+    ),
+    "hbm3_96": PowerParameters(  # 9.6 Gbps - HBM3 extended rate
+        active_power_ma=145.0,
+        read_power_ma=97.0,
+        write_power_ma=115.0,
+        idle_power_ma=31.0,
+        standby_power_ma=14.0,
+        refresh_power_ma=180.0,
+        self_refresh_power_ma=7.0,
+        power_down_power_ma=5.0,
+        vddq_voltage=1.25,
+        act_energy_pj=252.0,
+        pre_energy_pj=70.0,
+        rd_energy_pj=168.0,
+        wr_energy_pj=189.0,
+    ),
+}
+
+# Combined power presets
+# HBM3_POWER_PRESETS keys already have "hbm3_" prefix, so merge directly
+ALL_POWER_PRESETS = {
+    **POWER_PRESETS,
+    **HBM3_POWER_PRESETS
+}
+
+
 def create_power_estimator(speed_grade: str = "8Gbps", num_channels: int = 32) -> HBM4PowerEstimator:
     """Create power estimator with speed grade parameters
 
     Args:
-        speed_grade: One of "8Gbps", "12Gbps", "16Gbps"
-        num_channels: Number of channels (default 32 for HBM4)
+        speed_grade: One of "8Gbps", "12Gbps", "16Gbps", or HBM3 presets
+        num_channels: Number of channels (default 32 for HBM4, 16 for HBM3)
 
     Returns:
         HBM4PowerEstimator configured for speed grade
     """
-    params = POWER_PRESETS.get(speed_grade, POWER_PRESETS["8Gbps"])
+    params = ALL_POWER_PRESETS.get(speed_grade, ALL_POWER_PRESETS["8Gbps"])
 
     # Set data rate based on speed grade
     data_rates = {
         "8Gbps": 8.0,
         "12Gbps": 12.0,
         "16Gbps": 16.0,
+        "hbm3_64": 6.4,
+        "hbm3_8g": 8.0,
+        "hbm3_96": 9.6,
     }
     data_rate = data_rates.get(speed_grade, 8.0)
+
+    return HBM4PowerEstimator(
+        num_channels=num_channels,
+        params=params,
+        data_rate_gtps=data_rate,
+    )
+
+
+def create_hbm3_power_estimator(
+    speed_grade: str = "hbm3_64",
+    num_channels: int = 16,
+    process_corner: str = "TT",
+    temperature_c: float = 45.0,
+) -> HBM4PowerEstimator:
+    """Create HBM3 power estimator
+
+    Args:
+        speed_grade: One of "hbm3_64", "hbm3_8g", "hbm3_96"
+        num_channels: Number of channels (HBM3 has 16 channels per stack)
+        process_corner: Process corner ("SS", "TT", "FF")
+        temperature_c: Junction temperature in Celsius
+
+    Returns:
+        HBM4PowerEstimator configured for HBM3
+    """
+    params = HBM3_POWER_PRESETS.get(speed_grade, HBM3_POWER_PRESETS["hbm3_64"])
+
+    # Update process corner
+    corner_map = {
+        "SS": ProcessCorner.SS,
+        "TT": ProcessCorner.TT,
+        "FF": ProcessCorner.FF,
+    }
+    params.process_corner = corner_map.get(process_corner, ProcessCorner.TT)
+    params.temperature_c = temperature_c
+
+    # Set data rate based on speed grade
+    data_rates = {
+        "hbm3_64": 6.4,
+        "hbm3_8g": 8.0,
+        "hbm3_96": 9.6,
+    }
+    data_rate = data_rates.get(speed_grade, 6.4)
 
     return HBM4PowerEstimator(
         num_channels=num_channels,
@@ -1073,7 +1215,7 @@ def create_power_estimator_with_config(
     """Create power estimator with custom configuration
 
     Args:
-        speed_grade: One of "8Gbps", "12Gbps", "16Gbps"
+        speed_grade: One of "8Gbps", "12Gbps", "16Gbps", or HBM3 presets
         num_channels: Number of channels
         process_corner: Process corner ("SS", "TT", "FF")
         temperature_c: Junction temperature in Celsius
@@ -1081,7 +1223,16 @@ def create_power_estimator_with_config(
     Returns:
         HBM4PowerEstimator configured for specified parameters
     """
-    params = POWER_PRESETS.get(speed_grade, POWER_PRESETS["8Gbps"])
+    # Check if it's an HBM3 preset
+    if speed_grade in HBM3_POWER_PRESETS:
+        return create_hbm3_power_estimator(
+            speed_grade=speed_grade,
+            num_channels=num_channels,
+            process_corner=process_corner,
+            temperature_c=temperature_c,
+        )
+
+    params = ALL_POWER_PRESETS.get(speed_grade, ALL_POWER_PRESETS["8Gbps"])
 
     # Update process corner
     corner_map = {
@@ -1097,6 +1248,9 @@ def create_power_estimator_with_config(
         "8Gbps": 8.0,
         "12Gbps": 12.0,
         "16Gbps": 16.0,
+        "hbm3_64": 6.4,
+        "hbm3_8g": 8.0,
+        "hbm3_96": 9.6,
     }
     data_rate = data_rates.get(speed_grade, 8.0)
 
@@ -1105,3 +1259,68 @@ def create_power_estimator_with_config(
         params=params,
         data_rate_gtps=data_rate,
     )
+
+
+def create_power_estimator_for_version(
+    hbm_version: str = "hbm3",
+    speed_grade: Optional[str] = None,
+    process_corner: str = "TT",
+    temperature_c: float = 45.0,
+) -> HBM4PowerEstimator:
+    """Create power estimator for specific HBM version
+
+    Args:
+        hbm_version: "hbm2", "hbm3", or "hbm4"
+        speed_grade: Optional speed grade within version
+        process_corner: Process corner ("SS", "TT", "FF")
+        temperature_c: Junction temperature in Celsius
+
+    Returns:
+        Configured HBM4PowerEstimator
+    """
+    version = hbm_version.lower()
+
+    if version == "hbm2":
+        # HBM2 at 1.2 Gbps
+        return HBM4PowerEstimator(
+            num_channels=8,  # HBM2 has 8 channels per stack
+            params=PowerParameters(
+                active_power_ma=95.0,
+                read_power_ma=65.0,
+                write_power_ma=75.0,
+                idle_power_ma=20.0,
+                refresh_power_ma=120.0,
+                self_refresh_power_ma=4.0,
+                power_down_power_ma=2.0,
+                vddq_voltage=1.2,
+                act_energy_pj=150.0,
+                rd_energy_pj=100.0,
+                wr_energy_pj=115.0,
+                process_corner=ProcessCorner[process_corner] if process_corner in ["SS", "TT", "FF"] else ProcessCorner.TT,
+                temperature_c=temperature_c,
+            ),
+            data_rate_gtps=1.2,
+        )
+
+    elif version == "hbm3":
+        if speed_grade is None:
+            speed_grade = "hbm3_64"
+        return create_hbm3_power_estimator(
+            speed_grade=speed_grade,
+            num_channels=16,  # HBM3 has 16 channels per stack
+            process_corner=process_corner,
+            temperature_c=temperature_c,
+        )
+
+    elif version == "hbm4":
+        if speed_grade is None:
+            speed_grade = "8Gbps"
+        return create_power_estimator_with_config(
+            speed_grade=speed_grade,
+            num_channels=32,  # HBM4 has 32 channels
+            process_corner=process_corner,
+            temperature_c=temperature_c,
+        )
+
+    else:
+        raise ValueError(f"Unknown HBM version: {hbm_version}")

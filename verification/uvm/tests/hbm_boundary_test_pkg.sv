@@ -71,7 +71,7 @@ class max_address_seq extends hbm_boundary_base_sequence;
         `uvm_info(get_name(), "Starting maximum address test", UVM_MEDIUM)
 
         // Test maximum bank address
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 8'hFF;  // Max bank
@@ -88,7 +88,7 @@ class max_address_seq extends hbm_boundary_base_sequence;
         #50;
 
         // Test maximum channel address (HBM4: 32 channels)
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 8'h1F;  // Max channel = 31
@@ -103,7 +103,7 @@ class max_address_seq extends hbm_boundary_base_sequence;
 
         // Test maximum row in specific bank
         for (int bank = 0; bank < 4; bank++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == bank;
@@ -141,7 +141,7 @@ class min_address_seq extends hbm_boundary_base_sequence;
         `uvm_info(get_name(), "Starting minimum address test", UVM_MEDIUM)
 
         // Test minimum address (all zeros)
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 8'h00;
@@ -159,7 +159,7 @@ class min_address_seq extends hbm_boundary_base_sequence;
 
         // Test minimum row with various banks
         for (int bank = 0; bank < 16; bank++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == bank;
@@ -197,7 +197,7 @@ class address_overflow_seq extends hbm_boundary_base_sequence;
         `uvm_info(get_name(), "Starting address overflow test", UVM_MEDIUM)
 
         // Test overflow bank address (should wrap or saturate)
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 8'hFF;  // Beyond max (15)
@@ -219,7 +219,7 @@ class address_overflow_seq extends hbm_boundary_base_sequence;
         #50;
 
         // Test overflow row address
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 0;
@@ -262,7 +262,7 @@ class queue_full_seq extends hbm_boundary_base_sequence;
 
         // Fill queue beyond capacity
         for (int i = 0; i < overflow_attempts; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             if (!req.randomize() with {
@@ -316,7 +316,7 @@ class queue_empty_seq extends hbm_boundary_base_sequence;
         `uvm_info(get_name(), "Starting queue empty test", UVM_MEDIUM)
 
         // Generate single request then wait
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize()) begin
             `uvm_error(get_name(), "Empty queue randomization failed")
@@ -334,7 +334,7 @@ class queue_empty_seq extends hbm_boundary_base_sequence;
         end
 
         // Send new request to wake up
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             addr_bank == 8'h05;
@@ -373,7 +373,7 @@ class burst_boundary_seq extends hbm_boundary_base_sequence;
 
         // Test bursts at column boundary
         for (int i = 0; i < num_bursts; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             // Target column 3 (last column) to trigger boundary crossing
@@ -431,7 +431,7 @@ class timing_boundary_seq extends hbm_boundary_base_sequence;
             #100;
 
             // Send request with minimum timing
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == 0;
@@ -457,7 +457,7 @@ class timing_boundary_seq extends hbm_boundary_base_sequence;
             #100;
 
             // Send request with maximum timing
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 addr_bank == 8'h0F;
@@ -498,7 +498,7 @@ class data_pattern_boundary_seq extends hbm_boundary_base_sequence;
         `uvm_info(get_name(), "Starting data pattern boundary test", UVM_MEDIUM)
 
         // Test all-ones pattern
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             cmd == WRITE;
@@ -515,7 +515,7 @@ class data_pattern_boundary_seq extends hbm_boundary_base_sequence;
         #50;
 
         // Test all-zeros pattern
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             cmd == WRITE;
@@ -532,7 +532,7 @@ class data_pattern_boundary_seq extends hbm_boundary_base_sequence;
         #50;
 
         // Test alternating pattern
-        req = hbm_transaction::type_id::create("req");
+        req = new("req");
         start_item(req);
         if (!req.randomize() with {
             cmd == WRITE;
@@ -550,7 +550,7 @@ class data_pattern_boundary_seq extends hbm_boundary_base_sequence;
 
         // Test walking ones pattern
         for (int i = 0; i < num_patterns; i++) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
             if (!req.randomize() with {
                 cmd == WRITE;
@@ -585,7 +585,7 @@ class hbm_max_address_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = max_address_seq::type_id::create("seq");
+        seq = max_addressnew("seq");
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 
@@ -608,7 +608,7 @@ class hbm_min_address_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = min_address_seq::type_id::create("seq");
+        seq = min_addressnew("seq");
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 
@@ -631,7 +631,7 @@ class hbm_address_overflow_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = address_overflow_seq::type_id::create("seq");
+        seq = address_overflownew("seq");
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 
@@ -654,7 +654,7 @@ class hbm_queue_full_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = queue_full_seq::type_id::create("seq");
+        seq = queue_fullnew("seq");
         seq.queue_depth = 32;
         seq.overflow_attempts = 50;
         seq.set_regmodel(env.regmodel);
@@ -679,7 +679,7 @@ class hbm_queue_empty_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = queue_empty_seq::type_id::create("seq");
+        seq = queue_emptynew("seq");
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 
@@ -702,7 +702,7 @@ class hbm_burst_boundary_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = burst_boundary_seq::type_id::create("seq");
+        seq = burst_boundarynew("seq");
         seq.num_bursts = 20;
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
@@ -726,7 +726,7 @@ class hbm_timing_boundary_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = timing_boundary_seq::type_id::create("seq");
+        seq = timing_boundarynew("seq");
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 
@@ -749,7 +749,7 @@ class hbm_data_pattern_boundary_test extends hbm_base_test;
         super.run_phase(phase);
         phase.raise_objection(this);
 
-        seq = data_pattern_boundary_seq::type_id::create("seq");
+        seq = data_pattern_boundarynew("seq");
         seq.set_regmodel(env.regmodel);
         seq.start(env.hbm_agent_inst.sequencer);
 

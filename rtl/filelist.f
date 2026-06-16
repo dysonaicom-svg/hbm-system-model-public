@@ -9,20 +9,20 @@
 # =============================================================================
 
 # Include directories
-+incdir+.
++incdir+/home/ic/JXTF/HBM/rtl
 
 # Type definitions (order matters - header first)
-hbm_types.svh
+/home/ic/JXTF/HBM/rtl/hbm_types.svh
 
 # Package definitions (UVM-based - for reference/simulation)
 # Note: hbm_pkg.sv uses UVM which is not supported by verilator
-# hbm_pkg.sv
+# /home/ic/JXTF/HBM/rtl/hbm_pkg.sv
 
 # Main controller RTL
-hbm_controller.sv
+/home/ic/JXTF/HBM/rtl/hbm_controller.sv
 
 # DRAM model
-dram_model.sv
+/home/ic/JXTF/HBM/rtl/dram_model.sv
 
-# Testbench (for simulation, not lint - add via command line)
+# Testbench (for simulation, add via command line: hbm_controller_tb.sv hbm_controller_tb_main.cpp)
 # hbm_controller_tb.sv

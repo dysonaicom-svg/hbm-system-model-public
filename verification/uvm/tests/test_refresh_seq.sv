@@ -26,7 +26,7 @@ class test_refresh_seq extends hbm_base_sequence;
         repeat (repeat_count) begin
             // Refresh all banks
             for (bank_idx = 0; bank_idx < banks_per_refresh; bank_idx++) begin
-                req = hbm_transaction::type_id::create("req");
+                req = new("req");
                 start_item(req);
 
                 if (!req.randomize() with {

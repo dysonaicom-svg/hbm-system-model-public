@@ -12,9 +12,9 @@ from typing import Dict, Optional
 @dataclass
 class HBM3Timing:
     """HBM3 时序参数
-    
+
     所有参数以 cycles 为单位，基于 tCK = 781 ps (1.28 GHz)
-    
+
     时序约束:
     - tRCD: RAS to CAS delay (激活行到可以发起读写)
     - tRP: Precharge time (关闭行的时间)
@@ -25,12 +25,15 @@ class HBM3Timing:
     - tFAW: Four bank activation window (4 个 bank 激活的时间窗口)
     - tRFC: Refresh cycle (刷新一个 bank group 的时间)
     - tREFI: Refresh interval (刷新间隔)
+
+    Performance optimizations:
+    - Pre-computed clock period in seconds for O(1) cycles_to_seconds conversion
     """
-    
+
     # 时钟周期 (ps)
     tCK_ps: float = 781.25  # 1.28 GHz
     tCK_cycles: int = 1
-    
+
     # 时序参数 (cycles)
     tRCD: int = 17       # RAS to CAS delay
     tRP: int = 17        # Precharge time
@@ -41,15 +44,19 @@ class HBM3Timing:
     tFAW: int = 26       # Four bank activation window
     tRFC: int = 295      # Refresh cycle (16Gb)
     tREFI: int = 5000    # Refresh interval (cycles)
-    
+
     # Data timing
     tDQSCK: int = 3      # DQS output access time from CK
     tDQSQ: int = 2       # DQS-DQ skew
     tQHS: int = 2        # DQ hold DQS
-    
+
     # Command timing
     tCMD: int = 1        # Command period
-    
+
+    # Pre-computed constants for performance
+    _clock_period_ns: float = 0.78125  # Pre-computed clock period in ns
+    _clock_period_s: float = 0.78125e-9  # Pre-computed clock period in seconds
+
     @property
     def clock_freq(self) -> float:
         """时钟频率 (Hz)"""
@@ -58,7 +65,7 @@ class HBM3Timing:
     @property
     def clock_period_ns(self) -> float:
         """时钟周期 (ns)"""
-        return self.tCK_ps / 1000.0
+        return self._clock_period_ns
 
     # HBM4-compatible aliases (n-prefix)
     @property
@@ -171,23 +178,23 @@ class HBM3Timing:
     def nWTRL(self) -> int:
         """Write to read (different BG)"""
         return 5
-    
+
     def cycles_to_ns(self, cycles: int) -> float:
-        """Cycles 转换为 ns"""
-        return cycles * self.clock_period_ns
+        """Cycles 转换为 ns - optimized with pre-computed value"""
+        return cycles * self._clock_period_ns
 
     def cycles_to_seconds(self, cycles: int) -> float:
-        """Cycles 转换为 seconds"""
-        return self.cycles_to_ns(cycles) * 1e-9
+        """Cycles 转换为 seconds - optimized with pre-computed value"""
+        return cycles * self._clock_period_s
 
     def cycles_to_s(self, cycles: int) -> float:
-        """Cycles 转换为 seconds"""
-        return self.cycles_to_seconds(cycles)
+        """Cycles 转换为 seconds - alias for cycles_to_seconds"""
+        return cycles * self._clock_period_s
 
     def ns_to_cycles(self, ns: float) -> int:
         """ns 转换为 cycles"""
         return int(ns * 1000 / self.tCK_ps + 0.5)
-    
+
     def __repr__(self) -> str:
         return (f"HBM3Timing(tCK={self.tCK_ps}ps, "
                 f"tRCD={self.tRCD}, tRP={self.tRP}, tRAS={self.tRAS})")
@@ -269,6 +276,9 @@ class HBM4Timing:
     # Refresh timing
     nRFC: int = 180     # Refresh cycle time
     nREFI: int = 3900   # Refresh interval
+
+    # Burst length (FLINE = 4 beats = 32 bytes)
+    nBL: int = 4
 
     @classmethod
     def for_speed_grade(cls, speed_gbps: float) -> "HBM4Timing":

@@ -32,7 +32,7 @@ class test_bank_conflict_seq extends hbm_base_sequence;
             target_bank, num_rows), UVM_MEDIUM)
 
         repeat (repeat_count) begin
-            req = hbm_transaction::type_id::create("req");
+            req = new("req");
             start_item(req);
 
             // Rotate through different rows to trigger conflicts

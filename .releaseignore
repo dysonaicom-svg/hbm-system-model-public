@@ -1,0 +1,153 @@
+# HBM4 System Modeling Platform - Release Ignore File
+# This file defines patterns to exclude when creating a release package
+# Similar to .gitignore but specifically for release/distribution builds
+
+# =============================================================================
+# DEVELOPMENT AND INTERNAL FILES
+# =============================================================================
+
+# Claude Code development environment
+.claude/
+.claude
+
+# GitHub CI/CD workflows
+.github/
+.github
+
+# Project development instructions (not for end users)
+CLAUDE.md
+
+# Research materials and reference implementations (not user-facing)
+research/
+research/**/
+
+# =============================================================================
+# BUILD ARTIFACTS AND GENERATED FILES
+# =============================================================================
+
+# Verilator/compilation output
+obj_dir/
+*.vcd
+*.fsdb
+*.wlf
+
+# Build directories
+build/
+dist/
+sim/results/
+sim/build/
+
+# RTL build artifacts
+rtl/logs/
+rtl/obj_dir/
+
+# Benchmark results and comparisons
+benchmark_results*.json
+seq_rd_comparison.json
+scripts/comparison_report.json
+scripts/comparison_report.md
+sim/benchmark_results.json
+sim/benchmark_results.md
+
+# Python build artifacts
+*.egg-info/
+*.pyc
+*.pyo
+__pycache__/
+*.so
+*.egg
+
+# NVC compiler output
+nvc_build/
+nvc_out_of_tree/
+
+# External tools (not part of distribution)
+tools/libzstd/
+tools/nvc/
+
+# =============================================================================
+# TEMPORARY AND BACKUP FILES
+# =============================================================================
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# =============================================================================
+# DEVELOPMENT DOCUMENTATION
+# =============================================================================
+
+# Internal design documents
+docs/design/
+docs/design
+
+# Implementation plans
+docs/plans/
+docs/plans
+
+# Development superpowers
+docs/superpowers/
+docs/superpowers
+
+# Research documentation
+docs/research/
+docs/research
+
+# Project planning
+docs/planning/
+docs/planning
+
+# CI/CD internal scripts
+scripts/ci_check.sh
+scripts/ci_test.sh
+
+# =============================================================================
+# PYTHON CACHE AND ENVIRONMENT
+# =============================================================================
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# Python cache
+.mypy_cache/
+.pytest_cache/
+.tox/
+*.egg-info/
+
+# =============================================================================
+# IDE AND EDITOR FILES
+# =============================================================================
+
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# =============================================================================
+# VIVADO AND EDA TOOLS
+# =============================================================================
+
+.Xil/
+phase13_ooc/
+vivado/
+vivado*.jou
+vivado*.log
+
+# =============================================================================
+# LOG FILES
+# =============================================================================
+
+*.log
+*.jou

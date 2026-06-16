@@ -547,6 +547,212 @@ def test_import():
     assert HBM4UnifiedSimulator is not None
     assert SimulationConfig is not None
     assert SimulationStats is not None
+
+
+class TestUnifiedSimulatorHBM4:
+    """Test the updated UnifiedSimulator with HBM4 integration"""
+
+    def test_unified_simulator_hbm4_import(self):
+        """Test that UnifiedSimulator can import HBM4 components"""
+        from sim.unified_simulator import (
+            UnifiedSimulator,
+            UnifiedSimulatorStats,
+            run_unified_simulation,
+            HBM4_AVAILABLE,
+        )
+        assert UnifiedSimulator is not None
+        assert UnifiedSimulatorStats is not None
+
+    def test_unified_simulator_hbm4_enabled(self):
+        """Test UnifiedSimulator with HBM4 enabled"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            num_masters=2,
+            enable_hbm4=True,
+            num_channels=8,
+        )
+
+        assert sim.enable_hbm4 is True
+        assert sim.num_channels == 8
+        assert sim.logic_base_die is not None
+        assert sim.pam3_encoder is not None
+        assert sim.timing_manager is not None
+
+    def test_unified_simulator_hbm4_disabled(self):
+        """Test UnifiedSimulator with HBM4 disabled"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            num_masters=2,
+            enable_hbm4=False,
+        )
+
+        assert sim.enable_hbm4 is False
+        assert sim.logic_base_die is None
+        assert sim.pam3_encoder is None
+
+    def test_unified_simulator_pam3_encoding(self):
+        """Test PAM3 encoding in UnifiedSimulator"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=1.0,
+            read_ratio=0.0,  # All writes
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            num_masters=1,
+            enable_hbm4=True,
+            num_channels=4,
+        )
+
+        # Process some PAM3 sequences
+        symbols = sim.process_pam3_sequence(0xDEADBEEF, dq_width=128)
+        assert len(symbols) > 0
+
+        # Stats should track PAM3 encoding
+        assert sim.stats.pam3_symbols_encoded > 0
+
+    def test_unified_simulator_hbm4_metrics(self):
+        """Test HBM4 metrics collection"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            num_masters=2,
+            enable_hbm4=True,
+            num_channels=4,
+        )
+
+        metrics = sim.get_hbm4_metrics()
+        assert metrics['enabled'] is True
+        assert metrics['num_channels'] == 4
+        assert 'pam3' in metrics
+        assert 'timing' in metrics
+        assert 'power' in metrics
+
+    def test_unified_simulator_channel_states(self):
+        """Test channel state retrieval"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            num_masters=1,
+            enable_hbm4=True,
+            num_channels=4,
+        )
+
+        # Process a command
+        sim.process_hbm4_command(0, 'ACT', address=0x1000)
+
+        # Get channel state
+        state = sim.get_channel_state(0)
+        assert state is not None
+        assert 'channel_id' in state
+
+    def test_unified_simulator_pam3_eye_diagram(self):
+        """Test PAM3 eye diagram computation"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            enable_hbm4=True,
+            num_channels=4,
+        )
+
+        # Get PAM3 eye diagram
+        eye = sim.get_pam3_eye_diagram()
+        assert eye is not None
+        assert hasattr(eye, 'eye_height')
+        assert hasattr(eye, 'snr_db')
+
+    def test_unified_simulator_stats_to_dict(self):
+        """Test stats.to_dict includes HBM4 features"""
+        from sim.unified_simulator import UnifiedSimulator
+        from sim.simulator import SimulationConfig, TrafficPattern
+
+        config = SimulationConfig(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            seed=42,
+        )
+
+        sim = UnifiedSimulator(
+            sim_config=config,
+            enable_hbm4=True,
+            num_channels=4,
+        )
+
+        stats_dict = sim.stats.to_dict()
+        assert 'hbm4' in stats_dict
+        assert 'pam3_symbols_encoded' in stats_dict['hbm4']
+        assert 'channel_stats' in stats_dict['hbm4']
+
+    def test_run_unified_simulation_with_hbm4(self):
+        """Test run_unified_simulation function with HBM4"""
+        from sim.unified_simulator import run_unified_simulation
+        from sim.simulator import TrafficPattern
+
+        stats = run_unified_simulation(
+            simulation_time_us=1.0,
+            traffic_pattern=TrafficPattern.RANDOM,
+            request_rate=0.5,
+            enable_hbm4=True,
+            num_channels=4,
+            seed=42,
+        )
+
+        assert stats.total_cycles > 0
+        assert stats.pam3_symbols_encoded >= 0
     assert SimulationMode is not None
 
 

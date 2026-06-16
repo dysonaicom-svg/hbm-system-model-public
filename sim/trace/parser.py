@@ -53,15 +53,22 @@ class TraceConfig:
     hbm_version: HBMVersion = HBMVersion.HBM3
 
     # 可选参数
-    address_bits: int = 32       # 地址位宽
+    address_bits: int = 46       # 地址位宽 (46 bits covers full HBM3/HBM4 channel mapping)
     cache_line_size: int = 64     # Cache line 大小 (bytes)
 
-    # 地址映射参数
-    channels: int = 8            # HBM3: 8, HBM4: 32
-    pseudo_channels: int = 16     # HBM3: 16, HBM4: 64
-    banks_per_channel: int = 4    # 每个 pseudo-channel 的 bank 数
-    bank_groups: int = 2          # Bank group 数
-    rows_per_bank: int = 1024     # 每个 bank 的行数
+    # 地址映射参数 (None means use HBM version default)
+    channels: Optional[int] = None            # HBM3: 8, HBM4: 32
+    pseudo_channels: Optional[int] = None       # HBM3: 16, HBM4: 64
+    banks_per_channel: int = 4                 # 每个 pseudo-channel 的 bank 数
+    bank_groups: int = 2                       # Bank group 数
+    rows_per_bank: int = 1024                  # 每个 bank 的行数
+
+    def update_for_hbm_version(self):
+        """Update parameters based on HBM version"""
+        if self.hbm_version == HBMVersion.HBM4:
+            self.channels = 32
+            self.pseudo_channels = 64
+            self.rows_per_bank = 2048
 
 
 @dataclass
@@ -226,8 +233,8 @@ class TraceParser:
         else:
             mapping = self.HBM3_MAPPING
 
-        self.channels = config.channels or mapping["channels"]
-        self.pseudo_channels = config.pseudo_channels or mapping["pseudo_channels"]
+        self.channels = config.channels if config.channels is not None else mapping["channels"]
+        self.pseudo_channels = config.pseudo_channels if config.pseudo_channels is not None else mapping["pseudo_channels"]
         self.banks_per_pseudo = config.banks_per_channel or mapping["banks_per_pseudo_channel"]
         self.bank_groups = config.bank_groups or mapping["bank_groups"]
         self.rows_per_bank = config.rows_per_bank or mapping["rows_per_bank"]
@@ -383,12 +390,11 @@ class TraceParser:
         HBM 地址映射 (从 MSB 到 LSB):
         [row:10][bank:2][bank_group:1][col:6][channel:3][byte:6]
 
-        实际映射取决于配置，这里使用简化版本
+        支持 HBM3 (8 channels) 和 HBM4 (32 channels) 地址映射:
+        - HBM3: Channel at bits [45:43] (3 bits for 8 channels)
+        - HBM4: Channel at bits [44:40] (5 bits for 32 channels)
         """
-        # 简化的地址解码
-        # 实际实现应参考 HBM3 规范
-
-        addr_bits = self.config.address_bits
+        addr_bits = max(self.config.address_bits, 46)  # Use at least 46 bits for HBM3/HBM4
 
         # 计算各层级大小
         channel_bits = (self.channels - 1).bit_length()
@@ -399,11 +405,17 @@ class TraceParser:
         col_bits = 6  # 64 bytes / 8 = 8 transfers, col = 6 bits
         byte_bits = 6  # 64 bytes
 
-        # 简化: channel 使用地址的高位
-        channel = (address >> (addr_bits - channel_bits)) % self.channels
+        # Calculate channel bit position based on number of channels
+        # HBM3: 8 channels = 3 bits, channel at bits [45:43], LSB at 43
+        # HBM4: 32 channels = 5 bits, channel at bits [45:41], LSB at 41
+        # Formula: channel_start_bit = 46 - channel_bits
+        channel_start_bit = 46 - channel_bits
+
+        # Extract channel from address using proper bit position
+        channel = (address >> channel_start_bit) & (self.channels - 1)
 
         # 剩余位用于 bank
-        remaining = address & ((1 << (addr_bits - channel_bits)) - 1)
+        remaining = address & ((1 << channel_start_bit) - 1)
         bank_group = (remaining >> (bank_bits + row_bits + col_bits + byte_bits)) % self.bank_groups
         bank = (remaining >> (row_bits + col_bits + byte_bits)) % self.banks_per_pseudo
 
