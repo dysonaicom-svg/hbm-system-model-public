@@ -1,0 +1,81 @@
+{
+  "timestamp": "2026-06-16T10:47:05.530248",
+  "coverage_groups": [
+    {
+      "name": "command_type_cg",
+      "goal": 100,
+      "status": "active"
+    },
+    {
+      "name": "bank_conflict_cg",
+      "goal": 100,
+      "status": "active"
+    },
+    {
+      "name": "row_hit_miss_cg",
+      "goal": 95,
+      "status": "extended"
+    },
+    {
+      "name": "row_buffer_cg",
+      "goal": 95,
+      "status": "extended"
+    },
+    {
+      "name": "cmd_timing_cg",
+      "goal": 90,
+      "status": "extended"
+    },
+    {
+      "name": "power_cg",
+      "goal": 85,
+      "status": "extended"
+    },
+    {
+      "name": "error_cg",
+      "goal": 80,
+      "status": "extended"
+    },
+    {
+      "name": "qos_priority_cg",
+      "goal": 100,
+      "status": "active"
+    },
+    {
+      "name": "refresh_cg",
+      "goal": 100,
+      "status": "active"
+    },
+    {
+      "name": "channel_interleave_cg",
+      "goal": 95,
+      "status": "active"
+    },
+    {
+      "name": "latency_cg",
+      "goal": 90,
+      "status": "active"
+    },
+    {
+      "name": "bandwidth_cg",
+      "goal": 90,
+      "status": "active"
+    },
+    {
+      "name": "transaction_cg",
+      "goal": 90,
+      "status": "extended"
+    }
+  ],
+  "total_groups": 13,
+  "hbm4_features": [
+    "32-channel",
+    "pseudo-channel",
+    "bank-group"
+  ],
+  "summary": {
+    "active_groups": 7,
+    "extended_groups": 6,
+    "total_coverage_points": 150
+  }
+}

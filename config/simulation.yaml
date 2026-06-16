@@ -1,0 +1,35 @@
+# HBM4 Simulation Configuration
+# Optimized for fast simulation with representative traffic
+
+version: "1.0"
+hbm_version: "hbm4"
+
+# Simulation Settings
+simulation:
+  clock_freq_hz: 1.28e9
+  simulation_time_us: 100
+  seed: 42
+
+# Traffic Pattern
+traffic:
+  pattern: "random"
+  request_rate: 0.5
+  read_ratio: 0.7
+  burst_size: 64
+  address_range: 0x100_0000
+
+# Speed Grade
+speed_grade:
+  data_rate_gtps: 8.0
+  tCK_ps: 125.0
+
+# Channel Configuration
+channels: 8   # Reduced for faster simulation
+pseudo_channels: 16
+io_width: 512
+
+# QoS Configuration
+qos:
+  priority_levels: 4   # Reduced for faster simulation
+  fr_fcfs_enabled: true
+  starvation_threshold: 100
