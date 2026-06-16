@@ -7,9 +7,11 @@
 
 module hbm_controller_tb_simple;
 
-    // Clock
+    // Clock - driven by main file in no-timing mode
+    /* verilator lint_off STMTDLY */
     reg clk = 0;
     always #0.5 clk = ~clk;
+    /* verilator lint_on STMTDLY */
 
     // Reset
     reg rst_n = 0;
@@ -53,7 +55,7 @@ module hbm_controller_tb_simple;
         .rst_n(rst_n),
         .req_valid(tb_req_valid),
         .req_id(tb_req_id),
-        .req_addr(tb_req_addr[31:0]),
+        .req_addr(tb_req_addr),
         .req_rd_wr_n(tb_req_rd_wr_n),
         .req_len(tb_req_len),
         .req_priority(tb_req_priority),
