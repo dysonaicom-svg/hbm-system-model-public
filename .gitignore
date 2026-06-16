@@ -56,20 +56,44 @@ vivado*.log
 phase13_ooc/
 vivado/
 
-# MCP servers (runtime only, keep source)
-.claude/mcp-servers/
-!/.claude/mcp-servers/*.py
+# Claude development folder (contains AI agent memory, skills, workflows - PRIVATE)
+# This folder stores:
+# - Session memory and context
+# - Custom skills and workflows
+# - Project-specific configuration
+# - Development history and notes
+.claude/
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# MCP configuration (contains local paths and secrets - PRIVATE)
+.mcp.json
+.mcp/
+
+# Development notes and research (may contain sensitive info - PRIVATE)
+research/hbm4-logic-base-die/notes/
+research/hbm4-logic-base-die/.cache/
+research/hbm4-logic-base-die/implementation/plan.md
+research/hbm4-logic-base-die/implementation/implementation_plan.md
+docs/research/notes/
+docs/research/*.md
+
+# Experimental code (not ready for public - PRIVATE)
+research/experimental/
+research/ramulator2/  # External dependency, keep local
 
 # Claude settings (local development only - DO NOT COMMIT)
 .claude/settings.local.json
 .claude/settings.local.json.example
 .claude/scheduled_tasks.lock
 .claude/workflows/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# MCP servers (runtime only, keep source)
+.claude/mcp-servers/
+!/.claude/mcp-servers/*.py
 
 # Simulation outputs and benchmarks
 seq_rd_comparison.json
