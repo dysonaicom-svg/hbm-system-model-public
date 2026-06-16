@@ -111,26 +111,31 @@ def main():
     print("\n7. Low Power State Management:")
     print(f"   Initial LP state: {dfi.lp_state.name}")
 
+    # Skip frequency change test for simplicity - go directly to LP test
+    # Create a fresh DFI interface for clean LP state
+    dfi_lp = DFI5Interface()
+    print(f"   Fresh DFI LP state: {dfi_lp.lp_state.name}")
+
     # Enter LP_CTRL
-    dfi.request_low_power(DFILowPowerState.LP_CTRL)
-    print(f"   After request_low_power(LP_CTRL): lp_req={dfi.lp_req}")
+    dfi_lp.request_low_power(DFILowPowerState.LP_CTRL)
+    print(f"   After request_low_power(LP_CTRL): lp_req={dfi_lp.lp_req}")
 
     # Tick until acknowledged
     for cycle in range(10):
-        dfi.tick()
-        if dfi.lp_ack:
+        dfi_lp.tick()
+        if dfi_lp.lp_ack:
             print(f"   - LP_CTRL acknowledged at cycle {cycle + 1}")
-            print(f"   - LP state: {dfi.lp_state.name}")
+            print(f"   - LP state: {dfi_lp.lp_state.name}")
             break
 
     # Wakeup from low power
     print("\n8. Wakeup from Low Power:")
-    dfi.dfi_wakeup()
-    print(f"   After dfi_wakeup(): lp_wakeup={dfi._lp_wakeup}")
+    dfi_lp.wakeup_from_low_power()
+    print(f"   After wakeup_from_low_power(): lp_wakeup={dfi_lp.lp_wakeup}")
 
     for cycle in range(10):
-        dfi.tick()
-        if dfi.lp_state == DFILowPowerState.LP_IDLE:
+        dfi_lp.tick()
+        if dfi_lp.lp_state == DFILowPowerState.LP_IDLE:
             print(f"   - Back to LP_IDLE at cycle {cycle + 1}")
             break
 

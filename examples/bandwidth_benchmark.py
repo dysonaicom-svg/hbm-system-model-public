@@ -91,10 +91,12 @@ def main():
 
     # Show speed grades
     print("\n1. HBM4 Speed Grades:")
-    print("   Speed Grade | Data Rate | Peak BW | tCK")
+    print("   Speed Grade | Data Rate | tCK")
     print("   " + "-" * 40)
-    for grade, (rate, bw, tck) in HBM4_SPEED_GRADES.items():
-        print(f"   {grade:11s} | {rate:8.1f} GT/s | {bw:7.0f} GB/s | {tck:4.0f} ps")
+    for grade, params in HBM4_SPEED_GRADES.items():
+        rate = params['data_rate_gtps']
+        tck = params['tCK_ps']
+        print(f"   {grade:11s} | {rate:8.1f} GT/s | {tck:5.1f} ps")
 
     # Create controller
     print("\n2. Creating HBM4 Controller...")
@@ -140,8 +142,9 @@ def main():
     print("   Speed Grade | Data Rate | Measured BW | Efficiency")
     print("   " + "-" * 50)
 
-    for grade_name in ['HBM4_8GT', 'HBM4_12GT', 'HBM4_16GT']:
-        rate, expected_bw, _ = HBM4_SPEED_GRADES[grade_name]
+    for grade_name in ['8Gbps', '12Gbps', '16Gbps']:
+        params = HBM4_SPEED_GRADES[grade_name]
+        rate = params['data_rate_gtps']
         spec_grade = HBM4Spec(data_rate_gtps=rate)
         controller = HBM4Controller(spec=spec_grade)
         bw, _ = run_sequential_access(controller, decoder, base_addr, 500)

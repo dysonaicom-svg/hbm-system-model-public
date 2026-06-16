@@ -143,11 +143,14 @@ def main():
         mbist.tick()
         steps += 1
         if mbist.state == MBISTState.RUNNING:
-            print(f"   - Running: failures={mbist.failure_count}")
+            faults = len(mbist.current_result.faults_found) if mbist.current_result else 0
+            print(f"   - Running: faults={faults}")
 
     print(f"   - Final state: {mbist.state.name}")
-    print(f"   - Failure count: {mbist.failure_count}")
-    print(f"   - Pass: {mbist.passed}")
+    faults_found = len(mbist.current_result.faults_found) if mbist.current_result else 0
+    print(f"   - Fault count: {faults_found}")
+    passed = mbist.current_result.passed if mbist.current_result else False
+    print(f"   - Pass: {passed}")
 
     # Loopback testing
     print("\n6. Loopback Testing:")

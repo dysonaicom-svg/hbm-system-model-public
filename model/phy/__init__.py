@@ -58,6 +58,48 @@ from model.phy.channel_model import (
     RLGCParameters
 )
 
+from model.phy.phy_training import (
+    PHYTrainingState,
+    PHYTrainingType,
+    TrainingPattern,
+    PHYTrainingConfig,
+    TrainingPhaseResult,
+    PHYTapCoefficients,
+    PHYTrainingStatus,
+    PHYTrainingModel,
+    create_phy_training_model,
+)
+
+from model.phy.training_sequences import (
+    TrainingSequenceType,
+    DFITrainingCommand,
+    TrainingSequenceStep,
+    TrainingSequenceDefinition,
+    DFITrainingControl,
+    TrainingCompletionStatus,
+    TrainingSequenceExecutor,
+    TrainingCompletionDetector,
+    QUICK_BOOT_SEQUENCE,
+    NORMAL_TRAINING_SEQUENCE,
+    EXTENDED_TRAINING_SEQUENCE,
+    MARGIN_SCAN_SEQUENCE,
+    create_training_sequence,
+    get_dfi_training_command,
+)
+
+from model.phy.tap_coefficient import (
+    CoefficientType,
+    TXCoefficients,
+    RXCoefficients,
+    LaneCoefficients,
+    CompleteTapCoefficients,
+    CoefficientOptimizer,
+    CoefficientComparator,
+    create_default_coefficients,
+    export_coefficients_to_dict,
+    import_coefficients_from_dict,
+)
+
 from model.phy.signal_integrity import (
     TXPreEmphasis,
     RXCTLE,
@@ -173,4 +215,40 @@ __all__ = [
     'EyeAnalysisResult',
     'SimulationResult',
     'create_simulator',
+    # New PHY training models
+    'PHYTrainingState',
+    'PHYTrainingType',
+    'TrainingPattern',
+    'PHYTrainingConfig',
+    'TrainingPhaseResult',
+    'PHYTapCoefficients',
+    'PHYTrainingStatus',
+    'PHYTrainingModel',
+    'create_phy_training_model',
+    # Training sequences
+    'TrainingSequenceType',
+    'DFITrainingCommand',
+    'TrainingSequenceStep',
+    'TrainingSequenceDefinition',
+    'DFITrainingControl',
+    'TrainingCompletionStatus',
+    'TrainingSequenceExecutor',
+    'TrainingCompletionDetector',
+    'QUICK_BOOT_SEQUENCE',
+    'NORMAL_TRAINING_SEQUENCE',
+    'EXTENDED_TRAINING_SEQUENCE',
+    'MARGIN_SCAN_SEQUENCE',
+    'create_training_sequence',
+    'get_dfi_training_command',
+    # Tap coefficients
+    'CoefficientType',
+    'TXCoefficients',
+    'RXCoefficients',
+    'LaneCoefficients',
+    'CompleteTapCoefficients',
+    'CoefficientOptimizer',
+    'CoefficientComparator',
+    'create_default_coefficients',
+    'export_coefficients_to_dict',
+    'import_coefficients_from_dict',
 ]

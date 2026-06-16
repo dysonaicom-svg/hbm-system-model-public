@@ -31,7 +31,23 @@ python -m sim.simulator --mode functional
 
 ---
 
-## 2. Run Tests (1 minute)
+## 2. Run the Smoke Test (30 seconds)
+
+```bash
+# This is the recommended first test to verify installation
+python3 examples/basic_read_write.py
+```
+
+**Expected Output**:
+- Example 1: Basic HBM4 Controller
+- Example 2: Custom Speed Grades
+- Example 3: Row Hit Optimization
+- Example 4: Different Request Sizes
+- Example 5: QoS Priority Levels
+
+---
+
+## 3. Run Tests (1 minute)
 
 ```bash
 # Run all tests
@@ -41,12 +57,12 @@ pytest tests/ -v
 pytest tests/controller/ -v      # Controller tests (98 tests)
 pytest tests/dram/ -v            # DRAM tests (22 tests)
 pytest tests/hbm4/ -v            # HBM4 tests (225+ tests)
-pytest tests/integration/ -v     # Integration tests (46 tests)
+pytest tests/integration/ -v      # Integration tests (46 tests)
 ```
 
 ---
 
-## 3. Run Benchmark (2 minutes)
+## 4. Run Benchmark (2 minutes)
 
 ```bash
 # Run performance benchmark
@@ -58,7 +74,7 @@ cat sim/benchmark_results.json
 
 ---
 
-## 4. Run Unified Simulation (1 minute)
+## 5. Run Unified Simulation (1 minute)
 
 ```bash
 # Python + RTL co-simulation
@@ -173,10 +189,11 @@ timeout 60 python -m sim.simulator --mode functional
 
 ## Next Steps
 
-1. **Read the Design Document**: `docs/design/2026-06-15-hbm-system-model-design.md`
-2. **Explore HBM4 Features**: `model/controller/hbm4_controller.py`
-3. **Review Test Coverage**: `tests/` directory
-4. **Check Release Notes**: `RELEASE.md`
+1. **Read the README**: `README.md` for complete project documentation
+2. **Explore Examples**: Run through `examples/` directory
+3. **Review Test Coverage**: `tests/` directory for 497 test cases
+4. **Check API Reference**: `docs/API_REFERENCE.md`
+5. **Read Design Document**: `docs/ARCHITECTURE.md`
 
 ---
 
@@ -190,8 +207,26 @@ timeout 60 python -m sim.simulator --mode functional
 | RTL code | `rtl/` |
 | Tests | `tests/` |
 | Documentation | `docs/` |
+| Examples | `examples/` |
 | Release notes | `RELEASE.md` |
 
 ---
 
-**Need Help?** Check `docs/design/2026-06-15-hbm-system-model-design.md` or `RELEASE.md`
+## Available Examples
+
+| File | Description |
+|------|-------------|
+| `basic_read_write.py` | First example to run - basic operations |
+| `basic_controller.py` | Controller creation and operations |
+| `address_decoding.py` | Address mapping schemes |
+| `qos_scheduling.py` | Priority-based scheduling |
+| `refresh_scheduling.py` | Refresh management |
+| `dfi_interface.py` | DFI protocol usage |
+| `bandwidth_benchmark.py` | Performance measurement |
+| `multi_channel.py` | Multi-channel parallelism |
+| `dram_features.py` | ECC, lane repair, PHY training |
+| `logic_base_die_example.py` | Logic base die model |
+
+---
+
+**Need Help?** Check `docs/USER_GUIDE.md` or `RELEASE.md`

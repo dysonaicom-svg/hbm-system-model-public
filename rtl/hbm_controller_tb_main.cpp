@@ -7,7 +7,7 @@
 #include <set>
 #include "verilated.h"
 #include "verilated_vcd_c.h"
-#include "Vhbm_controller.h"
+#include "Vhbm_controller_tb.h"
 
 // Global time
 vluint64_t main_time = 0;
@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
     Verilated::traceEverOn(true);
 
     // Create DUT instance (hbm_controller)
-    Vhbm_controller* dut = new Vhbm_controller;
+    Vhbm_controller_tb* dut = new Vhbm_controller_tb;
 
     // VCD trace
     VerilatedVcdC* tfp = new VerilatedVcdC;
@@ -188,7 +188,7 @@ int main(int argc, char** argv) {
     // Cleanup
     tfp->close();
     delete tfp;
-    delete tb;
+    delete dut;
 
     std::cout << "Simulation completed at cycle " << cycle_count << std::endl;
 

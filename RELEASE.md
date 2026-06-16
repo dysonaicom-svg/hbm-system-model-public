@@ -29,6 +29,135 @@ This is the initial release of the HBM System Modeling Platform, providing compr
 
 ---
 
+## What's Included
+
+### Python Models
+- `model/controller/` - HBM controller, address decoder, QoS/refresh schedulers
+- `model/dram/` - DRAM timing, bank state machine, ECC/CRC, power estimator
+- `model/phy/` - DFI interface, PHY training, signal integrity
+- `model/multi_channel.py` - Multi-channel traffic generator
+
+### Simulation Infrastructure
+- `sim/` - Simulator, unified simulator, benchmark runner
+- `sim/interconnect/` - AXI crossbar, NoC mesh
+- `sim/trace/` - Trace parser for replay
+
+### Examples
+- `examples/` - 16 working examples covering all major features
+- `config/` - Configuration templates
+
+### Documentation
+- `docs/` - User guides, API reference, architecture docs
+- `README.md` - Complete project overview
+- `QUICKSTART.md` - First-time user guide
+
+### Tests
+- `tests/` - Comprehensive test suite (497 tests)
+
+---
+
+## What's NOT Included (Development Files)
+
+The following files are excluded from the release package per `.releaseignore`:
+
+### Development Environment
+- `.claude/` - Claude Code development environment
+- `.github/` - GitHub CI/CD workflows
+- `CLAUDE.md` - Development instructions
+
+### Research Materials
+- `research/` - Ramulator2 reference implementation
+
+### Internal Documentation
+- `docs/design/` - Internal design documents
+- `docs/plans/` - Implementation plans
+- `docs/superpowers/` - Development superpowers
+- `docs/research/` - Research documentation
+
+### Build Artifacts
+- `obj_dir/`, `nvc_build/`, `nvc_out_of_tree/` - Build directories
+- `*.vcd`, `*.wlf` - Waveform files
+- `*.egg-info/` - Python build artifacts
+- `__pycache__/` - Python cache
+
+### CI/CD Scripts
+- `scripts/ci_check.sh`, `scripts/ci_test.sh` - Internal CI scripts
+- `benchmark_results*.json` - Generated benchmark results
+
+---
+
+## Installation Instructions
+
+### Prerequisites
+- Python 3.8 or higher
+- pip package manager
+
+### Standard Installation
+```bash
+# Clone or extract the release package
+cd hbm
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install as editable package (recommended for development)
+pip install -e .
+```
+
+### Verification
+```bash
+# Run the smoke test
+python3 examples/basic_read_write.py
+
+# Run all tests
+pytest tests/ -v
+```
+
+---
+
+## Quick Start Guide
+
+### 1. Run Basic Simulation
+```bash
+# Functional simulation with built-in traffic generator
+python -m sim.simulator --mode functional
+```
+
+### 2. Run an Example
+```bash
+# Basic read/write operations
+python3 examples/basic_read_write.py
+
+# Multi-channel simulation
+python3 examples/multi_channel.py
+
+# Bandwidth benchmark
+python3 examples/bandwidth_benchmark.py
+```
+
+### 3. Run Tests
+```bash
+# All tests
+pytest tests/ -v
+
+# Specific categories
+pytest tests/controller/ -v      # 98 controller tests
+pytest tests/dram/ -v            # 22 DRAM tests
+pytest tests/hbm4/ -v            # 225+ HBM4 tests
+```
+
+### 4. Run Benchmark
+```bash
+python -m sim.benchmark
+```
+
+### 5. Unified Simulation (Python + RTL)
+```bash
+python -m sim.unified_simulator
+```
+
+---
+
 ## Performance Benchmarks
 
 ### Test Configuration
@@ -107,47 +236,25 @@ This is the initial release of the HBM System Modeling Platform, providing compr
 
 ---
 
-## Installation & Requirements
-
-### Prerequisites
-```bash
-Python 3.8+
-pytest
-numpy
-pyyaml
-```
-
-### Quick Install
-```bash
-pip install -r requirements.txt
-```
-
-### Running Tests
-```bash
-pytest tests/ -v
-```
-
-### Running Simulation
-```bash
-python -m sim.simulator --mode functional
-python -m sim.unified_simulator
-```
-
----
-
 ## File Structure
 
 ```
-/home/ic/JXTF/HBM/
+hbm/
 ├── model/                    # Python models
 │   ├── controller/          # HBM controller
-│   └── dram/                # DRAM timing
+│   ├── dram/                # DRAM timing
+│   └── phy/                 # PHY components
+├── sim/                     # Simulation infrastructure
+├── examples/                # Usage examples (16 files)
+├── tests/                   # Test suites (497 tests)
+├── docs/                    # Documentation
+├── config/                  # Configuration templates
 ├── rtl/                     # SystemVerilog RTL
 ├── verification/            # UVM testbench
-├── sim/                    # Simulation infrastructure
-├── tests/                  # Test suites
-├── docs/                   # Documentation
-└── research/              # Research materials
+├── README.md                # Project overview
+├── QUICKSTART.md            # First-time user guide
+├── RELEASE.md               # This file
+└── requirements.txt         # Dependencies
 ```
 
 ---

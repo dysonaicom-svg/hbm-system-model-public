@@ -24,7 +24,9 @@ module hbm_controller_tb;
     logic        rst_n = 0;
     logic        req_valid = 0;
     logic [31:0] req_id = 0;
-    logic [31:0] req_addr = 0;
+    // Calculate address width: STACK(2) + CH(5) + BG(3) + BK(4) + ROW(16) + COL(6) = 36 bits
+    localparam ADDR_WIDTH = 2 + 5 + 3 + 4 + 16 + 6;
+    logic [ADDR_WIDTH-1:0] req_addr = 0;
     logic        req_rd_wr_n = 1;
     logic [15:0] req_len = 64;
     logic [2:0]  req_priority = 0;
@@ -42,7 +44,7 @@ module hbm_controller_tb;
     logic [0:0]  dram_pch;     // 1 bit for pseudo-channel
     logic [15:0] dram_row;
     logic [255:0] dram_rd_data = 0;
-    logic [255:0] dram_wr_data;
+    logic [255:0] dram_wr_data = 0;
 
     // Statistics
     logic [31:0] stat_requests;

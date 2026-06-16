@@ -16,7 +16,7 @@ Run: python examples/qos_priority.py
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
 from model.controller.hbm4_controller import HBM4Controller
