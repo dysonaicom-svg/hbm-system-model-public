@@ -289,14 +289,15 @@ class SimulationStats:
 
 
 class TrafficGenerator:
-    """Traffic Generator - Optimized"""
+    """Traffic Generator - Optimized with row locality support"""
 
-    __slots__ = ('config', 'current_addr', 'hot_bank', '_random')
+    __slots__ = ('config', 'current_addr', 'hot_bank', 'hot_row', '_random')
 
     def __init__(self, config: SimulationConfig):
         self.config = config
         self.current_addr = 0
         self.hot_bank = 0
+        self.hot_row = 0
         self._random = random.Random(config.seed)
 
     def generate(self) -> List[HBMRequest]:
@@ -320,9 +321,25 @@ class TrafficGenerator:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
         elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
-            if self._random.random() < 0.8:  # 80% access hot spot
-                addr = self._random.randint(0, self.config.address_range // 10)
+            # 80% access hot spot with row locality (same bank+row)
+            if self._random.random() < 0.8:
+                # Stay in hot row 70% of time, change row 30%
+                if self._random.random() < 0.7:
+                    # Same row, different column
+                    addr = self.current_addr + 64
+                    if addr > self.config.address_range // 10:
+                        addr = self.current_addr - 64 if self.current_addr > 64 else 64
+                else:
+                    # New row in hot bank
+                    self.hot_row = (self.hot_row + 1) % 256
+                    self.hot_bank = self._random.randint(0, 3)
+                # Use hot spot base + row*stride + column
+                hot_base = self.config.address_range // 100  # Small hot region
+                addr = hot_base + (self.hot_row << 12) + (self.hot_bank << 20)
+                addr = min(addr, self.config.address_range - 64)
+                self.current_addr = addr
             else:
+                # Cold access - random
                 addr = self._random.randint(0, self.config.address_range - 1)
         else:  # ADDR_SCATTER
             addr = self._random.randint(0, self.config.address_range - 1)
@@ -377,9 +394,25 @@ class TrafficGenerator:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
         elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
-            if self._random.random() < 0.8:  # 80% access hot spot
-                addr = self._random.randint(0, self.config.address_range // 10)
+            # 80% access hot spot with row locality (same bank+row)
+            if self._random.random() < 0.8:
+                # Stay in hot row 70% of time, change row 30%
+                if self._random.random() < 0.7:
+                    # Same row, different column
+                    addr = self.current_addr + 64
+                    if addr > self.config.address_range // 10:
+                        addr = self.current_addr - 64 if self.current_addr > 64 else 64
+                else:
+                    # New row in hot bank
+                    self.hot_row = (self.hot_row + 1) % 256
+                    self.hot_bank = self._random.randint(0, 3)
+                # Use hot spot base + row*stride + column
+                hot_base = self.config.address_range // 100  # Small hot region
+                addr = hot_base + (self.hot_row << 12) + (self.hot_bank << 20)
+                addr = min(addr, self.config.address_range - 64)
+                self.current_addr = addr
             else:
+                # Cold access - random
                 addr = self._random.randint(0, self.config.address_range - 1)
         else:  # ADDR_SCATTER
             addr = self._random.randint(0, self.config.address_range - 1)

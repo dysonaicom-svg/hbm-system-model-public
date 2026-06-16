@@ -459,13 +459,25 @@ def main():
     parser.add_argument('--rtl-only', action='store_true', help='RTL only')
     parser.add_argument('--model-only', action='store_true', help='Model only')
     parser.add_argument('--output', type=str, default='', help='Output JSON file')
+    parser.add_argument('--pattern', type=str, default='random',
+                        choices=['random', 'sequential', 'stride', 'hotspot'],
+                        help='Traffic pattern (default: random)')
     args = parser.parse_args()
-    
+
+    # Convert pattern string to TrafficPattern
+    pattern_map = {
+        'random': TrafficPattern.RANDOM,
+        'sequential': TrafficPattern.SEQUENTIAL,
+        'stride': TrafficPattern.STRIDE,
+        'hotspot': TrafficPattern.HOT_SPOT,
+    }
+    traffic_pattern = pattern_map.get(args.pattern.lower(), TrafficPattern.RANDOM)
+
     # Run comparison
     sim_time = 5.0 if args.quick else 10.0
     report = run_comparison(
         sim_time_us=sim_time,
-        traffic_pattern=TrafficPattern.RANDOM,
+        traffic_pattern=traffic_pattern,
         request_rate=0.5,
         verbose=args.verbose,
         rtl_only=args.rtl_only,

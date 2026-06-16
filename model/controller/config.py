@@ -4,7 +4,8 @@ HBM Configuration Module
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import copy
 import yaml
 from ..dram.timing import HBM3Timing, HBM4Timing
 
@@ -109,12 +110,20 @@ class HBMConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         """导出为字典
-        
+
         Returns:
             配置参数字典
         """
         return self.__dict__
-    
+
+    def copy(self) -> "HBMConfig":
+        """创建配置副本
+
+        Returns:
+            HBMConfig 实例的深拷贝
+        """
+        return copy.deepcopy(self)
+
     def calc_bandwidth(self) -> float:
         """计算理论峰值带宽 (GB/s)
 

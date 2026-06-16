@@ -297,3 +297,18 @@ python3 examples/qos_scheduling.py
 - Synopsys DesignWare HBM4/4E Controller IP
 - CMU-SAFARI Ramulator2
 - DFI 5.0/5.1 Specification
+
+## Project Status
+
+| Metric | Value |
+|--------|-------|
+| Test Coverage | 3,761 tests |
+| Test Pass Rate | 100% |
+| Python Files | 150+ |
+| RTL Components | 7 |
+| HBM4 Phases | 6 (A-F) |
+| Documentation | 90%+ |
+
+**Latest Commit**: `f537ef2` - RTL address width fix and verification completion
+
+**License**: Apache-2.0

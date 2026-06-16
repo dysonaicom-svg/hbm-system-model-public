@@ -1,0 +1,73 @@
+{
+  "metadata": {
+    "simulation_name": "Integration Test",
+    "timestamp": "2026-06-16T12:35:02.693655",
+    "simulation_time_us": 0.0,
+    "total_cycles": 0
+  },
+  "requests": {
+    "total": 10000,
+    "completed": 9500,
+    "read": 0,
+    "write": 0
+  },
+  "performance": {
+    "throughput_gbps": 163.84,
+    "peak_bandwidth_gbps": 819.2,
+    "bandwidth_efficiency": 0.2,
+    "avg_latency_cycles": 25.5,
+    "row_hit_rate": 0.45
+  },
+  "latency_percentiles": {
+    "p50": 20.0,
+    "p95": 50.0,
+    "p99": 100.0
+  },
+  "channel_data": {
+    "bandwidth": {
+      "0": 100.0,
+      "1": 105.0,
+      "2": 110.0,
+      "3": 115.0,
+      "4": 120.0,
+      "5": 125.0,
+      "6": 130.0,
+      "7": 135.0
+    },
+    "utilization": {
+      "0": 0.0,
+      "1": 0.1,
+      "2": 0.2,
+      "3": 0.30000000000000004,
+      "4": 0.4,
+      "5": 0.5,
+      "6": 0.6000000000000001,
+      "7": 0.7000000000000001
+    },
+    "request_density": {}
+  },
+  "bank_group_activity": {},
+  "bandwidth_time_series": {},
+  "latency_histogram": {
+    "0": 100,
+    "1": 95,
+    "2": 90,
+    "3": 85,
+    "4": 80,
+    "5": 75,
+    "6": 70,
+    "7": 65,
+    "8": 60,
+    "9": 55,
+    "10": 50,
+    "11": 45,
+    "12": 40,
+    "13": 35,
+    "14": 30,
+    "15": 25,
+    "16": 20,
+    "17": 15,
+    "18": 10,
+    "19": 5
+  }
+}
