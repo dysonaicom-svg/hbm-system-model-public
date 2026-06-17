@@ -80,7 +80,7 @@ Based on:
 - Row buffer locality optimization (2026-06-17)
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from model.controller.address_decoder import AddressDecoder, DecodedAddress
 from model.dram.hbm4_spec import HBM4Spec
 from model.controller.config import HBMConfig
@@ -232,14 +232,11 @@ class HBM4AddressDecoder(AddressDecoder):
             >>> print(mapping['channel'])
             (45, 41, 5)  # 5 bits at position 41-45 for 32 channels
         """
-        if mapping_scheme == "hbm4" or mapping_scheme == "rcbc" or mapping_scheme == "rbc":
+        # Default to RCBC (row-locality optimized) for HBM4
+        if mapping_scheme in ("hbm4", "rcbc", "rbc"):
             # RCBC (Row-Column-Bank-Channel) is the HBM4 recommended mapping
             #
             # HBM4 recommended: Row-Column-Bank-Channel (row locality optimized)
-            #
-            # Note: For backward compatibility, "rbc" also maps to RCBC to ensure
-            # existing code gets the optimized mapping by default.
-            # The legacy RBC behavior is available via explicit "rbc_legacy" scheme.
             #
             # Address layout for HBM4 optimized RCBC:
             # - Stack: bits 47-46 (2 bits)
@@ -278,19 +275,23 @@ class HBM4AddressDecoder(AddressDecoder):
             }
         elif mapping_scheme == "bcr":
             # Bank-Channel-Row (maximizes parallelism)
+            # Bit layout: Stack > BankGroup > Bank > Channel > Pch > Row > Col
+            # Total: 2+3+4+5+1+16+6 = 37 bits
             return {
                 'stack': (47, 46, 2),
-                'bank_group': (45, 43, 3),
-                'bank': (42, 39, 4),
+                'bank_group': (45, 43, 3),     # 8 bank groups at top (after stack)
+                'bank': (42, 39, 4),            # 16 banks
                 'channel': (38, 34, 5),       # 32 channels
-                'pseudo_channel': (33, 33, 1),
-                'row': (32, 17, 16),
-                'col': (16, 11, 6),
-                'burst': (10, 9, 2),          # 4-beat burst
-                'offset': (8, 6, 3),
+                'pseudo_channel': (33, 33, 1),  # 2 pseudo-channels
+                'row': (32, 17, 16),           # 64K rows
+                'col': (16, 11, 6),            # 64 columns
+                'burst': (10, 9, 2),           # 4-beat burst
+                'offset': (8, 6, 3),           # 8-byte offset
             }
         elif mapping_scheme == "crb":
             # Channel-Row-Bank (optimized for cross-channel random access)
+            # Bit layout: Channel > Stack > Pch > BankGroup > Bank > Row > Col > Burst
+            # Total: 5+2+1+3+4+16+6+2+3 = 42 bits
             return {
                 'channel': (47, 43, 5),        # 32 channels at top
                 'stack': (42, 41, 2),
@@ -299,11 +300,12 @@ class HBM4AddressDecoder(AddressDecoder):
                 'bank': (36, 33, 4),
                 'row': (32, 17, 16),
                 'col': (16, 11, 6),
-                'burst': (10, 3, 8),
-                'offset': (2, 0, 3),
+                'burst': (10, 9, 2),
+                'offset': (8, 6, 3),
             }
         else:
-            return self._get_hbm4_mapping("hbm4")
+            # Default to RCBC
+            return self._get_hbm4_mapping("rcbc")
 
     def decode(self, addr: int) -> DecodedAddress:
         """Decode HBM4 address into component fields
@@ -644,3 +646,242 @@ class HBM4AddressDecoder(AddressDecoder):
             return True
         except Exception:
             return False
+
+    def calculate_row_locality(self, addresses: List[int]) -> Dict[str, float]:
+        """Calculate row locality metrics for a sequence of addresses
+
+        This method analyzes a sequence of addresses to determine how well
+        the address mapping supports row buffer locality.
+
+        Args:
+            addresses: List of addresses to analyze
+
+        Returns:
+            Dictionary containing:
+            - row_hit_rate: Fraction of accesses that hit the same row
+            - bank_hit_rate: Fraction of accesses that hit the same bank
+            - bank_group_hit_rate: Fraction of accesses that hit same bank group
+            - channel_hit_rate: Fraction of accesses that hit same channel
+        """
+        if len(addresses) < 2:
+            return {
+                'row_hit_rate': 1.0,
+                'bank_hit_rate': 1.0,
+                'bank_group_hit_rate': 1.0,
+                'channel_hit_rate': 1.0,
+            }
+
+        decoded_list = [self.decode(addr) for addr in addresses]
+
+        row_hits = 0
+        bank_hits = 0
+        bg_hits = 0
+        channel_hits = 0
+
+        for i in range(1, len(decoded_list)):
+            prev = decoded_list[i - 1]
+            curr = decoded_list[i]
+
+            # Same row check
+            if (curr.channel_id == prev.channel_id and
+                curr.pseudo_channel_id == prev.pseudo_channel_id and
+                curr.bank_id == prev.bank_id and
+                curr.row_id == prev.row_id):
+                row_hits += 1
+
+            # Same bank check
+            if (curr.channel_id == prev.channel_id and
+                curr.pseudo_channel_id == prev.pseudo_channel_id and
+                curr.bank_group_id == prev.bank_group_id and
+                curr.bank_id == prev.bank_id):
+                bank_hits += 1
+
+            # Same bank group check
+            if (curr.channel_id == prev.channel_id and
+                curr.pseudo_channel_id == prev.pseudo_channel_id and
+                curr.bank_group_id == prev.bank_group_id):
+                bg_hits += 1
+
+            # Same channel check
+            if curr.channel_id == prev.channel_id:
+                channel_hits += 1
+
+        n = len(addresses) - 1
+        return {
+            'row_hit_rate': row_hits / n if n > 0 else 1.0,
+            'bank_hit_rate': bank_hits / n if n > 0 else 1.0,
+            'bank_group_hit_rate': bg_hits / n if n > 0 else 1.0,
+            'channel_hit_rate': channel_hits / n if n > 0 else 1.0,
+        }
+
+    def get_channel_distribution(self, addresses: List[int]) -> Dict[int, int]:
+        """Get distribution of addresses across channels
+
+        Args:
+            addresses: List of addresses to analyze
+
+        Returns:
+            Dictionary mapping channel_id to access count
+        """
+        distribution = {ch: 0 for ch in range(32)}
+
+        for addr in addresses:
+            decoded = self.decode(addr)
+            if 0 <= decoded.channel_id < 32:
+                distribution[decoded.channel_id] += 1
+
+        return distribution
+
+    def get_bank_group_distribution(self, addresses: List[int],
+                                    channel: Optional[int] = None) -> Dict[int, int]:
+        """Get distribution of addresses across bank groups
+
+        Args:
+            addresses: List of addresses to analyze
+            channel: Optional channel filter
+
+        Returns:
+            Dictionary mapping bank_group_id to access count
+        """
+        distribution = {bg: 0 for bg in range(8)}
+
+        for addr in addresses:
+            decoded = self.decode(addr)
+            if channel is not None and decoded.channel_id != channel:
+                continue
+            if 0 <= decoded.bank_group_id < 8:
+                distribution[decoded.bank_group_id] += 1
+
+        return distribution
+
+    def get_address_for_location(self,
+                                  channel: int,
+                                  pseudo_channel: int,
+                                  bank_group: int,
+                                  bank: int,
+                                  row: int,
+                                  column: int = 0,
+                                  burst: int = 0,
+                                  stack: int = 0) -> int:
+        """Construct address from individual field values
+
+        This is the inverse of decode - given specific field values,
+        construct the corresponding address.
+
+        Args:
+            channel: Channel ID (0-31)
+            pseudo_channel: Pseudo-channel ID (0-1)
+            bank_group: Bank group ID (0-7)
+            bank: Bank ID (0-15)
+            row: Row ID (0-65535)
+            column: Column ID (0-255)
+            burst: Burst beat (0-3)
+            stack: Stack ID (0-3)
+
+        Returns:
+            Constructed 64-bit address
+        """
+        mapping = self._get_hbm4_mapping(self._mapping_scheme)
+
+        addr = 0
+
+        # Apply each field according to mapping
+        if 'stack' in mapping:
+            msb, lsb, _ = mapping['stack']
+            addr |= (stack & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'channel' in mapping:
+            msb, lsb, _ = mapping['channel']
+            addr |= (channel & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'pseudo_channel' in mapping:
+            msb, lsb, _ = mapping['pseudo_channel']
+            addr |= (pseudo_channel & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'bank_group' in mapping:
+            msb, lsb, _ = mapping['bank_group']
+            addr |= (bank_group & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'bank' in mapping:
+            msb, lsb, _ = mapping['bank']
+            addr |= (bank & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'row' in mapping:
+            msb, lsb, _ = mapping['row']
+            addr |= (row & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'col' in mapping:
+            msb, lsb, _ = mapping['col']
+            addr |= (column & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'burst' in mapping:
+            msb, lsb, _ = mapping['burst']
+            addr |= (burst & ((1 << (msb - lsb + 1)) - 1)) << lsb
+
+        if 'offset' in mapping:
+            msb, lsb, _ = mapping['offset']
+            # Default offset to 0 (aligned)
+            addr |= 0 << lsb
+
+        return addr
+
+    def get_sequential_row_addresses(self,
+                                      channel: int,
+                                      pseudo_channel: int,
+                                      bank_group: int,
+                                      bank: int,
+                                      start_row: int,
+                                      count: int,
+                                      columns_per_row: int = 256) -> List[int]:
+        """Generate sequential addresses within a row
+
+        This is useful for testing row locality.
+
+        Args:
+            channel: Channel ID
+            pseudo_channel: Pseudo-channel ID
+            bank_group: Bank group ID
+            bank: Bank ID
+            start_row: Starting row
+            count: Number of addresses to generate
+            columns_per_row: Columns per row (default 256 for RCBC)
+
+        Returns:
+            List of addresses accessing sequential columns in the same row
+        """
+        addresses = []
+        for i in range(count):
+            column = i % columns_per_row
+            burst = (i // columns_per_row) % 4
+            row = start_row + (i // columns_per_row // 4)
+
+            addr = self.get_address_for_location(
+                channel=channel,
+                pseudo_channel=pseudo_channel,
+                bank_group=bank_group,
+                bank=bank,
+                row=row,
+                column=column,
+                burst=burst,
+            )
+            addresses.append(addr)
+
+        return addresses
+
+    def compare_mapping_schemes(self, addresses: List[int]) -> Dict[str, Dict[str, float]]:
+        """Compare row locality metrics across all mapping schemes
+
+        Args:
+            addresses: List of addresses to analyze
+
+        Returns:
+            Dictionary mapping scheme names to their locality metrics
+        """
+        schemes = ["rcbc", "rbc", "bcr", "crb"]
+        results = {}
+
+        for scheme in schemes:
+            decoder = HBM4AddressDecoder(mapping_scheme=scheme)
+            results[scheme] = decoder.calculate_row_locality(addresses)
+
+        return results
