@@ -112,6 +112,20 @@ class SimulationStats:
     # 新增: 按通道统计
     channel_stats: Dict[int, Dict[str, int]] = field(default_factory=dict)
 
+    # RTL Co-simulation statistics
+    rtl_transactions: int = 0
+    rtl_matched: int = 0
+    rtl_mismatched: int = 0
+    rtl_max_latency_diff: int = 0
+    rtl_avg_latency_diff: float = 0.0
+
+    @property
+    def rtl_match_rate(self) -> float:
+        total = self.rtl_matched + self.rtl_mismatched
+        if total == 0:
+            return 0.0
+        return self.rtl_matched / total
+
     @property
     def duration_s(self) -> float:
         """仿真持续时间(秒)"""
@@ -331,7 +345,55 @@ class HBM4UnifiedSimulator:
             'duration_s': self.stats.duration_s,
             'throughput': self.stats.throughput,
             'channel_stats': self.stats.channel_stats,
+            # RTL Co-simulation
+            'rtl_cosim': {
+                'enabled': self.cosim_enabled,
+                'transactions': self.stats.rtl_transactions if hasattr(self.stats, 'rtl_transactions') else 0,
+            },
         }
+
+    # ========== RTL Co-simulation Methods ==========
+
+    def enable_rtl_cosimulation(
+        self,
+        enable_rtl: bool = True,
+        compare_results: bool = True,
+        trace_enabled: bool = False
+    ):
+        """启用RTL协同仿真
+
+        Args:
+            enable_rtl: 是否启用RTL仿真
+            compare_results: 是否对比Python和RTL结果
+            trace_enabled: 是否启用事务追踪
+        """
+        cosim_config = CoSimConfig(
+            enable_rtl=enable_rtl,
+            trace_enabled=trace_enabled,
+            compare_results=compare_results,
+        )
+        self.rtl_interface = RTLInterface(cosim_config)
+        self.result_comparator = ResultComparator(tolerance_cycles=5)
+        self.cosim_enabled = True
+
+        # Set up mismatch callback
+        def on_mismatch(diff_info):
+            if hasattr(self.stats, 'rtl_mismatched'):
+                self.stats.rtl_mismatched += 1
+            print(f"[RTL MISMATCH] {diff_info}")
+
+        self.rtl_interface.on_mismatch = on_mismatch
+
+        print(f"[HBM4UnifiedSim] RTL cosimulation enabled (rtl={enable_rtl}, compare={compare_results})")
+
+    def disable_rtl_cosimulation(self):
+        """禁用RTL协同仿真"""
+        if self.rtl_interface:
+            self.rtl_interface.stop_rtl_simulation()
+        self.rtl_interface = None
+        self.result_comparator = None
+        self.cosim_enabled = False
+        print("[HBM4UnifiedSim] RTL cosimulation disabled")
 
     def run(self) -> SimulationStats:
         """

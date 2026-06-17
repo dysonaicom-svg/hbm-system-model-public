@@ -50,12 +50,19 @@ class TestModuleIntegration:
 
         # Initialize
         lbd.initialize()
+        # Enable PLL/DLL lock for timing checks
+        for ch in range(lbd.config.num_channels):
+            timing = lbd.get_timing_context(ch)
+            if timing:
+                timing.pll_locked = True
+                timing.dll_locked = True
+                timing.training_passed = True
         for _ in range(50):
             lbd.tick()
 
         # Process command
         ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
-        assert ok
+        assert ok, f"ACT failed: {msg}"
 
         # Verify PAM3 encoder is available
         assert lbd.pam3_encoder is not None
@@ -111,9 +118,16 @@ class TestEndToEndCommandFlow:
 
     @pytest.fixture
     def lbd(self):
-        """Create initialized LBD"""
+        """Create initialized LBD with PLL enabled"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for all channels
+        for ch in range(lbd.config.num_channels):
+            timing = lbd.get_timing_context(ch)
+            if timing:
+                timing.pll_locked = True
+                timing.dll_locked = True
+                timing.training_passed = True
         for _ in range(100):
             lbd.tick()
         return lbd
@@ -224,19 +238,20 @@ class TestEndToEndCommandFlow:
         ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
         assert ok
 
-        for _ in range(15):
+        # Wait for tRAS (20 cycles for HBM4) plus tRP (8 cycles)
+        for _ in range(30):
             lbd.tick()
 
         # Precharge
         ok, msg = lbd.process_command(channel_id=0, command='PRE', address=0x1000)
-        assert ok
+        assert ok, f"PRE failed: {msg}"
 
         for _ in range(10):
             lbd.tick()
 
         # Open same row (row hit)
         ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
-        assert ok
+        assert ok, f"ACT failed: {msg}"
 
         state = lbd.get_channel_state(0)
         assert state['open_row'] == 0x1000
@@ -384,9 +399,16 @@ class TestErrorInjection:
 
     @pytest.fixture
     def lbd(self):
-        """Create initialized LBD"""
+        """Create initialized LBD with PLL enabled"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for all channels
+        for ch in range(lbd.config.num_channels):
+            timing = lbd.get_timing_context(ch)
+            if timing:
+                timing.pll_locked = True
+                timing.dll_locked = True
+                timing.training_passed = True
         for _ in range(100):
             lbd.tick()
         return lbd

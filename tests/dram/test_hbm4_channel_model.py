@@ -682,5 +682,293 @@ class TestHBM4RefreshIntegration:
         assert result is True
 
 
+class TestHBM4PerformanceStatistics:
+    """Test performance statistics collection"""
+
+    def test_channel_performance_stats_initialization(self):
+        """Channel must have performance statistics initialized"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        stats = ch.get_performance_stats()
+        assert stats is not None
+        assert stats.act_count == 0
+        assert stats.read_count == 0
+        assert stats.write_count == 0
+
+    def test_activation_increments_stat(self):
+        """Activation must increment act_count"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        # Issue some activations
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        ch.issue_command('ACT', pseudo_channel=1, bank=0, row=200)
+
+        stats = ch.get_performance_stats()
+        assert stats.act_count >= 2
+
+    def test_read_increments_stat(self):
+        """Read must increment read_count"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        ch.issue_command('RD', pseudo_channel=0, bank=0, row=100, col=0)
+
+        stats = ch.get_performance_stats()
+        assert stats.read_count >= 1
+
+    def test_write_increments_stat(self):
+        """Write must increment write_count"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        ch.issue_command('WR', pseudo_channel=0, bank=0, row=100, col=0)
+
+        stats = ch.get_performance_stats()
+        assert stats.write_count >= 1
+
+    def test_row_hit_tracking(self):
+        """Row hits and misses must be tracked"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        # First access - row miss
+        ch.issue_command('RD', pseudo_channel=0, bank=0, row=100, col=0)
+
+        stats = ch.get_performance_stats()
+        # After opening a row, next access to same row should be hit
+        assert stats.row_misses >= 1
+
+    def test_performance_summary(self):
+        """Performance summary must contain expected keys"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        summary = ch.get_performance_stats().get_summary()
+        assert 'act_count' in summary
+        assert 'read_count' in summary
+        assert 'write_count' in summary
+        assert 'row_hit_rate' in summary
+
+    def test_reset_clears_statistics(self):
+        """Reset must clear performance statistics"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        # Generate some activity
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        ch.issue_command('RD', pseudo_channel=0, bank=0, row=100, col=0)
+
+        # Reset
+        ch.reset()
+
+        stats = ch.get_performance_stats()
+        assert stats.act_count == 0
+        assert stats.read_count == 0
+
+
+class TestHBM4EnhancedScheduler:
+    """Test enhanced bank group scheduler with independent timing domains"""
+
+    def test_enhanced_scheduler_creation(self):
+        """Enhanced scheduler must be created for each pseudo-channel"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        scheduler0 = ch.get_scheduler(0)
+        scheduler1 = ch.get_scheduler(1)
+
+        assert scheduler0 is not None
+        assert scheduler1 is not None
+
+    def test_scheduler_tracks_per_pseudo_channel(self):
+        """Scheduler must track timing independently per pseudo-channel"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        # Activate in PC0
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        # Scheduler state should be tracked
+        state0 = ch.get_scheduler_state(0)
+        assert state0.get('last_act_cycle', -1) >= 0
+
+    def test_scheduler_can_issue_act(self):
+        """Scheduler must check timing constraints for ACT"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        scheduler = ch.get_scheduler(0)
+
+        # First ACT should succeed
+        assert scheduler.can_issue_act(0, 0, 0)
+
+        # Record the ACT
+        scheduler.record_act(0, 0, 0)
+
+        # Immediate second ACT to same BG should fail (tRRDS not met)
+        assert not scheduler.can_issue_act(0, 0, 1)
+
+    def test_scheduler_faw_tracking(self):
+        """Scheduler must track FAW window"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        scheduler = ch.get_scheduler(0)
+        timing = ch.timing
+
+        # The FAW window limits 4 activations within nFAW cycles
+        # We need to issue 4 ACTs to fill the window
+
+        # Issue 4 activations - all to same BG to avoid tRRDL issues
+        # But we need to wait tRRDS between same BG activations
+        cycles = [0, timing.nRRDS, timing.nRRDS * 2, timing.nRRDS * 3]
+
+        for cycle in cycles:
+            assert scheduler.can_issue_act(0, 0, cycle), f"ACT at cycle {cycle} should be allowed"
+            scheduler.record_act(0, 0, cycle)
+
+        # After recording 4 ACTs, the FAW window is full with [0, 3, 6, 9]
+        # 5th activation before nFAW expires should be blocked by FAW
+        # At cycle 10 (still within FAW window since oldest is at 0 and nFAW = 16)
+        assert not scheduler.can_issue_act(0, 0, timing.nRRDS + 1), \
+            "5th ACT should be blocked by FAW window"
+
+        # After nFAW cycles, the oldest entries expire and the 5th becomes allowed
+        expired_cycle = cycles[0] + timing.nFAW
+        # At this point, the first entry (at 0) has expired (16 cycles elapsed)
+        # So FAW window has only 3 entries, allowing 5th ACT
+        assert scheduler.can_issue_act(0, 0, expired_cycle), \
+            "ACT after FAW window expired should be allowed"
+
+    def test_scheduler_column_command_tracking(self):
+        """Scheduler must track column commands"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        scheduler = ch.get_scheduler(0)
+
+        # Record a READ
+        scheduler.record_col(0, 0, 10, is_write=False)
+
+        # Record a WRITE immediately - should be blocked (nRTW not met)
+        assert not scheduler.can_issue_col(0, 0, 11, is_write=True)
+
+        # After nRTW cycles, should be allowed
+        assert scheduler.can_issue_col(0, 0, 15, is_write=True)
+
+    def test_get_available_bank_groups(self):
+        """Must return list of available bank groups"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        scheduler = ch.get_scheduler(0)
+
+        # All BGs should be available initially
+        available = scheduler.get_available_bank_groups(0, 0)
+        assert len(available) == 8
+
+    def test_get_next_available_cycle(self):
+        """Must calculate next available cycle for BG"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        scheduler = ch.get_scheduler(0)
+
+        # Record an ACT
+        scheduler.record_act(0, 0, 5)
+
+        # Next available for same BG should be 5 + tRRDS
+        timing = ch.timing
+        next_cycle = scheduler.get_next_available_cycle(0, 0, 5)
+        assert next_cycle == 5 + timing.nRRDS
+
+
+class TestHBM4ChannelArrayPerformance:
+    """Test system-level performance statistics"""
+
+    def test_system_performance_summary(self):
+        """System must aggregate performance across all channels"""
+        spec = HBM4Spec()
+        array = HBM4ChannelArray()
+
+        # Generate activity on channel 0
+        ch = array.get_channel(0)
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        ch.issue_command('RD', pseudo_channel=0, bank=0, row=100, col=0)
+
+        perf = array.get_system_performance_summary()
+        assert 'total_activations' in perf
+        assert 'total_reads' in perf
+        assert 'peak_bandwidth_gbs' in perf
+
+    def test_channel_performance_retrieval(self):
+        """Must retrieve performance for specific channel"""
+        spec = HBM4Spec()
+        array = HBM4ChannelArray()
+
+        perf = array.get_channel_performance(0)
+        assert perf is not None
+        assert 'act_count' in perf
+
+    def test_invalid_channel_returns_none(self):
+        """Invalid channel ID must return None"""
+        spec = HBM4Spec()
+        array = HBM4ChannelArray()
+
+        perf = array.get_channel_performance(99)
+        assert perf is None
+
+    def test_reset_all_clears_stats(self):
+        """Reset all must clear system statistics"""
+        spec = HBM4Spec()
+        array = HBM4ChannelArray()
+
+        # Generate activity
+        ch = array.get_channel(0)
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        # Reset all
+        array.reset_all()
+
+        # Stats should be cleared
+        perf = array.get_system_performance_summary()
+        assert perf['total_activations'] == 0
+
+
+class TestHBM4TimingDomainIsolation:
+    """Test independent timing domain isolation between pseudo-channels"""
+
+    def test_pseudo_channels_have_independent_timing(self):
+        """Pseudo-channels must have independent timing tracking"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        # Activate in PC0
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        # PC1 should still be able to issue commands without PC0 delay
+        scheduler1 = ch.get_scheduler(1)
+        # PC1's own timing should not be affected by PC0
+        assert scheduler1.can_issue_act(1, 0, ch.current_cycle)
+
+    def test_scheduler_state_per_pseudo_channel(self):
+        """Scheduler state must be tracked per pseudo-channel"""
+        spec = HBM4Spec()
+        ch = HBM4Channel(0, spec)
+
+        # Activate in PC0
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        state0 = ch.get_scheduler_state(0)
+        state1 = ch.get_scheduler_state(1)
+
+        # PC0 should have ACT recorded, PC1 should not
+        assert state0.get('last_act_cycle', -1) >= 0
+        # PC1's state may be empty or -1
+        assert state1.get('last_act_cycle', -1) == -1 or state1 == {}
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

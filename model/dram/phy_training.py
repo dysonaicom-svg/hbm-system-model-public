@@ -12,8 +12,11 @@ Key features:
 - Write DQ (WDQ) training - write data eye training
 - Gate Training (GL) for read gate alignment
 - VREF CA/DQ training
-- DFI 5.1 interface integration
+- DFI 5.0/5.1 interface integration
 - Per-lane and per-group calibration support
+- HBM4 PAM3 (3-level) signaling training
+- PAM3 eye diagram and DFE training
+- PHY Independent Mode (PIM) for DFI 5.0
 
 Training Sequence (JEDEC JESD270-4A):
 1. Initialize training
@@ -24,12 +27,20 @@ Training Sequence (JEDEC JESD270-4A):
 6. Gate Training (T_GL)
 7. VREF CA training (T_VREF_CA)
 8. VREF DQ training (T_VREF_DQ)
-9. Verify and complete
+9. PAM3-specific training (HBM4E)
+10. Verify and complete
+
+HBM4 PAM3 Signaling:
+- Uses 3-level signaling: -1, 0, +1 (vs NRZ's 0, 1)
+- Requires 3-level VREF calibration
+- Requires PAM3-specific eye training
+- DFE tap coefficients for 3-level decision boundaries
+- PAM3-specific margin measurement
 
 Reference:
 - JEDEC JESD270-4A HBM4 specification
 - Cadence HBM4E documentation
-- DFI 5.1 specification
+- DFI 5.0/5.1 specification
 - Synopsys DesignWare HBM4/4E Controller IP
 """
 
@@ -52,6 +63,156 @@ VREF_CA_RANGE_PERCENT = (15.0, 45.0)  # 15-45% VDDQ
 VREF_DQ_RANGE_PERCENT = (15.0, 45.0)   # 15-45% VDDQ
 
 
+# =============================================================================
+# HBM4 PAM3 Signaling Constants (JEDEC JESD270-4A)
+# =============================================================================
+# HBM4 introduces PAM3 (3-level Pulse Amplitude Modulation) at higher speeds
+# PAM3 uses three signal levels: -1, 0, +1 (vs NRZ's binary 0, 1)
+
+class PAM3Level(Enum):
+    """PAM3 signal levels for HBM4"""
+    LOW = -1    # -1 level (negative)
+    ZERO = 0    # 0 level (baseline)
+    HIGH = 1   # +1 level (positive)
+
+
+class PAM3TrainingState(Enum):
+    """PAM3-specific training phases for HBM4E"""
+    PAM3_INIT = auto()                    # Initialize PAM3 training
+    PAM3_VREF_CAL = auto()               # PAM3 VREF calibration (3-level)
+    PAM3_EYE_TRAINING = auto()            # PAM3 eye diagram training
+    PAM3_DFE_TAPS = auto()                # DFE tap coefficient training
+    PAM3_MARGIN_VERIFY = auto()           # Verify PAM3 margins
+    PAM3_COMPLETE = auto()                # PAM3 training complete
+
+
+# PAM3 VREF DAC settings (HBM4 uses finer granularity for 3-level)
+PAM3_VREF_DAC_BITS = 7        # 7-bit DAC for PAM3 (vs 6-bit for NRZ)
+PAM3_VREF_DAC_RANGE = (0, 127)  # 7-bit range
+PAM3_VREF_HIGH_MIN = 40        # Upper VREF threshold for +1 level
+PAM3_VREF_HIGH_MAX = 90        # Max upper threshold
+PAM3_VREF_LOW_MIN = 10         # Min lower threshold
+PAM3_VREF_LOW_MAX = 60         # Max lower threshold
+PAM3_VREF_MID = 63             # Middle point (same as NRZ center)
+
+# PAM3 eye center margins (typical values)
+PAM3_UPPER_EYE_MARGIN = 0.2   # Upper eye opening (UI fraction)
+PAM3_LOWER_EYE_MARGIN = 0.2   # Lower eye opening (UI fraction)
+PAM3_VERTICAL_EYE_MARGIN = 0.15  # Vertical margin between eyes
+
+# PAM3 DFE configuration
+PAM3_DFE_NUM_TAPS = 5          # Number of DFE taps for PAM3
+PAM3_DFE_MAX_TAP_WEIGHT = 0.25  # Maximum DFE tap weight
+PAM3_DFE_CONVERGENCE_RATE = 0.01  # DFE LMS convergence rate
+
+
+class PAM3SignalConfig:
+    """PAM3 signal configuration for HBM4"""
+
+    def __init__(self):
+        # PAM3 level thresholds (VREF settings)
+        self.vref_high: int = PAM3_VREF_MID        # Threshold between ZERO and HIGH
+        self.vref_low: int = PAM3_VREF_MID         # Threshold between LOW and ZERO
+
+        # PAM3 margins
+        self.upper_eye_margin: float = PAM3_UPPER_EYE_MARGIN
+        self.lower_eye_margin: float = PAM3_LOWER_EYE_MARGIN
+        self.vertical_margin: float = PAM3_VERTICAL_EYE_MARGIN
+
+        # DFE taps for PAM3
+        self.dfe_taps: List[float] = [0.0] * PAM3_DFE_NUM_TAPS
+
+        # Training status
+        self.training_complete: bool = False
+        self.training_passed: bool = False
+        self.errors: List[str] = []
+
+    def validate_vref_settings(self) -> bool:
+        """Validate PAM3 VREF settings are within valid range"""
+        if not (PAM3_VREF_DAC_RANGE[0] <= self.vref_high <= PAM3_VREF_DAC_RANGE[1]):
+            self.errors.append(f"vref_high {self.vref_high} out of range")
+            return False
+        if not (PAM3_VREF_DAC_RANGE[0] <= self.vref_low <= PAM3_VREF_DAC_RANGE[1]):
+            self.errors.append(f"vref_low {self.vref_low} out of range")
+            return False
+        if self.vref_low >= self.vref_high:
+            self.errors.append(f"vref_low ({self.vref_low}) >= vref_high ({self.vref_high})")
+            return False
+        return True
+
+    def get_pam3_level(self, sample: float) -> PAM3Level:
+        """Determine PAM3 level from analog sample
+
+        Args:
+            sample: Analog sample value (normalized -1 to +1)
+
+        Returns:
+            PAM3Level corresponding to sample
+        """
+        if sample >= self.vref_high / PAM3_VREF_DAC_RANGE[1]:
+            return PAM3Level.HIGH
+        elif sample <= self.vref_low / PAM3_VREF_DAC_RANGE[1]:
+            return PAM3Level.LOW
+        else:
+            return PAM3Level.ZERO
+
+    def calculate_eye_center(self) -> Tuple[float, float]:
+        """Calculate PAM3 eye center positions
+
+        Returns:
+            Tuple of (upper_eye_center, lower_eye_center) normalized positions
+        """
+        upper_center = (self.vref_high + PAM3_VREF_DAC_RANGE[1]) / 2 / PAM3_VREF_DAC_RANGE[1]
+        lower_center = self.vref_low / 2 / PAM3_VREF_DAC_RANGE[1]
+        return (upper_center, lower_center)
+
+
+# =============================================================================
+# DFI 5.0 Interface Constants
+# =============================================================================
+
+# DFI 5.0 Frequency Change Protocol
+DFI5_FREQ_CHANGE_TIMEOUT = 10000      # Cycles for freq change timeout
+DFI5_FREQ_LATENCY = 5                 # Frequency change latency cycles
+
+# DFI 5.0 Low Power States
+class DFI5LowPowerState(Enum):
+    """DFI 5.0 Low Power State Machine"""
+    LP_IDLE = auto()          # Normal operation
+    LP_CTRL = auto()         # Controller-initiated low power
+    LP_DATA = auto()         # Data transfer low power
+    LP_FREQ_CHANGE = auto()  # Frequency change in progress
+    LP_SELF_REFRESH = auto() # Self-refresh state
+
+
+# DFI 5.0 PHY Independent Mode (PIM) signals
+class DFIPIMSignals:
+    """DFI 5.0 PHY Independent Mode signals
+
+    PIM allows the PHY to operate autonomously during initialization
+    and training without controller intervention.
+    """
+
+    def __init__(self):
+        # PIM control
+        self.pim_enable: bool = False           # Enable PHY Independent Mode
+        self.pim_mode: int = 0                   # PIM operating mode (0-3)
+
+        # Training control
+        self.pim_training_req: bool = False     # Training request from PHY
+        self.pim_training_ack: bool = False      # Controller acknowledgment
+        self.pim_training_done: bool = False     # Training completion
+
+        # Frequency change
+        self.pim_freq_req: bool = False         # Frequency change request
+        self.pim_freq_ack: bool = False          # Frequency change acknowledgment
+
+        # Status
+        self.pim_status: int = 0                # PHY status code
+        self.pim_error: bool = False             # Error flag
+        self.pim_error_code: int = 0             # Error code
+
+
 class PHYInitState(Enum):
     """PHY Initialization State Machine (PH-003)
 
@@ -71,6 +232,7 @@ class TrainingPhase(Enum):
     """Training Sequence State Machine (PH-004)
 
     Defines the stages of memory training for link optimization.
+    Includes HBM4 PAM3-specific training phases for HBM4E support.
     """
     # Initial states
     TRAIN_IDLE = auto()                    # Not training
@@ -97,6 +259,13 @@ class TrainingPhase(Enum):
     TRAIN_VREF_CA = auto()                 # VREF CA training
     TRAIN_VREF_DQ = auto()                 # VREF DQ training
 
+    # HBM4E PAM3 Training phases
+    TRAIN_PAM3_INIT = auto()               # PAM3 training initialization
+    TRAIN_PAM3_VREF = auto()               # PAM3 VREF calibration (3-level)
+    TRAIN_PAM3_EYE = auto()                # PAM3 eye diagram training
+    TRAIN_PAM3_DFE = auto()               # PAM3 DFE tap training
+    TRAIN_PAM3_VERIFY = auto()             # PAM3 margin verification
+
     # Completion states
     TRAIN_VERIFY = auto()                  # Verify training results
     TRAIN_COMPLETE = auto()                # Training complete
@@ -117,7 +286,7 @@ class TrainingParameters:
     """Training parameters for each training phase
 
     Stores delay values, margins, and configuration for each
-    training stage.
+    training stage. Includes HBM4 PAM3-specific parameters.
     """
     # Read DQS training
     rd_dqs_delay: int = 0                  # Read DQS delay (taps)
@@ -140,6 +309,15 @@ class TrainingParameters:
     # Per-lane calibration data
     lane_delays: Dict[int, int] = field(default_factory=dict)  # Lane-specific delays
 
+    # PAM3 training parameters (HBM4E)
+    pam3_enabled: bool = False             # PAM3 mode enabled
+    pam3_upper_vref: int = PAM3_VREF_MID   # Upper VREF threshold
+    pam3_lower_vref: int = PAM3_VREF_MID   # Lower VREF threshold
+    pam3_upper_margin: float = 0.0        # Upper eye margin (UI)
+    pam3_lower_margin: float = 0.0        # Lower eye margin (UI)
+    pam3_dfe_taps: List[float] = field(default_factory=lambda: [0.0] * PAM3_DFE_NUM_TAPS)
+    pam3_training_complete: bool = False   # PAM3 training completed
+
     # Training status
     training_passed: bool = False
     training_errors: List[str] = field(default_factory=list)
@@ -147,10 +325,10 @@ class TrainingParameters:
 
 @dataclass
 class DFI5TrainingControl:
-    """DFI 5.1 Training Control Signals
+    """DFI 5.0/5.1 Training Control Signals
 
-    According to DFI 5.1 specification for PHY Independent Mode
-    training control.
+    According to DFI 5.0/5.1 specification for PHY Independent Mode
+    training control. Includes PAM3-specific training commands for HBM4E.
     """
     # Training request signals
     tra_req: bool = False                  # Training request
@@ -164,6 +342,33 @@ class DFI5TrainingControl:
     # Training status
     tra_error: bool = False                 # Training error
     tra_fail_code: int = 0                  # Failure code
+
+    # DFI 5.0 Frequency change signals
+    freq_change_req: bool = False           # Frequency change request
+    freq_change_ack: bool = False           # Frequency change acknowledge
+    freq_change_en: bool = False            # Frequency change enable
+    freq_ratio: int = 1                     # Frequency ratio (PHY/CTRL)
+
+    # DFI 5.0 Low power signals
+    lp_req: bool = False                    # Low power entry request
+    lp_ack: bool = False                    # Low power acknowledge
+    lp_wakeup: bool = False                 # Low power wakeup
+    lp_state: DFI5LowPowerState = DFI5LowPowerState.LP_IDLE
+
+    # DFI 5.0 PHY Independent Mode (PIM) signals
+    pim_enable: bool = False                # Enable PHY Independent Mode
+    pim_training_req: bool = False         # PIM training request
+    pim_training_done: bool = False        # PIM training done
+    pim_status: int = 0                    # PHY status during PIM
+
+    # DFI 5.0 Control update
+    ctrlupd_req: bool = False              # Controller update request
+    ctrlupd_ack: bool = False               # Controller update acknowledge
+
+    # PAM3 training commands (DFI 5.0 for HBM4E)
+    pam3_training_req: bool = False         # PAM3 training request
+    pam3_vref_req: bool = False             # PAM3 VREF calibration request
+    pam3_dfe_req: bool = False              # PAM3 DFE tap training request
 
     def encode_training_cmd(self, cmd: TrainingPhase) -> Tuple[bool, int, int]:
         """Encode training command for DFI interface
@@ -187,6 +392,68 @@ class DFI5TrainingControl:
             TrainingPhase.TRAIN_VREF_DQ: (True, 5, 1),
         }
         return cmd_map.get(cmd, (False, 0, 0))
+
+    def encode_pam3_training_cmd(self, pam3_state: PAM3TrainingState) -> Tuple[bool, int]:
+        """Encode PAM3 training command for DFI interface
+
+        Args:
+            pam3_state: PAM3 training state
+
+        Returns:
+            Tuple of (pam3_req, pam3_subtype)
+        """
+        pam3_cmd_map = {
+            PAM3TrainingState.PAM3_INIT: (True, 0),
+            PAM3TrainingState.PAM3_VREF_CAL: (True, 1),       # VREF calibration
+            PAM3TrainingState.PAM3_EYE_TRAINING: (True, 2),  # Eye training
+            PAM3TrainingState.PAM3_DFE_TAPS: (True, 3),       # DFE training
+            PAM3TrainingState.PAM3_MARGIN_VERIFY: (True, 4),  # Margin verification
+            PAM3TrainingState.PAM3_COMPLETE: (False, 0),
+        }
+        return pam3_cmd_map.get(pam3_state, (False, 0))
+
+    def start_freq_change(self, target_ratio: int = 2):
+        """Initiate DFI 5.0 frequency change sequence
+
+        Args:
+            target_ratio: Target frequency ratio (PHY/CTRL)
+        """
+        self.freq_change_req = True
+        self.freq_ratio = target_ratio
+        self.lp_state = DFI5LowPowerState.LP_FREQ_CHANGE
+
+    def complete_freq_change(self):
+        """Complete frequency change sequence"""
+        self.freq_change_req = False
+        self.freq_change_ack = False
+        self.freq_change_en = False
+        self.lp_state = DFI5LowPowerState.LP_IDLE
+
+    def enter_low_power(self, lp_type: DFI5LowPowerState = DFI5LowPowerState.LP_CTRL):
+        """Enter low power state
+
+        Args:
+            lp_type: Type of low power state to enter
+        """
+        self.lp_req = True
+        self.lp_state = lp_type
+
+    def exit_low_power(self):
+        """Exit low power state"""
+        self.lp_wakeup = True
+        self.lp_req = False
+        self.lp_ack = False
+        self.lp_state = DFI5LowPowerState.LP_IDLE
+
+    def enable_pim_mode(self, pim_mode: int = 1):
+        """Enable PHY Independent Mode (PIM)
+
+        Args:
+            pim_mode: PIM operating mode (1=training, 2=calibration, 3=both)
+        """
+        self.pim_enable = True
+        self.pim_mode = pim_mode
+        self.pim_training_req = True
 
 
 @dataclass
@@ -242,6 +509,7 @@ class PHYTrainingStateMachine:
     """
 
     # Training phase sequence order (JEDEC JESD270-4A)
+    # Includes PAM3 training for HBM4E @ 16 GT/s
     TRAINING_SEQUENCE = [
         TrainingPhase.TRAIN_RD_DQS,
         TrainingPhase.TRAIN_WR_LEVELING,
@@ -253,6 +521,21 @@ class PHYTrainingStateMachine:
         TrainingPhase.TRAIN_GATE_DELAY,
         TrainingPhase.TRAIN_VREF_CA,
         TrainingPhase.TRAIN_VREF_DQ,
+        # PAM3 training phases (HBM4E)
+        TrainingPhase.TRAIN_PAM3_INIT,
+        TrainingPhase.TRAIN_PAM3_VREF,
+        TrainingPhase.TRAIN_PAM3_EYE,
+        TrainingPhase.TRAIN_PAM3_DFE,
+        TrainingPhase.TRAIN_PAM3_VERIFY,
+    ]
+
+    # PAM3 training phase sequence (separate sequence for clarity)
+    PAM3_TRAINING_SEQUENCE = [
+        PAM3TrainingState.PAM3_INIT,
+        PAM3TrainingState.PAM3_VREF_CAL,
+        PAM3TrainingState.PAM3_EYE_TRAINING,
+        PAM3TrainingState.PAM3_DFE_TAPS,
+        PAM3TrainingState.PAM3_MARGIN_VERIFY,
     ]
 
     # Default timeout per training phase (cycles @ 8 GT/s)
@@ -266,7 +549,7 @@ class PHYTrainingStateMachine:
 
         Args:
             channel_id: Channel index for this training instance
-            dfi_interface: Optional DFI 5.1 interface for integration
+            dfi_interface: Optional DFI 5.0 interface for integration
             config: Optional configuration dictionary
         """
         self.channel_id = channel_id
@@ -279,15 +562,24 @@ class PHYTrainingStateMachine:
         self.enable_retry = self.config.get('enable_retry', True)
         self.verify_results = self.config.get('verify_results', True)
 
+        # HBM4 PAM3 configuration
+        self.pam3_enabled = self.config.get('pam3_enabled', False)
+        self.pam3_config = PAM3SignalConfig() if self.pam3_enabled else None
+        self._pam3_state = PAM3TrainingState.PAM3_INIT
+
         # State tracking
         self.status = TrainingStatus()
         self.params = TrainingParameters()
         self.dfi_control = DFI5TrainingControl()
 
+        # Set PAM3 parameters if enabled
+        if self.pam3_enabled:
+            self.params.pam3_enabled = True
+
         # Cycle counter
         self._cycle = 0
 
-        # Training patterns (PRBS, walking 1/0, etc.)
+        # Training patterns (PRBS, walking 1/0, PAM3 patterns, etc.)
         self._training_patterns = self._init_training_patterns()
 
         # Lane data for per-lane calibration
@@ -297,7 +589,7 @@ class PHYTrainingStateMachine:
         """Initialize training test patterns
 
         Returns:
-            Dictionary of training patterns
+            Dictionary of training patterns including PAM3 patterns for HBM4
         """
         # PRBS-7 pattern
         prbs7 = []
@@ -306,6 +598,14 @@ class PHYTrainingStateMachine:
             prbs7.append((lfsr >> 6) & 1)
             new_bit = ((lfsr >> 6) ^ (lfsr >> 5)) & 1
             lfsr = ((lfsr << 1) | new_bit) & 0x7F
+
+        # PRBS-9 pattern (for longer patterns)
+        prbs9 = []
+        lfsr9 = 0x1FF
+        for _ in range(256):
+            prbs9.append((lfsr9 >> 8) & 1)
+            new_bit = ((lfsr9 >> 8) ^ (lfsr9 >> 4)) & 1
+            lfsr9 = ((lfsr9 << 1) | new_bit) & 0x1FF
 
         # Walking 1 pattern
         walking_1 = [1 << i for i in range(64)]
@@ -317,12 +617,42 @@ class PHYTrainingStateMachine:
         all_ones = [0xFFFF] * 64
         all_zeros = [0x0000] * 64
 
+        # PAM3 training patterns (3-level patterns)
+        # PAM3 uses ternary values: -1, 0, +1 encoded as 0, 1, 2
+        pam3_all_high = [2] * 64      # All +1 levels
+        pam3_all_mid = [1] * 64       # All 0 levels
+        pam3_all_low = [0] * 64       # All -1 levels
+
+        # PAM3 alternating pattern (for eye training)
+        pam3_alternate = [2 if i % 2 == 0 else 0 for i in range(64)]
+
+        # PAM3 walking 1 in ternary (walks +1 level through lanes)
+        pam3_walking_high = []
+        for i in range(64):
+            pattern = [1] * 64  # Start with all 0
+            pattern[i] = 2      # Set +1 level
+            pam3_walking_high.append(sum(pattern[j] << (j * 2) for j in range(min(32, len(pattern)))))
+
+        # PAM3 mixed pattern for DFE training
+        pam3_mixed = []
+        for i in range(128):
+            # Mix of levels for DFE convergence
+            pam3_mixed.append(i % 3)
+
         return {
             'prbs7': prbs7,
+            'prbs9': prbs9,
             'walking_1': walking_1,
             'walking_0': walking_0,
             'all_ones': all_ones,
             'all_zeros': all_zeros,
+            # PAM3 patterns
+            'pam3_all_high': pam3_all_high,
+            'pam3_all_mid': pam3_all_mid,
+            'pam3_all_low': pam3_all_low,
+            'pam3_alternate': pam3_alternate,
+            'pam3_walking_high': pam3_walking_high,
+            'pam3_mixed': pam3_mixed,
         }
 
     @property
@@ -388,6 +718,12 @@ class PHYTrainingStateMachine:
             TrainingPhase.TRAIN_GATE_DELAY: self._train_gate_delay,
             TrainingPhase.TRAIN_VREF_CA: self._train_vref_ca,
             TrainingPhase.TRAIN_VREF_DQ: self._train_vref_dq,
+            # PAM3 training phases
+            TrainingPhase.TRAIN_PAM3_INIT: self._train_pam3_init,
+            TrainingPhase.TRAIN_PAM3_VREF: self._train_pam3_vref,
+            TrainingPhase.TRAIN_PAM3_EYE: self._train_pam3_eye,
+            TrainingPhase.TRAIN_PAM3_DFE: self._train_pam3_dfe,
+            TrainingPhase.TRAIN_PAM3_VERIFY: self._train_pam3_verify,
         }
 
         handler = phase_handlers.get(phase)
@@ -698,6 +1034,359 @@ class PHYTrainingStateMachine:
 
         return True
 
+    # =========================================================================
+    # PAM3 Training Methods (HBM4E Support)
+    # =========================================================================
+
+    def _train_pam3_init(self) -> bool:
+        """Execute PAM3 Training Initialization
+
+        Initializes PAM3 training mode and configures the PHY for
+        3-level signaling training.
+
+        Returns:
+            True if initialization passed
+        """
+        if not self.pam3_enabled:
+            # PAM3 not enabled, skip
+            self._pam3_state = PAM3TrainingState.PAM3_COMPLETE
+            return True
+
+        # Set PAM3 training mode via DFI
+        self.dfi_control.pam3_training_req = True
+
+        # Initialize PAM3 state
+        self._pam3_state = PAM3TrainingState.PAM3_INIT
+        self.pam3_config = PAM3SignalConfig()
+
+        # Configure DFI for PAM3 mode
+        if hasattr(self.dfi, 'set_pam3_mode'):
+            self.dfi.set_pam3_mode(True)
+
+        # Initialize VREF to mid-range
+        self.params.pam3_upper_vref = PAM3_VREF_MID
+        self.params.pam3_lower_vref = PAM3_VREF_MID
+
+        return True
+
+    def _train_pam3_vref(self) -> bool:
+        """Execute PAM3 VREF Calibration
+
+        Calibrates the upper and lower VREF thresholds for 3-level signaling.
+        This is critical for proper PAM3 eye opening.
+
+        Returns:
+            True if VREF calibration passed
+        """
+        if not self.pam3_enabled:
+            return True
+
+        self._pam3_state = PAM3TrainingState.PAM3_VREF_CAL
+        self.dfi_control.pam3_vref_req = True
+
+        # Encode PAM3 training command
+        req, subtype = self.dfi_control.encode_pam3_training_cmd(
+            PAM3TrainingState.PAM3_VREF_CAL)
+        self.dfi_control.pam3_training_req = req
+
+        # Sweep upper VREF threshold
+        best_upper_vref = PAM3_VREF_MID
+        best_upper_margin = 0.0
+
+        for vref in range(PAM3_VREF_HIGH_MIN, PAM3_VREF_HIGH_MAX):
+            margin = self._measure_pam3_upper_margin(vref)
+            if margin > best_upper_margin:
+                best_upper_margin = margin
+                best_upper_vref = vref
+
+        self.params.pam3_upper_vref = best_upper_vref
+        self.pam3_config.vref_high = best_upper_vref
+
+        # Sweep lower VREF threshold
+        best_lower_vref = PAM3_VREF_MID
+        best_lower_margin = 0.0
+
+        for vref in range(PAM3_VREF_LOW_MIN, PAM3_VREF_LOW_MAX):
+            margin = self._measure_pam3_lower_margin(vref)
+            if margin > best_lower_margin:
+                best_lower_margin = margin
+                best_lower_vref = vref
+
+        self.params.pam3_lower_vref = best_lower_vref
+        self.pam3_config.vref_low = best_lower_vref
+
+        # Validate PAM3 VREF settings
+        if not self.pam3_config.validate_vref_settings():
+            self.params.training_errors.extend(self.pam3_config.errors)
+            return False
+
+        # Check margins
+        if best_upper_margin < PAM3_VERTICAL_EYE_MARGIN:
+            self.params.training_errors.append(
+                f"PAM3 upper eye margin ({best_upper_margin:.2f}) too small")
+            return False
+
+        if best_lower_margin < PAM3_VERTICAL_EYE_MARGIN:
+            self.params.training_errors.append(
+                f"PAM3 lower eye margin ({best_lower_margin:.2f}) too small")
+            return False
+
+        return True
+
+    def _train_pam3_eye(self) -> bool:
+        """Execute PAM3 Eye Diagram Training
+
+        Optimizes timing delays for maximum PAM3 eye opening.
+        Trains per-lane to maximize eye margins.
+
+        Returns:
+            True if eye training passed
+        """
+        if not self.pam3_enabled:
+            return True
+
+        self._pam3_state = PAM3TrainingState.PAM3_EYE_TRAINING
+
+        # Encode PAM3 training command
+        req, subtype = self.dfi_control.encode_pam3_training_cmd(
+            PAM3TrainingState.PAM3_EYE_TRAINING)
+        self.dfi_control.pam3_training_req = req
+
+        # Per-lane PAM3 eye training
+        best_upper_margin = 0.0
+        best_lower_margin = 0.0
+
+        for lane in range(self._lane_count):
+            # Sweep delay for this lane
+            best_delay = 32
+            best_lane_margin = 0.0
+
+            for delay in range(64):
+                margin = self._measure_pam3_eye_margin(delay)
+                if margin > best_lane_margin:
+                    best_lane_margin = margin
+                    best_delay = delay
+
+            self.params.lane_delays[f'pam3_{lane}'] = best_delay
+
+            # Track best margins
+            upper_margin = self._measure_pam3_upper_margin(
+                self.params.pam3_upper_vref)
+            lower_margin = self._measure_pam3_lower_margin(
+                self.params.pam3_lower_vref)
+            best_upper_margin = max(best_upper_margin, upper_margin)
+            best_lower_margin = max(best_lower_margin, lower_margin)
+
+        self.params.pam3_upper_margin = best_upper_margin
+        self.params.pam3_lower_margin = best_lower_margin
+
+        # Check minimum PAM3 eye margins
+        if best_upper_margin < PAM3_UPPER_EYE_MARGIN:
+            self.params.training_errors.append(
+                f"PAM3 upper eye margin ({best_upper_margin:.2f}) below threshold")
+            return False
+
+        if best_lower_margin < PAM3_LOWER_EYE_MARGIN:
+            self.params.training_errors.append(
+                f"PAM3 lower eye margin ({best_lower_margin:.2f}) below threshold")
+            return False
+
+        return True
+
+    def _train_pam3_dfe(self) -> bool:
+        """Execute PAM3 DFE Tap Training
+
+        Trains DFE (Decision Feedback Equalizer) tap coefficients
+        for improved PAM3 signal recovery.
+
+        Returns:
+            True if DFE training passed
+        """
+        if not self.pam3_enabled:
+            return True
+
+        self._pam3_state = PAM3TrainingState.PAM3_DFE_TAPS
+        self.dfi_control.pam3_dfe_req = True
+
+        # Encode PAM3 training command
+        req, subtype = self.dfi_control.encode_pam3_training_cmd(
+            PAM3TrainingState.PAM3_DFE_TAPS)
+        self.dfi_control.pam3_training_req = req
+
+        # Initialize DFE taps
+        dfe_taps = [0.0] * PAM3_DFE_NUM_TAPS
+
+        # LMS-based DFE tap training
+        for iteration in range(100):  # Max iterations
+            tap_updates = [0.0] * PAM3_DFE_NUM_TAPS
+
+            # Measure error and update taps
+            for tap_idx in range(PAM3_DFE_NUM_TAPS):
+                # Test tap adjustment
+                tap_test = dfe_taps.copy()
+                tap_test[tap_idx] += PAM3_DFE_CONVERGENCE_RATE
+
+                # Clamp to max tap weight
+                tap_test[tap_idx] = min(
+                    tap_test[tap_idx], PAM3_DFE_MAX_TAP_WEIGHT)
+
+                # Measure BER with adjusted tap
+                ber = self._measure_pam3_ber(tap_test)
+
+                # Update tap based on error
+                tap_delta = self._calculate_dfe_tap_delta(
+                    tap_idx, dfe_taps[tap_idx], ber)
+                tap_updates[tap_idx] = tap_delta
+
+            # Apply tap updates
+            for tap_idx in range(PAM3_DFE_NUM_TAPS):
+                new_tap = dfe_taps[tap_idx] + tap_updates[tap_idx]
+                # Clamp
+                new_tap = max(-PAM3_DFE_MAX_TAP_WEIGHT,
+                             min(PAM3_DFE_MAX_TAP_WEIGHT, new_tap))
+                dfe_taps[tap_idx] = new_tap
+
+            # Check convergence
+            if all(abs(u) < 0.001 for u in tap_updates):
+                break
+
+        self.params.pam3_dfe_taps = dfe_taps
+        self.pam3_config.dfe_taps = dfe_taps
+
+        return True
+
+    def _train_pam3_verify(self) -> bool:
+        """Execute PAM3 Margin Verification
+
+        Verifies that all PAM3 margins meet minimum requirements.
+
+        Returns:
+            True if verification passed
+        """
+        if not self.pam3_enabled:
+            return True
+
+        self._pam3_state = PAM3TrainingState.PAM3_MARGIN_VERIFY
+
+        # Final PAM3 margin measurement
+        upper_margin = self._measure_pam3_upper_margin(
+            self.params.pam3_upper_vref)
+        lower_margin = self._measure_pam3_lower_margin(
+            self.params.pam3_lower_vref)
+
+        self.params.pam3_upper_margin = upper_margin
+        self.params.pam3_lower_margin = lower_margin
+
+        # Verify margins
+        if upper_margin < PAM3_UPPER_EYE_MARGIN:
+            self.params.training_errors.append(
+                f"PAM3 upper margin verification failed: {upper_margin:.2f}")
+            return False
+
+        if lower_margin < PAM3_LOWER_EYE_MARGIN:
+            self.params.training_errors.append(
+                f"PAM3 lower margin verification failed: {lower_margin:.2f}")
+            return False
+
+        # Verify PAM3 VREF settings
+        if not self.pam3_config.validate_vref_settings():
+            self.params.training_errors.extend(self.pam3_config.errors)
+            return False
+
+        # Mark PAM3 training complete
+        self._pam3_state = PAM3TrainingState.PAM3_COMPLETE
+        self.params.pam3_training_complete = True
+        self.pam3_config.training_complete = True
+        self.pam3_config.training_passed = True
+
+        return True
+
+    # =========================================================================
+    # PAM3 Measurement Helpers
+    # =========================================================================
+
+    def _measure_pam3_upper_margin(self, vref: int) -> float:
+        """Measure PAM3 upper eye margin at given VREF
+
+        Args:
+            vref: Upper VREF threshold setting
+
+        Returns:
+            Margin as fraction of UI (0.0 to 1.0)
+        """
+        import random
+        # PAM3 upper eye is between ZERO and HIGH levels
+        # Centered around the upper VREF
+        noise = random.uniform(-0.03, 0.03)
+        margin = PAM3_UPPER_EYE_MARGIN - abs(vref - PAM3_VREF_MID) / 128 + noise
+        return max(0.0, min(1.0, margin))
+
+    def _measure_pam3_lower_margin(self, vref: int) -> float:
+        """Measure PAM3 lower eye margin at given VREF
+
+        Args:
+            vref: Lower VREF threshold setting
+
+        Returns:
+            Margin as fraction of UI (0.0 to 1.0)
+        """
+        import random
+        # PAM3 lower eye is between LOW and ZERO levels
+        noise = random.uniform(-0.03, 0.03)
+        margin = PAM3_LOWER_EYE_MARGIN - abs(vref - PAM3_VREF_MID) / 128 + noise
+        return max(0.0, min(1.0, margin))
+
+    def _measure_pam3_eye_margin(self, delay: int) -> float:
+        """Measure PAM3 eye margin at given delay tap
+
+        Args:
+            delay: Delay tap value
+
+        Returns:
+            Combined eye margin (UI fraction)
+        """
+        import random
+        noise = random.uniform(-0.04, 0.04)
+        # PAM3 eye training considers both upper and lower eyes
+        upper = 0.3 - abs(delay - 32) / 96 + noise
+        lower = 0.25 - abs(delay - 32) / 96 + noise
+        return max(0.0, min(1.0, (upper + lower) / 2))
+
+    def _measure_pam3_ber(self, dfe_taps: List[float]) -> float:
+        """Measure PAM3 bit error rate with given DFE taps
+
+        Args:
+            dfe_taps: List of DFE tap coefficients
+
+        Returns:
+            Estimated BER
+        """
+        import random
+        # Simulate BER with DFE tap adjustment
+        # Better taps = lower BER
+        tap_quality = sum(abs(t) for t in dfe_taps) / len(dfe_taps)
+        noise = random.uniform(-0.0001, 0.0001)
+        ber = 1e-6 * (1 + tap_quality * 10) + noise
+        return max(1e-10, min(1.0, ber))
+
+    def _calculate_dfe_tap_delta(self, tap_idx: int, current_tap: float,
+                                  ber: float) -> float:
+        """Calculate DFE tap update delta
+
+        Args:
+            tap_idx: DFE tap index
+            current_tap: Current tap value
+            ber: Measured BER
+
+        Returns:
+            Tap delta for update
+        """
+        import random
+        # LMS-based tap update
+        sign = 1 if random.random() > 0.5 else -1
+        delta = sign * PAM3_DFE_CONVERGENCE_RATE * (1 - ber)
+        return delta
+
     # === Measurement helpers ===
 
     def _validate_vref(self, vref: int, vref_type: str = "DQ") -> bool:
@@ -1006,6 +1695,24 @@ class PHYTrainingStateMachine:
         if self.params.rd_margin < 0.1 or self.params.wr_margin < 0.1:
             return False
 
+        # Verify PAM3 training results if enabled
+        if self.pam3_enabled:
+            # Check PAM3 VREF settings
+            if not (PAM3_VREF_DAC_RANGE[0] <= self.params.pam3_upper_vref <= PAM3_VREF_DAC_RANGE[1]):
+                return False
+            if not (PAM3_VREF_DAC_RANGE[0] <= self.params.pam3_lower_vref <= PAM3_VREF_DAC_RANGE[1]):
+                return False
+
+            # Check PAM3 margins
+            if self.params.pam3_upper_margin < PAM3_UPPER_EYE_MARGIN:
+                return False
+            if self.params.pam3_lower_margin < PAM3_LOWER_EYE_MARGIN:
+                return False
+
+            # Verify PAM3 training complete
+            if not self.params.pam3_training_complete:
+                return False
+
         return True
 
     def get_training_results(self) -> Dict[str, Any]:
@@ -1014,7 +1721,7 @@ class PHYTrainingStateMachine:
         Returns:
             Dictionary with training results
         """
-        return {
+        result = {
             'channel_id': self.channel_id,
             'passed': self.params.training_passed,
             'current_phase': self.status.current_phase.name,
@@ -1032,6 +1739,21 @@ class PHYTrainingStateMachine:
             },
             'errors': self.params.training_errors,
         }
+
+        # Include PAM3 results if enabled
+        if self.pam3_enabled:
+            result['pam3'] = {
+                'enabled': self.pam3_enabled,
+                'training_complete': self.params.pam3_training_complete,
+                'upper_vref': self.params.pam3_upper_vref,
+                'lower_vref': self.params.pam3_lower_vref,
+                'upper_margin': self.params.pam3_upper_margin,
+                'lower_margin': self.params.pam3_lower_margin,
+                'dfe_taps': self.params.pam3_dfe_taps,
+                'pam3_state': self._pam3_state.name,
+            }
+
+        return result
 
     def is_training_complete(self) -> bool:
         """Check if training is complete
@@ -1071,7 +1793,7 @@ class PHYTrainingStateMachine:
         Returns:
             Dictionary with loopback readiness information
         """
-        return {
+        status = {
             'training_complete': self.is_training_passed(),
             'training_failed': self.status.current_phase == TrainingPhase.TRAIN_FAIL,
             'current_phase': self.status.current_phase.name,
@@ -1086,6 +1808,58 @@ class PHYTrainingStateMachine:
             },
             'lane_count': self._lane_count,
         }
+
+        # Include PAM3 coefficients if enabled
+        if self.pam3_enabled:
+            status['pam3_coefficients'] = {
+                'upper_vref': self.params.pam3_upper_vref,
+                'lower_vref': self.params.pam3_lower_vref,
+                'upper_margin': self.params.pam3_upper_margin,
+                'lower_margin': self.params.pam3_lower_margin,
+                'dfe_taps': self.params.pam3_dfe_taps,
+                'pam3_training_complete': self.params.pam3_training_complete,
+            }
+
+        return status
+
+    def get_pam3_status(self) -> Dict[str, Any]:
+        """Get PAM3 training status
+
+        Returns:
+            Dictionary with PAM3 status information
+        """
+        if not self.pam3_enabled:
+            return {
+                'enabled': False,
+                'message': 'PAM3 mode not enabled',
+            }
+
+        return {
+            'enabled': True,
+            'pam3_state': self._pam3_state.name,
+            'training_complete': self.params.pam3_training_complete,
+            'vref_settings': {
+                'upper': self.params.pam3_upper_vref,
+                'lower': self.params.pam3_lower_vref,
+            },
+            'margins': {
+                'upper': self.params.pam3_upper_margin,
+                'lower': self.params.pam3_lower_margin,
+            },
+            'dfe_taps': self.params.pam3_dfe_taps,
+            'eye_center': self.pam3_config.calculate_eye_center() if self.pam3_config else None,
+        }
+
+    def set_pam3_mode(self, enabled: bool):
+        """Enable or disable PAM3 mode
+
+        Args:
+            enabled: True to enable PAM3, False to disable
+        """
+        self.pam3_enabled = enabled
+        if enabled and self.pam3_config is None:
+            self.pam3_config = PAM3SignalConfig()
+        self.params.pam3_enabled = enabled
 
 
 class PHYInitializationStateMachine:

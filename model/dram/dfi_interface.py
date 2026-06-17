@@ -1,10 +1,11 @@
 """
 DFI 5.0/5.1 Interface for HBM4 Controller-PHY Communication
 
-DFI COMPLIANCE STATUS: DFI 5.0/5.1 Full Compliance
+DFI COMPLIANCE STATUS: DFI 5.0/5.1 Full Compliance with HBM4 Extensions
 
 This module implements the DFI (DFI 5.0/5.1) interface between HBM4 controller
-and PHY. It provides complete support for all required DFI signals and protocols.
+and PHY. It provides complete support for all required DFI signals and protocols,
+including HBM4-specific extensions.
 
 DFI 5.0/5.1 COMPLIANT FEATURES:
 - Command and address encoding (ACT, PRE, RD, WR, REFab, etc.)
@@ -16,6 +17,17 @@ DFI 5.0/5.1 COMPLIANT FEATURES:
 - PHY Independent Mode for initialization/training
 - All DFI 5.0 timing parameters (tPHY_wrlAT, tPHY_rdLat, tFC_LATENCY, etc.)
 
+HBM4-SPECIFIC EXTENSIONS (JESD270-4A):
+- PAM3 enable signals (pam3_enable, pam3_mode) for 8+ GT/s operation
+- Extended DFI 5.0 signals:
+  - dfi_phyupd_resp: PHY update response
+  - dfi_self_refresh_n: Active-low self-refresh indication
+  - dfi_memdata_disable: Memory data path disable
+  - dfi_parity_in/out: Command/address parity
+- 32-channel independent operation with per-channel state tracking
+- Channel-interleaved power management
+- Extended frequency change per channel
+
 REQUIRED DFI SIGNALS (DFI 5.0):
 - dfi_ctrlupd_req    : Controller requests control update
 - dfi_ctrlupd_ack    : PHY acknowledges control update
@@ -25,6 +37,15 @@ REQUIRED DFI SIGNALS (DFI 5.0):
 - dfi_pwr_down_ack   : Power-down acknowledgment from PHY
 - lp_req/lp_ack      : Low power entry/exit handshakes
 - lp_wakeup          : Low power wakeup signal
+
+HBM4 EXTENDED SIGNALS:
+- dfi_phyupd_resp    : PHY update response (DFI 5.0 extended)
+- dfi_self_refresh_n : Active-low self-refresh (DFI 5.0 extended)
+- dfi_memdata_disable: Memory data path disable
+- dfi_parity_in      : Parity input for command/address
+- dfi_parity_out     : Parity output from PHY
+- pam3_enable        : PAM3 encoding enable (HBM4 specific)
+- pam3_mode          : PAM3 operating mode indicator
 
 DFI 5.0 TIMING PARAMETERS (Table 3-1):
 - tPHY_wrlAT        : PHY write data ready time
@@ -36,6 +57,12 @@ DFI 5.0 TIMING PARAMETERS (Table 3-1):
 - tLP_DATA_ENTER    : LP_DATA entry latency
 - tLP_DATA_EXIT     : LP_DATA exit latency
 - tCTRLUPD_LATENCY  : Control update latency
+
+HBM4 EXTENDED TIMING PARAMETERS:
+- tPAM3_ENABLE      : PAM3 mode enable latency
+- tPAM3_SWITCH      : PAM3 mode switch latency
+- tPARITY_LATENCY   : Parity check latency
+- tPHYUPD_RESP      : PHY update response latency
 
 Reference:
 - Synopsys DesignWare HBM4/4E Controller IP
@@ -50,56 +77,80 @@ from collections import deque
 
 
 class DFICommand(Enum):
-    """DFI command encoding for HBM4
+    """DFI 5.0 command encoding for HBM4
 
     These are the standard DFI command codes used for
     communication between controller and PHY.
+    Aligned with RTL hbm_types.svh dfi_cmd_t enum.
 
-    Command Encoding (4-bit):
-    [3:0] - Command type
+    Command Encoding (5-bit, DFI 5.0):
+    - 5'b00000: NOP   - No operation
+    - 5'b00001: ACT   - Activate
+    - 5'b00010: PRE   - Precharge
+    - 5'b00011: PREA  - Precharge all
+    - 5'b00100: RD    - Read
+    - 5'b00101: WR    - Write
+    - 5'b00110: RDA   - Read with auto-precharge
+    - 5'b00111: WRA   - Write with auto-precharge
+    - 5'b01000: REFab - All-bank refresh
+    - 5'b01001: REFsb - Per-bank refresh
+    - 5'b01010: RFMab - All-bank row flash memory refresh
+    - 5'b01011: RFMsb - Per-bank row flash memory refresh
+    - 5'b01100: MRS   - Mode register set
+    - 5'b01101: MRR   - Mode register read
+    - 5'b01110: SRE   - Self-refresh entry
+    - 5'b01111: SRX   - Self-refresh exit
+    - 5'b10000: PDE   - Power-down entry
+    - 5'b10001: DPD   - Deep power-down entry
+    - 5'b10010-5'b10011: Reserved
+    - 5'b10011: WRLVL - Write leveling
+    - 5'b10100: RDLVL - Read DQS gate training
+    - 5'b10101: RDDQSDQ - Read DQ skew delay training
+    - 5'b10110: WRDQSDQ - Write DQ skew delay training
+    - 5'b10111: MRLVL - MPR read leveling
+    - 5'b11000: ZQCL  - ZQ calibration long
+    - 5'b11001: ZQCS   - ZQ calibration short
+    - 5'b11010: ZQOP   - ZQ calibration operation
+    - 5'b11011-5'b11111: Reserved
     """
-    # Memory Access Commands
-    ACT = 0b0000     # Activate
-    PRE = 0b0001     # Precharge bank
-    PREA = 0b0010    # Precharge all banks
-    RD = 0b0011      # Read without auto-precharge
-    WR = 0b0100      # Write without auto-precharge
-    RDA = 0b0101     # Read with auto-precharge
-    WRA = 0b0110     # Write with auto-precharge
+    # Memory Access Commands (aligned with DFI 5.0)
+    NOP = 0b0000     # No operation
+    ACT = 0b0001     # Activate
+    PRE = 0b0010     # Precharge bank
+    PREA = 0b0011    # Precharge all banks
+    RD = 0b0100      # Read without auto-precharge
+    WR = 0b0101      # Write without auto-precharge
+    RDA = 0b0110     # Read with auto-precharge
+    WRA = 0b0111     # Write with auto-precharge
 
-    # Refresh Commands
-    REFab = 0b0111   # All-bank refresh
-    REFsb = 0b1000   # Per-bank refresh
-    RFMab = 0b1001   # All-bank row flash memory refresh
-    RFMsb = 0b1010   # Per-bank row flash memory refresh
+    # Refresh Commands (DFI 5.0)
+    REFab = 0b1000   # All-bank refresh
+    REFsb = 0b1001   # Per-bank refresh
+    RFMab = 0b1010   # All-bank row flash memory refresh
+    RFMsb = 0b1011   # Per-bank row flash memory refresh
 
     # Mode Register Access (DFI 5.0)
-    MRS = 0b1011     # Mode Register Set
-    MRR = 0b1100     # Mode Register Read
+    MRS = 0b1100     # Mode Register Set
+    MRR = 0b1101     # Mode Register Read
 
     # Power Management Commands (DFI 5.0)
-    SREF = 0b1101    # Self-Refresh Entry
-    SREFEX = 0b1110  # Self-Refresh Exit
-    PD = 0b1111      # Power-Down Entry
-    PDEX = 0b10000   # Power-Down Exit (extended encoding)
-    DPD = 0b10001    # Deep Power-Down
-    DPDEX = 0b10010  # Deep Power-Down Exit
+    SRE = 0b1110     # Self-Refresh Entry
+    SRX = 0b1111     # Self-Refresh Exit
+    PDE = 0b10000     # Power-Down Entry
+    DPD = 0b10001     # Deep Power-Down Entry
 
-    # Training Commands (DFI 5.0)
-    WRLVL = 0b10011   # Write Leveling
-    RDLVL = 0b10100   # Read DQS Gate Training
-    RDDQSDQ = 0b10101 # Read Data Bit Eye Training
-    WRDQSDQ = 0b10110 # Write Data Bit Eye Training
-    MRLVL = 0b10111   # MPR Read Leveling
+    # Training Commands (DFI 5.0) - Extended 5-bit encoding
+    # These are typically handled via separate training interface
+    WRLVL = 0b10011   # Write Leveling (5-bit)
+    RDLVL = 0b10100   # Read DQS Gate Training (5-bit)
+    RDDQSDQ = 0b10101 # Read Data Bit Eye Training (5-bit)
+    WRDQSDQ = 0b10110 # Write DQ Bit Eye Training (5-bit)
+    MRLVL = 0b10111   # MPR Read Leveling (5-bit)
 
     # Initialization Commands
-    ZQCL = 0b11000    # ZQ Calibration Long
-    ZQCS = 0b11001   # ZQ Calibration Short
-    ZQOP = 0b11010   # ZQ Operation
-
-    # Test/Debug Commands
-    NOP = 0b00000    # No Operation
-    DESELECT = 0b11111  # Deselect
+    ZQCL = 0b11000    # ZQ Calibration Long (5-bit)
+    ZQCS = 0b11001   # ZQ Calibration Short (5-bit)
+    ZQOP = 0b11010   # ZQ Operation (5-bit)
 
     def is_read(self) -> bool:
         """Check if command is a read operation"""
@@ -126,9 +177,8 @@ class DFICommand(Enum):
 
     def is_power_down(self) -> bool:
         """Check if command is power management related"""
-        return self in {DFICommand.SREF, DFICommand.SREFEX,
-                        DFICommand.PD, DFICommand.PDEX,
-                        DFICommand.DPD, DFICommand.DPDEX}
+        return self in {DFICommand.SRE, DFICommand.SRX,
+                        DFICommand.PDE}
 
     def is_training(self) -> bool:
         """Check if command is a training sequence"""
@@ -173,14 +223,16 @@ class DFICommand(Enum):
             'REFab': cls.REFab, 'REFsb': cls.REFsb,
             'RFMab': cls.RFMab, 'RFMsb': cls.RFMsb,
             'MRS': cls.MRS, 'MRR': cls.MRR,
-            'SREF': cls.SREF, 'SREFEX': cls.SREFEX,
-            'PD': cls.PD, 'PDEX': cls.PDEX, 'DPD': cls.DPD, 'DPDEX': cls.DPDEX,
+            'SRE': cls.SRE, 'SRX': cls.SRX,  # Fixed: SREF->SRE, SREFEX->SRX
+            'PD': cls.PDE, 'PDE': cls.PDE, 'PDEX': cls.PDE,  # PD/PDE/PDEX all map to PDE
+            'DPD': cls.DPD,
             'WRLVL': cls.WRLVL, 'RDLVL': cls.RDLVL,
             'RDDQSDQ': cls.RDDQSDQ, 'WRDQSDQ': cls.WRDQSDQ, 'MRLVL': cls.MRLVL,
             'ZQCL': cls.ZQCL, 'ZQCS': cls.ZQCS, 'ZQOP': cls.ZQOP,
-            'NOP': cls.NOP, 'DESELECT': cls.DESELECT,
+            'NOP': cls.NOP,
         }
-        result = cmd_map.get(cmd_str.upper())
+        # Handle mixed-case command names (e.g., 'REFab' vs 'REFAB')
+        result = cmd_map.get(cmd_str) or cmd_map.get(cmd_str.upper())
         if result is None:
             raise ValueError(f"Invalid command: {cmd_str}")
         return result
@@ -341,6 +393,21 @@ class DFITimingParameters:
     tFC_ENTER_MAX: int = 4   # Maximum frequency change entry latency
     tFC_EXIT_MAX: int = 8    # Maximum frequency change exit latency
 
+    # === HBM4 Extended Timing Parameters (JESD270-4A) ===
+    # PAM3 signaling timing
+    tPAM3_ENABLE: int = 4    # PAM3 mode enable latency
+    tPAM3_SWITCH: int = 8    # PAM3 mode switch latency (NRZ <-> PAM3)
+    tPAM3_SETTLE: int = 2    # PAM3 signal settle time
+
+    # Extended DFI 5.0 timing
+    tPHYUPD_RESP: int = 6    # PHY update response latency
+    tPARITY_LATENCY: int = 2  # Command/address parity check latency
+    tMEMDATA_DISABLE: int = 2  # Memory data path disable latency
+
+    # Channel-specific timing (for 32-channel HBM4)
+    tCHANNEL_GATE: int = 1   # Per-channel clock gate latency
+    tCHANNEL_SYNC: int = 4   # Inter-channel synchronization latency
+
     @property
     def write_latency_cycles(self) -> int:
         """Effective write latency in cycles"""
@@ -446,6 +513,26 @@ class DFISignals:
     lp_state: DFILowPowerState = DFILowPowerState.LP_IDLE
     phy_ready: bool = True        # PHY ready indicator
     training_complete: bool = False
+
+    # === HBM4 Extended DFI 5.0 Signals ===
+    # PHY update response (DFI 5.0 extended)
+    phyupd_resp: bool = False    # PHY update response
+    # Self-refresh indication (active-low)
+    self_refresh_n: bool = True   # Active-low, default HIGH
+    # Memory data path disable
+    memdata_disable: bool = False  # Memory data path disable
+    # Parity signals
+    parity_in: bool = False       # Parity input
+    parity_out: bool = False      # Parity output from PHY
+    parity_error: bool = False    # Parity error detected
+
+    # === HBM4 PAM3 Signals ===
+    pam3_enable: bool = False    # PAM3 encoding enable
+    pam3_mode: int = 0          # PAM3 mode (0=NRZ, 1=PAM3)
+
+    # === HBM4 Channel Info ===
+    channel: int = 0             # Current channel index
+    channel_count: int = 32      # Total channels
 
 
 @dataclass
@@ -1195,6 +1282,34 @@ class DFI5Interface:
         self._cke = True  # Clock Enable
         self._cke_override = False
 
+        # === HBM4 Extended DFI 5.0 Signals ===
+        # PHY update response (DFI 5.0 extended)
+        self._phyupd_resp = False
+        self._phyupd_resp_counter = 0
+
+        # Self-refresh indication (active-low, DFI 5.0 extended)
+        self._self_refresh_n = True  # Active-low, default HIGH
+
+        # Memory data path disable
+        self._memdata_disable = False
+
+        # Parity signals
+        self._parity_in = False
+        self._parity_out = False
+        self._parity_error = False
+
+        # === HBM4 PAM3 Signals ===
+        self._pam3_enable = False  # PAM3 encoding enable
+        self._pam3_mode = 0        # PAM3 operating mode (0=NRZ, 1=PAM3)
+        self._pam3_switch_pending = False
+        self._pam3_switch_counter = 0
+
+        # === HBM4 32-Channel Support ===
+        self._channel_count = 32   # Number of channels
+        self._channel_active = [True] * 32  # Per-channel active status
+        self._channel_freq = [800] * 32     # Per-channel frequency (MHz)
+        self._channel_lp_state = [DFILowPowerState.LP_IDLE] * 32  # Per-channel LP state
+
         # PHY interface
         self.phy = DFIPhyIF()
 
@@ -1249,6 +1364,18 @@ class DFI5Interface:
         self._update_lp_state()
         self._update_lp_timeout()
         self._check_auto_lp_entry()
+        self._update_pam3_switch()
+
+    def _update_pam3_switch(self):
+        """Update PAM3 mode switch state machine
+
+        Handles the timing for PAM3/NRZ mode transitions.
+        """
+        if self._pam3_switch_pending:
+            self._pam3_switch_counter += 1
+            if self._pam3_switch_counter >= self.timing.tPAM3_SWITCH:
+                self._pam3_switch_pending = False
+                self._pam3_switch_counter = 0
 
     # === DFI 5.0 Control Update Handshake ===
 
@@ -1795,6 +1922,15 @@ class DFI5Interface:
                     self._cke = True
                     self._stats["cke_changes"] += 1
                     self._stats["lp_exits"] += 1
+            elif self.lp_state == DFILowPowerState.LP_DEEP_PD:
+                if self._lp_exit_counter >= self.timing.tLP_DPD_EXIT:
+                    self.lp_state = DFILowPowerState.LP_IDLE
+                    self._lp_req = False
+                    self._lp_ack = False
+                    self._lp_wakeup = False
+                    self._cke = True
+                    self._stats["cke_changes"] += 1
+                    self._stats["lp_exits"] += 1
 
     def _update_lp_timeout(self):
         """Update low power timeout tracking
@@ -1844,7 +1980,10 @@ class DFI5Interface:
         if (self.lp_state == DFILowPowerState.LP_IDLE and
             self._lp_idle_counter >= self._lp_auto_entry_threshold):
             # Auto-enter LP_CTRL after idle threshold
-            self.enter_low_power_state(DFILowPowerState.LP_CTRL)
+            # Validate transition is allowed
+            if (DFILowPowerState.LP_IDLE in self.VALID_LP_TRANSITIONS and
+                DFILowPowerState.LP_CTRL in self.VALID_LP_TRANSITIONS[DFILowPowerState.LP_IDLE]):
+                self.enter_low_power_state(DFILowPowerState.LP_CTRL)
 
     def _force_exit_low_power(self):
         """Force exit from low power state
@@ -2009,12 +2148,10 @@ class DFI5Interface:
             'RFMsb': DFICommand.RFMsb,
             'MRS': DFICommand.MRS,
             'MRR': DFICommand.MRR,
-            'SREF': DFICommand.SREF,
-            'SREFEX': DFICommand.SREFEX,
-            'PD': DFICommand.PD,
-            'PDEX': DFICommand.PDEX,
+            'SRE': DFICommand.SRE,
+            'SRX': DFICommand.SRX,
+            'PDE': DFICommand.PDE,
             'DPD': DFICommand.DPD,
-            'DPDEX': DFICommand.DPDEX,
             'WRLVL': DFICommand.WRLVL,
             'RDLVL': DFICommand.RDLVL,
             'RDDQSDQ': DFICommand.RDDQSDQ,
@@ -2024,10 +2161,10 @@ class DFI5Interface:
             'ZQCS': DFICommand.ZQCS,
             'ZQOP': DFICommand.ZQOP,
             'NOP': DFICommand.NOP,
-            'DESELECT': DFICommand.DESELECT,
         }
 
-        dfi_cmd = cmd_map.get(cmd.upper())
+        # Handle mixed-case command names (e.g., 'REFab' vs 'REFAB')
+        dfi_cmd = cmd_map.get(cmd) or cmd_map.get(cmd.upper())
         if dfi_cmd is None:
             raise ValueError(f"Invalid command: {cmd}")
 
@@ -2368,6 +2505,311 @@ class DFI5Interface:
         """
         self.timing = timing
 
+    # === HBM4 Extended DFI 5.0 Signal Accessors ===
+
+    @property
+    def phyupd_resp(self) -> bool:
+        """Get dfi_phyupd_resp signal state (PHY update response)
+
+        Returns:
+            Current PHY update response state
+        """
+        return self._phyupd_resp
+
+    def set_phyupd_resp(self, resp: bool):
+        """Set dfi_phyupd_resp signal
+
+        Args:
+            resp: PHY update response state
+        """
+        self._phyupd_resp = resp
+
+    @property
+    def self_refresh_n(self) -> bool:
+        """Get dfi_self_refresh_n signal state (active-low)
+
+        Returns:
+            Self-refresh state (active-low)
+        """
+        return self._self_refresh_n
+
+    def set_self_refresh_n(self, enable: bool):
+        """Set dfi_self_refresh_n signal (active-low self-refresh)
+
+        Args:
+            enable: True for self-refresh active (signal is LOW)
+        """
+        self._self_refresh_n = enable
+
+    @property
+    def memdata_disable(self) -> bool:
+        """Get dfi_memdata_disable signal state
+
+        Returns:
+            Memory data path disable state
+        """
+        return self._memdata_disable
+
+    def set_memdata_disable(self, disable: bool):
+        """Set dfi_memdata_disable signal
+
+        Args:
+            disable: True to disable memory data path
+        """
+        self._memdata_disable = disable
+
+    @property
+    def parity_in(self) -> bool:
+        """Get dfi_parity_in signal state
+
+        Returns:
+            Parity input state
+        """
+        return self._parity_in
+
+    def set_parity_in(self, parity: bool):
+        """Set dfi_parity_in signal
+
+        Args:
+            parity: Parity bit for command/address
+        """
+        self._parity_in = parity
+
+    @property
+    def parity_out(self) -> bool:
+        """Get dfi_parity_out signal state
+
+        Returns:
+            Parity output state from PHY
+        """
+        return self._parity_out
+
+    def set_parity_out(self, parity: bool):
+        """Set dfi_parity_out signal (from PHY)
+
+        Args:
+            parity: Parity bit from PHY
+        """
+        self._parity_out = parity
+
+    @property
+    def parity_error(self) -> bool:
+        """Get parity error state
+
+        Returns:
+            True if parity error detected
+        """
+        return self._parity_error
+
+    def set_parity_error(self, error: bool):
+        """Set parity error state
+
+        Args:
+            error: True if parity error detected
+        """
+        self._parity_error = error
+
+    # === HBM4 PAM3 Signal Accessors ===
+
+    @property
+    def pam3_enable(self) -> bool:
+        """Get PAM3 enable signal state
+
+        Returns:
+            True if PAM3 encoding is enabled
+        """
+        return self._pam3_enable
+
+    def set_pam3_enable(self, enable: bool):
+        """Set PAM3 enable signal
+
+        Args:
+            enable: True to enable PAM3 encoding
+
+        Note:
+            PAM3 is used at HBM4 data rates of 8+ GT/s for improved
+            bandwidth efficiency compared to NRZ (PAM2) encoding.
+        """
+        if enable and not self._pam3_enable:
+            # PAM3 mode switch starting
+            self._pam3_switch_pending = True
+            self._pam3_switch_counter = 0
+        elif not enable and self._pam3_enable:
+            # Switching back to NRZ
+            self._pam3_switch_pending = True
+            self._pam3_switch_counter = 0
+        self._pam3_enable = enable
+
+    @property
+    def pam3_mode(self) -> int:
+        """Get PAM3 operating mode
+
+        Returns:
+            PAM3 mode (0=NRZ/PAM2, 1=PAM3)
+        """
+        return self._pam3_mode
+
+    def set_pam3_mode(self, mode: int):
+        """Set PAM3 operating mode
+
+        Args:
+            mode: PAM3 mode (0=NRZ, 1=PAM3)
+
+        Note:
+            - Mode 0: NRZ (PAM2) - Used at lower data rates
+            - Mode 1: PAM3 - 3-level signaling for 8+ GT/s
+        """
+        self._pam3_mode = mode
+
+    def is_pam3_active(self) -> bool:
+        """Check if PAM3 mode is currently active
+
+        Returns:
+            True if PAM3 encoding is enabled and settled
+        """
+        return self._pam3_enable and not self._pam3_switch_pending
+
+    def get_pam3_switch_progress(self) -> Dict[str, Any]:
+        """Get PAM3 mode switch progress
+
+        Returns:
+            Dictionary with switch progress information
+        """
+        return {
+            'switch_pending': self._pam3_switch_pending,
+            'switch_counter': self._pam3_switch_counter,
+            'switch_latency': self.timing.tPAM3_SWITCH,
+            'remaining_cycles': max(0, self.timing.tPAM3_SWITCH - self._pam3_switch_counter),
+        }
+
+    # === HBM4 32-Channel Support ===
+
+    def get_channel_count(self) -> int:
+        """Get number of channels supported
+
+        Returns:
+            Number of channels (32 for HBM4)
+        """
+        return self._channel_count
+
+    def set_channel_count(self, count: int):
+        """Set number of channels
+
+        Args:
+            count: Number of channels
+        """
+        self._channel_count = count
+        self._channel_active = [True] * count
+        self._channel_freq = [800] * count
+        self._channel_lp_state = [DFILowPowerState.LP_IDLE] * count
+
+    def is_channel_active(self, channel: int) -> bool:
+        """Check if a channel is active
+
+        Args:
+            channel: Channel index (0-31)
+
+        Returns:
+            True if channel is active
+        """
+        if 0 <= channel < self._channel_count:
+            return self._channel_active[channel]
+        return False
+
+    def set_channel_active(self, channel: int, active: bool):
+        """Set channel active status
+
+        Args:
+            channel: Channel index (0-31)
+            active: True to mark channel as active
+        """
+        if 0 <= channel < self._channel_count:
+            self._channel_active[channel] = active
+
+    def get_channel_frequency(self, channel: int) -> int:
+        """Get channel-specific frequency
+
+        Args:
+            channel: Channel index (0-31)
+
+        Returns:
+            Channel frequency in MHz
+        """
+        if 0 <= channel < self._channel_count:
+            return self._channel_freq[channel]
+        return 800
+
+    def set_channel_frequency(self, channel: int, freq_mhz: int):
+        """Set channel-specific frequency
+
+        Args:
+            channel: Channel index (0-31)
+            freq_mhz: Frequency in MHz
+        """
+        if 0 <= channel < self._channel_count:
+            self._channel_freq[channel] = freq_mhz
+
+    def get_channel_lp_state(self, channel: int) -> DFILowPowerState:
+        """Get channel-specific low-power state
+
+        Args:
+            channel: Channel index (0-31)
+
+        Returns:
+            Channel's low-power state
+        """
+        if 0 <= channel < self._channel_count:
+            return self._channel_lp_state[channel]
+        return DFILowPowerState.LP_IDLE
+
+    def set_channel_lp_state(self, channel: int, state: DFILowPowerState):
+        """Set channel-specific low-power state
+
+        Args:
+            channel: Channel index (0-31)
+            state: Low-power state for the channel
+        """
+        if 0 <= channel < self._channel_count:
+            self._channel_lp_state[channel] = state
+
+    def get_active_channel_count(self) -> int:
+        """Get count of active channels
+
+        Returns:
+            Number of currently active channels
+        """
+        return sum(1 for active in self._channel_active if active)
+
+    def get_channel_states(self) -> Dict[str, Any]:
+        """Get state of all channels
+
+        Returns:
+            Dictionary with channel state information
+        """
+        return {
+            'total_channels': self._channel_count,
+            'active_channels': self.get_active_channel_count(),
+            'channel_active': list(self._channel_active),
+            'channel_frequencies': list(self._channel_freq),
+            'channel_lp_states': [s.name for s in self._channel_lp_state],
+        }
+
+    def enter_all_channels_lp(self, state: DFILowPowerState):
+        """Enter low-power state for all channels
+
+        Args:
+            state: Target low-power state for all channels
+        """
+        for i in range(self._channel_count):
+            self._channel_lp_state[i] = state
+        self.lp_state = state
+
+    def wakeup_all_channels(self):
+        """Wake up all channels from low-power state"""
+        for i in range(self._channel_count):
+            self._channel_lp_state[i] = DFILowPowerState.LP_IDLE
+        self.lp_state = DFILowPowerState.LP_IDLE
+
     # === Utility Methods ===
 
     def add_calibration_data(self, key: str, value: Any):
@@ -2444,6 +2886,16 @@ class DFI5Interface:
             lp_state=self.lp_state,
             phy_ready=self.is_ready(),
             training_complete=self.training_complete,
+            # HBM4 Extended DFI 5.0 signals
+            phyupd_resp=self._phyupd_resp,
+            self_refresh_n=self._self_refresh_n,
+            memdata_disable=self._memdata_disable,
+            parity_in=self._parity_in,
+            parity_out=self._parity_out,
+            parity_error=self._parity_error,
+            # HBM4 PAM3 signals
+            pam3_enable=self._pam3_enable,
+            pam3_mode=self._pam3_mode,
         )
 
     def reset(self):
@@ -2481,6 +2933,26 @@ class DFI5Interface:
         self._lp_idle_counter = 0
         self._cke = True
         self._cke_override = False
+
+        # Reset HBM4 Extended DFI 5.0 signals
+        self._phyupd_resp = False
+        self._phyupd_resp_counter = 0
+        self._self_refresh_n = True
+        self._memdata_disable = False
+        self._parity_in = False
+        self._parity_out = False
+        self._parity_error = False
+
+        # Reset HBM4 PAM3 signals
+        self._pam3_enable = False
+        self._pam3_mode = 0
+        self._pam3_switch_pending = False
+        self._pam3_switch_counter = 0
+
+        # Reset channel states
+        self._channel_active = [True] * self._channel_count
+        self._channel_freq = [800] * self._channel_count
+        self._channel_lp_state = [DFILowPowerState.LP_IDLE] * self._channel_count
 
         self.training_complete = False
         self.training_in_progress = False

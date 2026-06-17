@@ -26,7 +26,7 @@ Multi-channel HBM3 支持:
 """
 
 from dataclasses import dataclass
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Any
 from enum import Enum
 
 from model.controller.config import HBMConfig
@@ -447,3 +447,172 @@ class AddressDecoder:
             stack_count * channels_per_stack
         """
         return self.config.stack_count * self.config.channels_per_stack
+
+    def get_total_banks(self) -> int:
+        """获取总 bank 数
+
+        Returns:
+            total_channels * banks_per_pseudo_channel
+        """
+        return self.get_total_channels() * self.config.banks_per_pseudo_channel
+
+    def get_total_bank_groups(self) -> int:
+        """获取总 bank group 数
+
+        Returns:
+            total_channels * bank_groups_per_channel
+        """
+        return self.get_total_channels() * self.config.bank_groups_per_channel
+
+    def get_bank_group_key(self, decoded: DecodedAddress) -> Tuple[int, int, int, int]:
+        """获取唯一 bank group 标识
+
+        Returns:
+            (stack_id, channel_id, pseudo_channel_id, bank_group_id)
+        """
+        return (
+            decoded.stack_id,
+            decoded.channel_id,
+            decoded.pseudo_channel_id,
+            decoded.bank_group_id,
+        )
+
+    def is_row_hit(self, addr1: int, addr2: int) -> bool:
+        """检查两个地址是否在同一 row 中（行命中）
+
+        Args:
+            addr1: 第一个地址
+            addr2: 第二个地址
+
+        Returns:
+            True 如果两个地址在同一 row 中
+        """
+        dec1 = self.decode(addr1)
+        dec2 = self.decode(addr2)
+
+        return (
+            dec1.channel_id == dec2.channel_id and
+            dec1.pseudo_channel_id == dec2.pseudo_channel_id and
+            dec1.bank_id == dec2.bank_id and
+            dec1.row_id == dec2.row_id
+        )
+
+    def is_bank_hit(self, addr1: int, addr2: int) -> bool:
+        """检查两个地址是否在同一个 bank 中
+
+        Args:
+            addr1: 第一个地址
+            addr2: 第二个地址
+
+        Returns:
+            True 如果两个地址在同一个 bank 中
+        """
+        dec1 = self.decode(addr1)
+        dec2 = self.decode(addr2)
+
+        return (
+            dec1.channel_id == dec2.channel_id and
+            dec1.pseudo_channel_id == dec2.pseudo_channel_id and
+            dec1.bank_group_id == dec2.bank_group_id and
+            dec1.bank_id == dec2.bank_id
+        )
+
+    def is_bank_group_hit(self, addr1: int, addr2: int) -> bool:
+        """检查两个地址是否在同一个 bank group 中
+
+        Args:
+            addr1: 第一个地址
+            addr2: 第二个地址
+
+        Returns:
+            True 如果两个地址在同一个 bank group 中
+        """
+        dec1 = self.decode(addr1)
+        dec2 = self.decode(addr2)
+
+        return (
+            dec1.channel_id == dec2.channel_id and
+            dec1.pseudo_channel_id == dec2.pseudo_channel_id and
+            dec1.bank_group_id == dec2.bank_group_id
+        )
+
+    def get_parallel_bank_groups(self, decoded: DecodedAddress, count: int = 8) -> List[int]:
+        """获取可并行访问的 bank group ID 列表
+
+        同一 channel 内，不同 bank group 的访问可以并行。
+
+        Args:
+            decoded: 解码后的地址
+            count: 要返回的 bank group 数量
+
+        Returns:
+            bank group ID 列表
+        """
+        current_bg = decoded.bank_group_id
+        bg_list = []
+
+        for i in range(count):
+            bg = (current_bg + i) % self.config.bank_groups_per_channel
+            bg_list.append(bg)
+
+        return bg_list
+
+    def get_parallel_banks(self, decoded: DecodedAddress, count: int = 16) -> List[int]:
+        """获取可并行访问的 bank ID 列表
+
+        同一 bank group 内，不同 bank 的访问可以并行。
+
+        Args:
+            decoded: 解码后的地址
+            count: 要返回的 bank 数量
+
+        Returns:
+            bank ID 列表
+        """
+        current_bank = decoded.bank_id
+        bank_list = []
+
+        for i in range(count):
+            bank = (current_bank + i) % self.config.banks_per_pseudo_channel
+            bank_list.append(bank)
+
+        return bank_list
+
+    def validate_address_boundaries(self, addr: int, max_addr: Optional[int] = None) -> bool:
+        """验证地址是否在有效范围内
+
+        Args:
+            addr: 要验证的地址
+            max_addr: 最大有效地址（默认使用配置中的 max_address）
+
+        Returns:
+            True 如果地址有效
+        """
+        if max_addr is None:
+            max_addr = self.config.max_address
+
+        if addr < 0 or addr > max_addr:
+            return False
+
+        # 验证对齐
+        if addr & 0x7:
+            return False
+
+        return True
+
+    def get_address_stats(self) -> Dict[str, Any]:
+        """获取地址解码器统计信息
+
+        Returns:
+            包含配置和映射信息的字典
+        """
+        return {
+            'total_channels': self.get_total_channels(),
+            'total_banks': self.get_total_banks(),
+            'total_bank_groups': self.get_total_bank_groups(),
+            'channels_per_stack': self.config.channels_per_stack,
+            'banks_per_pseudo_channel': self.config.banks_per_pseudo_channel,
+            'bank_groups_per_channel': self.config.bank_groups_per_channel,
+            'address_mapping': self.config.address_mapping,
+            'mapping_bits': {k: v for k, v in self.mapping.items()},
+        }

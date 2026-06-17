@@ -46,16 +46,17 @@ module dram_model #(
 );
 
 // =============================================================================
-// Command Definitions
+// Command Definitions (Aligned with hbm_types.svh hbm_cmd_t)
 // =============================================================================
 localparam CMD_NOP  = 4'b0000;
 localparam CMD_ACT = 4'b0001;  // Activate
 localparam CMD_READ= 4'b0010;  // Read
 localparam CMD_WRITE=4'b0011;  // Write
-localparam CMD_PRE = 4'b0100;  // Precharge
-localparam CMD_REF = 4'b0101;  // Refresh (all banks)
-localparam CMD_MRS = 4'b0110;  // Mode Register Set
-localparam CMD_ZQ  = 4'b0111;  // ZQ calibration
+localparam CMD_PRE = 4'b0100;  // Precharge single bank
+localparam CMD_PREA = 4'b0101; // Precharge all banks (HBM4)
+localparam CMD_REF = 4'b0110;  // Refresh (all banks) - aligned with hbm_types.svh
+localparam CMD_RFM = 4'b0111;  // Row flash memory refresh (HBM4)
+localparam CMD_MRS = 4'b1000;  // Mode Register Set
 
 // =============================================================================
 // Bank State Definitions
@@ -274,13 +275,18 @@ always @(*) begin
                 cmd_accept_nxt = 1'b1;
             end
 
-            CMD_MRS: begin
-                // Mode register set - for simulation, always accept
+            CMD_RFM: begin
+                // Row flash memory refresh (HBM4)
                 cmd_accept_nxt = 1'b1;
             end
 
-            CMD_ZQ: begin
-                // ZQ calibration - always accept
+            CMD_PREA: begin
+                // Precharge all banks (HBM4)
+                cmd_accept_nxt = 1'b1;
+            end
+
+            CMD_MRS: begin
+                // Mode register set - for simulation, always accept
                 cmd_accept_nxt = 1'b1;
             end
 
@@ -378,6 +384,30 @@ generate
                         bank_st_nxt[gen_b] = S_REFRESH;
                         timer_cnt_nxt[gen_b] = T_RFC[9:0];
                         timer_run_nxt[gen_b] = 1'b1;
+                    end
+
+                    CMD_RFM: begin
+                        // Row flash memory refresh (HBM4) - similar to REF but longer
+                        bank_st_nxt[gen_b] = S_REFRESH;
+                        timer_cnt_nxt[gen_b] = T_RFC[9:0];  // Could be longer for RFM
+                        timer_run_nxt[gen_b] = 1'b1;
+                    end
+
+                    CMD_PREA: begin
+                        // Precharge all banks - close this bank if active
+                        case (bank_st_cur[gen_b])
+                            S_ACTIVE: begin
+                                bank_st_nxt[gen_b] = S_BUSY;
+                                timer_cnt_nxt[gen_b] = T_RP[9:0];
+                                timer_run_nxt[gen_b] = 1'b1;
+                            end
+                            S_IDLE: begin
+                                // Already idle - no change
+                            end
+                            default: begin
+                                bank_st_nxt[gen_b] = S_IDLE;
+                            end
+                        endcase
                     end
 
                     default: begin

@@ -137,7 +137,7 @@ class TestCommandBuffer:
 
         cmd = buf.dequeue()
         assert cmd is not None
-        assert cmd['command'] == 'ACT'
+        assert cmd.command == 'ACT'  # ScheduledCommand uses attribute access
         assert buf.size == 1
 
     def test_dequeue_empty(self):
@@ -154,7 +154,7 @@ class TestCommandBuffer:
 
         cmd = buf.peek()
         assert cmd is not None
-        assert cmd['command'] == 'ACT'
+        assert cmd.command == 'ACT'  # ScheduledCommand uses attribute access
         assert buf.size == 2  # Size unchanged
 
     def test_clear(self):
@@ -419,7 +419,7 @@ class TestCommandBufferIntegration:
 
         cmd = lbd.dequeue_command()
         assert cmd is not None
-        assert cmd['command'] == 'ACT'
+        assert cmd.command == 'ACT'  # ScheduledCommand uses attribute access
         assert lbd.command_buffer_size == 1
 
     def test_command_buffer_full(self):
@@ -508,11 +508,16 @@ class TestProcessCommand:
         """Test processing ACT command"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for timing checks
+        timing = lbd.get_timing_context(0)
+        timing.pll_locked = True
+        timing.dll_locked = True
+        timing.training_passed = True
         for _ in range(50):
             lbd.tick()
 
         ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
-        assert ok
+        assert ok, f"ACT command failed: {msg}"
 
         state = lbd.get_channel_state(0)
         assert state['open_row'] == (0x1000 & 0xFFFF)
@@ -521,55 +526,78 @@ class TestProcessCommand:
         """Test processing PRE command"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for timing checks
+        timing = lbd.get_timing_context(0)
+        timing.pll_locked = True
+        timing.dll_locked = True
+        timing.training_passed = True
         for _ in range(50):
             lbd.tick()
 
-        lbd.process_command(channel_id=0, command='ACT', address=0x1000)
+        ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
+        assert ok, f"ACT command failed: {msg}"
         for _ in range(25):
             lbd.tick()
 
         ok, msg = lbd.process_command(channel_id=0, command='PRE', address=0x1000)
-        assert ok
+        assert ok, f"PRE command failed: {msg}"
 
     def test_process_rd_command(self):
         """Test processing RD command"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for timing checks
+        timing = lbd.get_timing_context(0)
+        timing.pll_locked = True
+        timing.dll_locked = True
+        timing.training_passed = True
         for _ in range(50):
             lbd.tick()
 
-        lbd.process_command(channel_id=0, command='ACT', address=0x1000)
+        ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
+        assert ok, f"ACT command failed: {msg}"
         for _ in range(10):
             lbd.tick()
 
         ok, msg = lbd.process_command(channel_id=0, command='RD', address=0x1000)
-        assert ok
+        assert ok, f"RD command failed: {msg}"
 
     def test_process_wr_command(self):
         """Test processing WR command"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for timing checks
+        timing = lbd.get_timing_context(0)
+        timing.pll_locked = True
+        timing.dll_locked = True
+        timing.training_passed = True
         for _ in range(50):
             lbd.tick()
 
-        lbd.process_command(channel_id=0, command='ACT', address=0x1000)
+        ok, msg = lbd.process_command(channel_id=0, command='ACT', address=0x1000)
+        assert ok, f"ACT command failed: {msg}"
         for _ in range(10):
             lbd.tick()
 
         ok, msg = lbd.process_command(
             channel_id=0, command='WR', address=0x1000, data=0xDEADBEEF
         )
-        assert ok
+        assert ok, f"WR command failed: {msg}"
 
     def test_process_ref_command(self):
         """Test processing REFRESH command"""
         lbd = HBM4LogicBaseDie()
         lbd.initialize()
+        # Enable PLL/DLL lock for timing checks
+        timing = lbd.get_timing_context(0)
+        timing.pll_locked = True
+        timing.dll_locked = True
+        timing.training_passed = True
         for _ in range(50):
             lbd.tick()
 
         ok, msg = lbd.process_command(channel_id=0, command='REF', address=0)
-        assert ok
+        assert ok, f"REF command failed: {msg}"
 
     def test_process_invalid_channel(self):
         """Test processing command on invalid channel"""
@@ -581,6 +609,11 @@ class TestProcessCommand:
     def test_process_unknown_command(self):
         """Test processing unknown command"""
         lbd = HBM4LogicBaseDie()
+        # Enable PLL/DLL lock for timing checks
+        timing = lbd.get_timing_context(0)
+        timing.pll_locked = True
+        timing.dll_locked = True
+        timing.training_passed = True
         ok, msg = lbd.process_command(channel_id=0, command='UNKNOWN', address=0)
         assert not ok
         assert "Unknown command" in msg

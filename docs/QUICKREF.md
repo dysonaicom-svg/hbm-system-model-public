@@ -93,7 +93,12 @@ model/
 sim/
 ├── simulator.py                  # HBMSimulator
 ├── unified_simulator.py          # 统一仿真器
-└── benchmark.py                  # 基准测试
+├── hbm4_unified_simulator.py     # HBM4统一仿真器
+├── benchmark_suite.py            # 性能基准测试套件
+├── rtl_interface.py              # RTL协同仿真接口
+├── result_comparison.py          # 结果对比分析
+└── visualization/
+    └── advanced_charts.py         # 高级可视化图表
 
 rtl/
 ├── hbm_controller.sv           # RTL 控制器

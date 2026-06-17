@@ -1,5 +1,5 @@
 """
-HBM4 Controller Integration
+HBM4 Controller Integration with Command Pipeline
 
 Integrates all HBM4-specific modules into a complete controller model.
 
@@ -8,7 +8,7 @@ Key modules:
 - HBM4QoSScheduler: 16-level QoS scheduling
 - HBM4RefreshScheduler: Per-bank and autonomous refresh
 - HBM4ChannelModel: DRAM channel timing
-- DFI5Interface: Controller-PHY interface
+- DFI 5.0 Interface: Controller-PHY interface
 
 HBM4 Features:
 - 32 independent channels (5-bit channel field)
@@ -21,6 +21,7 @@ HBM4 Features:
 - Lane repair support
 - Per-bank-group timing
 - DFI 5.0 protocol support
+- Command pipeline for optimized throughput
 
 Based on:
 - JEDEC JESD270-4A HBM4 specification
@@ -32,24 +33,31 @@ Debug Logging:
 """
 
 import logging
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any, Callable
 from dataclasses import dataclass, field
+from collections import defaultdict, deque
 import time
 import uuid
 
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG
 from model.dram.dfi_interface import (
     DFI5Interface, DFICommand, DFILowPowerState,
     DFIRequest, DFIResponse as DFIPhyResponse
 )
+from model.dram.hbm4_channel_model import (
+    HBM4ChannelArray, HBM4Channel, HBM4Command,
+    ChannelPerformanceStats
+)
+from model.dram.timing import HBM4Timing
 from model.controller.config import HBMConfig
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.queue import ReadQueue, WriteQueue, QueueManager
 from model.controller.hbm4_address_decoder import HBM4AddressDecoder
-from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_qos_scheduler import (
+    HBM4QoSScheduler, QoSLevel, TrafficType, BankConflictTracker
+)
 from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.exceptions import QueueOverflowError
-from model.dram.hbm4_channel_model import HBM4ChannelArray
 
 # Configure debug logging for HBM4 controller
 _logger = logging.getLogger('hbm4.controller')
@@ -68,6 +76,10 @@ class HBM4ControllerStats:
     repair_count: int = 0
     total_latency_ns: float = 0.0
     total_bandwidth_bytes: float = 0.0
+    # Pipeline statistics
+    pipeline_stalls: int = 0
+    commands_issued: int = 0
+    bank_conflicts: int = 0
 
     @property
     def average_latency_ns(self) -> float:
@@ -82,8 +94,135 @@ class HBM4ControllerStats:
         return self.row_hit_count / (self.read_requests + self.write_requests)
 
 
+@dataclass
+class PipelineCommand:
+    """Command in the command pipeline"""
+    command: str
+    channel_id: int
+    pseudo_channel_id: int
+    bank_id: int
+    row_id: int
+    col_id: int
+    request_id: str
+    issue_cycle: int
+    completion_cycle: Optional[int] = None
+
+
+class CommandPipeline:
+    """Command pipeline for HBM4 controller
+
+    Implements a multi-stage pipeline for command generation and issuing:
+    - Stage 1: Request scheduling and selection
+    - Stage 2: Command generation (ACT, RD, WR, PRE)
+    - Stage 3: DFI interface
+    - Stage 4: DRAM model execution
+
+    Features:
+    - Out-of-order completion tracking
+    - Bank conflict detection
+    - Command coalescing for adjacent accesses
+    """
+
+    def __init__(self, num_stages: int = 4, pipeline_depth: int = 16):
+        """Initialize command pipeline
+
+        Args:
+            num_stages: Number of pipeline stages
+            pipeline_depth: Maximum commands in flight
+        """
+        self.num_stages = num_stages
+        self.pipeline_depth = pipeline_depth
+        self._pipeline: deque = deque(maxlen=pipeline_depth)
+        self._pending_completion: Dict[str, PipelineCommand] = {}
+        self._cycle_count = 0
+
+        # Pipeline stage tracking
+        self._stage_commands: Dict[int, List[PipelineCommand]] = defaultdict(list)
+
+        # Statistics
+        self.stalls = 0
+        self.commands_completed = 0
+
+    def enqueue(self, cmd: PipelineCommand) -> bool:
+        """Add command to pipeline
+
+        Args:
+            cmd: Command to enqueue
+
+        Returns:
+            True if enqueued, False if pipeline full
+        """
+        if len(self._pipeline) >= self.pipeline_depth:
+            self.stalls += 1
+            _logger.debug(f"Pipeline stall at cycle {self._cycle_count}")
+            return False
+
+        cmd.issue_cycle = self._cycle_count
+        self._pipeline.append(cmd)
+        self._pending_completion[cmd.request_id] = cmd
+        _logger.debug(
+            f"Command enqueued: {cmd.command} ch={cmd.channel_id} "
+            f"pch={cmd.pseudo_channel_id} bank={cmd.bank_id} row={cmd.row_id}"
+        )
+        return True
+
+    def tick(self) -> List[PipelineCommand]:
+        """Advance pipeline one cycle
+
+        Returns:
+            List of completed commands this cycle
+        """
+        self._cycle_count += 1
+        completed = []
+
+        # Check for completions
+        for cmd in list(self._pipeline):
+            if cmd.completion_cycle is not None and cmd.completion_cycle <= self._cycle_count:
+                completed.append(cmd)
+                self._pipeline.remove(cmd)
+                del self._pending_completion[cmd.request_id]
+                self.commands_completed += 1
+
+        return completed
+
+    def mark_complete(self, request_id: str, completion_cycle: int):
+        """Mark a command as complete
+
+        Args:
+            request_id: Request ID to mark complete
+            completion_cycle: Cycle when command completes
+        """
+        if request_id in self._pending_completion:
+            self._pending_completion[request_id].completion_cycle = completion_cycle
+
+    def is_pending(self, request_id: str) -> bool:
+        """Check if request is still pending in pipeline
+
+        Args:
+            request_id: Request ID to check
+
+        Returns:
+            True if still pending
+        """
+        return request_id in self._pending_completion
+
+    def get_pipeline_depth(self) -> int:
+        """Get current pipeline depth"""
+        return len(self._pipeline)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get pipeline statistics"""
+        return {
+            'pipeline_depth': self.get_pipeline_depth(),
+            'max_depth': self.pipeline_depth,
+            'stalls': self.stalls,
+            'commands_completed': self.commands_completed,
+            'pending': len(self._pending_completion),
+        }
+
+
 class HBM4Controller:
-    """HBM4 Memory Controller Integration
+    """HBM4 Memory Controller Integration with Command Pipeline
 
     This controller integrates all HBM4-specific modules:
     - 32 independent channels
@@ -93,6 +232,8 @@ class HBM4Controller:
     - DFI 5.0 PHY interface
     - Lane repair and training support
     - Command generation and scheduling
+    - Command pipeline for optimized throughput
+    - Bank conflict tracking and avoidance
     """
 
     def __init__(
@@ -102,6 +243,7 @@ class HBM4Controller:
         enable_qos: bool = True,
         enable_refresh: bool = True,
         enable_dfi: bool = True,
+        enable_pipeline: bool = True,
     ):
         """Initialize HBM4 Controller
 
@@ -111,6 +253,7 @@ class HBM4Controller:
             enable_qos: Enable QoS scheduling
             enable_refresh: Enable refresh scheduling
             enable_dfi: Enable DFI 5.0 interface
+            enable_pipeline: Enable command pipeline
         """
         self.spec = spec or HBM4Spec()
         self.current_time_ns = 0
@@ -120,6 +263,7 @@ class HBM4Controller:
         self._enable_qos = enable_qos
         self._enable_refresh = enable_refresh
         self._enable_dfi = enable_dfi
+        self._enable_pipeline = enable_pipeline
 
         # Initialize HBM4-specific address decoder
         self.decoder = HBM4AddressDecoder(spec=self.spec)
@@ -148,8 +292,22 @@ class HBM4Controller:
         else:
             self.dfi = None
 
-        # Initialize HBM4 DRAM channel model for refresh integration
+        # Initialize HBM4 DRAM channel model for accurate timing
         self.channel_model = HBM4ChannelArray(spec=self.spec)
+
+        # Initialize command pipeline
+        if self._enable_pipeline:
+            self._pipeline = CommandPipeline(num_stages=4, pipeline_depth=32)
+        else:
+            self._pipeline = None
+
+        # Bank conflict tracker for request coalescing
+        self._bank_tracker = BankConflictTracker(
+            num_channels=self.spec.channels,
+            num_pseudo_channels=self.spec.pseudo_channels_per_channel,
+            num_bank_groups=self.spec.bank_groups_per_channel,
+            num_banks=self.spec.banks_per_pseudo_channel
+        )
 
         # Per-channel state tracking
         self._channel_states: Dict[int, 'ChannelState'] = {}
@@ -165,6 +323,9 @@ class HBM4Controller:
         # Request tracking
         self._pending_requests: Dict[str, HBMRequest] = {}
         self._completed_requests: List[HBMResponse] = []
+
+        # Row state cache for hit detection
+        self._row_state: Dict[Tuple[int, int, int], int] = {}  # (ch, pch, bank) -> row
 
     @property
     def channels(self) -> int:
@@ -218,6 +379,11 @@ class HBM4Controller:
         )
         request.arrival_time = self.current_time_ns
 
+        # Check for row hit
+        key = (decoded.channel_id, decoded.pseudo_channel_id, decoded.bank_id)
+        if key in self._row_state and self._row_state[key] == decoded.row_id:
+            request.row_hit = True
+
         # Enqueue request - queue push returns success/failure
         if is_read:
             success = self.queue_manager.push_read(request)
@@ -245,7 +411,8 @@ class HBM4Controller:
         _logger.debug(
             f"Request submitted: id={request.request_id}, "
             f"addr=0x{addr:x}, ch={decoded.channel_id}, "
-            f"pch={decoded.pseudo_channel_id}, qos={qos_level}"
+            f"pch={decoded.pseudo_channel_id}, qos={qos_level}, "
+            f"row_hit={request.row_hit}"
         )
         return request.request_id
 
@@ -292,6 +459,234 @@ class HBM4Controller:
             f"pch={request.pseudo_channel_id}, row={request.row_id}"
         )
 
+    def _can_issue_to_bank(
+        self,
+        channel_id: int,
+        pseudo_channel_id: int,
+        bank_id: int,
+        row_id: int,
+    ) -> Tuple[bool, str]:
+        """Check if command can be issued to a bank
+
+        Args:
+            channel_id: Channel ID
+            pseudo_channel_id: Pseudo-channel ID
+            bank_id: Bank ID
+            row_id: Row ID
+
+        Returns:
+            (can_issue, reason) tuple
+        """
+        key = (channel_id, pseudo_channel_id, bank_id)
+
+        # Check if row is already open
+        if key in self._row_state:
+            open_row = self._row_state[key]
+            if open_row == row_id:
+                return True, "ROW_HIT"
+            else:
+                # Need to precharge first
+                self.stats.bank_conflicts += 1
+                return False, "ROW_CONFLICT"
+
+        return True, "ROW_MISS"
+
+    def _issue_act_command(
+        self,
+        channel_id: int,
+        pseudo_channel_id: int,
+        bank_id: int,
+        row_id: int,
+        request_id: str,
+    ) -> bool:
+        """Issue ACT command through channel model
+
+        Args:
+            channel_id: Channel ID
+            pseudo_channel_id: Pseudo-channel ID
+            bank_id: Bank ID
+            row_id: Row ID
+            request_id: Request ID for tracking
+
+        Returns:
+            True if command issued successfully
+        """
+        ch = self.channel_model.get_channel(channel_id)
+        if ch is None:
+            return False
+
+        result = ch.issue_command(
+            'ACT',
+            pseudo_channel=pseudo_channel_id,
+            bank=bank_id,
+            row=row_id,
+        )
+
+        if result:
+            # Update row state
+            key = (channel_id, pseudo_channel_id, bank_id)
+            self._row_state[key] = row_id
+
+            # Enqueue in pipeline if enabled
+            if self._pipeline:
+                cmd = PipelineCommand(
+                    command='ACT',
+                    channel_id=channel_id,
+                    pseudo_channel_id=pseudo_channel_id,
+                    bank_id=bank_id,
+                    row_id=row_id,
+                    col_id=0,
+                    request_id=request_id,
+                    issue_cycle=self._cycle_count,
+                )
+                self._pipeline.enqueue(cmd)
+
+            self.stats.commands_issued += 1
+            _logger.debug(f"ACT issued: ch={channel_id} pch={pseudo_channel_id} bank={bank_id} row={row_id}")
+
+        return result
+
+    def _issue_rd_command(
+        self,
+        channel_id: int,
+        pseudo_channel_id: int,
+        bank_id: int,
+        row_id: int,
+        col_id: int,
+        request_id: str,
+    ) -> bool:
+        """Issue READ command through channel model
+
+        Args:
+            channel_id: Channel ID
+            pseudo_channel_id: Pseudo-channel ID
+            bank_id: Bank ID
+            row_id: Row ID
+            col_id: Column ID
+            request_id: Request ID for tracking
+
+        Returns:
+            True if command issued successfully
+        """
+        ch = self.channel_model.get_channel(channel_id)
+        if ch is None:
+            return False
+
+        result = ch.issue_command(
+            'RD',
+            pseudo_channel=pseudo_channel_id,
+            bank=bank_id,
+            row=row_id,
+            col=col_id,
+        )
+
+        if result:
+            if self._pipeline:
+                cmd = PipelineCommand(
+                    command='RD',
+                    channel_id=channel_id,
+                    pseudo_channel_id=pseudo_channel_id,
+                    bank_id=bank_id,
+                    row_id=row_id,
+                    col_id=col_id,
+                    request_id=request_id,
+                    issue_cycle=self._cycle_count,
+                )
+                self._pipeline.enqueue(cmd)
+
+            self.stats.commands_issued += 1
+
+        return result
+
+    def _issue_wr_command(
+        self,
+        channel_id: int,
+        pseudo_channel_id: int,
+        bank_id: int,
+        row_id: int,
+        col_id: int,
+        request_id: str,
+    ) -> bool:
+        """Issue WRITE command through channel model
+
+        Args:
+            channel_id: Channel ID
+            pseudo_channel_id: Pseudo-channel ID
+            bank_id: Bank ID
+            row_id: Row ID
+            col_id: Column ID
+            request_id: Request ID for tracking
+
+        Returns:
+            True if command issued successfully
+        """
+        ch = self.channel_model.get_channel(channel_id)
+        if ch is None:
+            return False
+
+        result = ch.issue_command(
+            'WR',
+            pseudo_channel=pseudo_channel_id,
+            bank=bank_id,
+            row=row_id,
+            col=col_id,
+        )
+
+        if result:
+            if self._pipeline:
+                cmd = PipelineCommand(
+                    command='WR',
+                    channel_id=channel_id,
+                    pseudo_channel_id=pseudo_channel_id,
+                    bank_id=bank_id,
+                    row_id=row_id,
+                    col_id=col_id,
+                    request_id=request_id,
+                    issue_cycle=self._cycle_count,
+                )
+                self._pipeline.enqueue(cmd)
+
+            self.stats.commands_issued += 1
+
+        return result
+
+    def _issue_pre_command(
+        self,
+        channel_id: int,
+        pseudo_channel_id: int,
+        bank_id: int,
+    ) -> bool:
+        """Issue PRECHARGE command through channel model
+
+        Args:
+            channel_id: Channel ID
+            pseudo_channel_id: Pseudo-channel ID
+            bank_id: Bank ID
+
+        Returns:
+            True if command issued successfully
+        """
+        ch = self.channel_model.get_channel(channel_id)
+        if ch is None:
+            return False
+
+        result = ch.issue_command(
+            'PRE',
+            pseudo_channel=pseudo_channel_id,
+            bank=bank_id,
+            row=0,
+        )
+
+        if result:
+            # Clear row state
+            key = (channel_id, pseudo_channel_id, bank_id)
+            if key in self._row_state:
+                del self._row_state[key]
+
+            self.stats.commands_issued += 1
+
+        return result
+
     def tick(self) -> List[HBMResponse]:
         """Execute one clock cycle
 
@@ -308,6 +703,10 @@ class HBM4Controller:
         # Tick DFI interface if enabled
         if self.dfi:
             self.dfi.tick()
+
+        # Advance command pipeline
+        if self._pipeline:
+            self._pipeline.tick()
 
         # Handle refresh if enabled
         if self.refresh_scheduler:
@@ -329,6 +728,9 @@ class HBM4Controller:
                     f"Request completed: id={response.request_id}, "
                     f"ch={response.channel_id}, latency={response.latency}ns"
                 )
+
+        # Advance channel model
+        self.channel_model.tick()
 
         # Handle training/repair if needed
         self._handle_background_tasks()
@@ -445,6 +847,11 @@ class HBM4Controller:
 
         # Mark request completed
         selected.mark_completed(self.current_time_ns)
+
+        # Update row state
+        if not selected.row_hit:
+            key = (selected.channel_id, selected.pseudo_channel_id, selected.bank_id)
+            self._row_state[key] = selected.row_id
 
         # Update statistics
         self.stats.total_latency_ns += latency
@@ -575,6 +982,9 @@ class HBM4Controller:
                 'refresh_count': self.stats.refresh_count,
                 'training_count': self.stats.training_count,
                 'repair_count': self.stats.repair_count,
+                'pipeline_stalls': self.stats.pipeline_stalls,
+                'commands_issued': self.stats.commands_issued,
+                'bank_conflicts': self.stats.bank_conflicts,
             },
             'spec': {
                 'channels': self.spec.channels,
@@ -602,6 +1012,10 @@ class HBM4Controller:
                 'lp_state': str(self.dfi.lp_state.name) if self.dfi else None,
                 'pending_commands': len(self._pending_commands),
             } if self.dfi else None,
+            'pipeline': self._pipeline.get_stats() if self._pipeline else None,
+            'channel_model': {
+                'performance': self.channel_model.get_system_performance_summary(),
+            },
         }
         return stats
 
@@ -732,6 +1146,61 @@ class HBM4Controller:
         # Training is modeled as a blocking operation
         # In real hardware, this would take many cycles
         return training_id
+
+    # === Channel Model Integration Methods ===
+
+    def get_channel_state(self, channel_id: int) -> Optional[Dict]:
+        """Get current state of a channel
+
+        Args:
+            channel_id: Channel ID (0-31)
+
+        Returns:
+            Channel state dictionary or None if invalid
+        """
+        ch = self.channel_model.get_channel(channel_id)
+        if ch is None:
+            return None
+        return ch.get_state_summary()
+
+    def get_all_channel_states(self) -> List[Dict]:
+        """Get state of all channels
+
+        Returns:
+            List of channel state dictionaries
+        """
+        return self.channel_model.get_system_state_summary()
+
+    def reset(self):
+        """Reset controller and all sub-modules"""
+        self._cycle_count = 0
+        self.current_time_ns = 0
+
+        # Reset queue manager
+        self.queue_manager = QueueManager.create(
+            queue_depth=8 * self.spec.channels
+        )
+
+        # Reset channel model
+        self.channel_model.reset_all()
+
+        # Reset pipeline
+        if self._pipeline:
+            self._pipeline = CommandPipeline(num_stages=4, pipeline_depth=32)
+
+        # Reset row state
+        self._row_state.clear()
+
+        # Reset pending requests
+        self._pending_requests.clear()
+        self._completed_requests.clear()
+
+        # Reset statistics
+        self.stats = HBM4ControllerStats()
+
+        # Reset channel states
+        for ch in range(self.spec.channels):
+            self._channel_states[ch] = ChannelState(channel_id=ch)
 
 
 @dataclass

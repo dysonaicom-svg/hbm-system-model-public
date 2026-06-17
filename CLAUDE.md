@@ -71,6 +71,17 @@ Statistics Collector
 | Testbench | ✅ Complete |
 | Reference Models | ✅ Complete |
 
+### Simulation Tools
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| Trace Replayer | `trace_replayer.py` | ✅ Complete |
+| RTL Interface | `rtl_interface.py` | ✅ Complete |
+| Unified Simulator | `hbm4_unified_simulator.py` | ✅ Complete |
+| Result Comparison | `result_comparison.py` | ✅ Complete |
+| Advanced Visualization | `visualization/advanced_charts.py` | ✅ Complete |
+| Benchmark Suite | `benchmark_suite.py` | ✅ Complete |
+
 ## Key Documents
 
 - [Design Document](docs/design/2026-06-15-hbm-system-model-design.md) - 完整设计规范
@@ -92,8 +103,17 @@ python -m sim.simulator --mode functional
 # Run unified simulation (Python + RTL)
 python -m sim.unified_simulator
 
+# Run HBM4 unified simulator
+python -m sim.hbm4_unified_simulator --mode full --channels 32
+
 # Run benchmark
 python -m sim.benchmark
+
+# Trace replay (requires Ramulator2 traces)
+python -m sim.trace_replayer --trace traces/ld_st.trace --format ramulator_ld_st
+
+# Result comparison (Python vs RTL)
+python -m sim.result_comparison --python results.json --rtl rtl_results.json
 
 # Run tests by category
 pytest tests/controller/ -v
@@ -111,18 +131,23 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| Controller Tests | 356 | ✅ Passing |
-| DRAM Tests | 995 | ✅ Passing |
-| HBM4 Tests | 646 | ✅ Passing |
-| Integration Tests | 823 | ✅ Passing |
-| PHY Tests | 174 | ✅ Passing |
-| Coverage Tests | 358 | ✅ Passing |
-| Verification Tests | 200 | ✅ Passing |
-| Benchmark Tests | 147 | ✅ Passing |
-| Other Tests | 634 | ✅ Passing |
-| **Total** | **4,333** | **✅ All Passing** |
+| Controller Tests | 360+ | ✅ Passing |
+| DRAM Tests | 1009+ | ✅ Passing |
+| HBM4 Tests | 650+ | ✅ Passing |
+| Integration Tests | 827+ | ✅ Passing |
+| Simulation Tests | 64+ | ✅ Passing |
+| Verification Tests | 62+ | ✅ Passing |
+| Benchmark Tests | 184+ | ✅ Passing |
+| Traffic Tests | 117+ | ✅ Passing |
+| Interconnect Tests | 129+ | ✅ Passing |
+| PHY Tests | 178+ | ✅ Passing |
+| Coverage Tests | 362+ | ✅ Passing |
+| Performance Tests | 61+ | ✅ Passing |
+| RTL Verification | 146+ | ✅ Passing |
+| Sim Tests | 190+ | ✅ Passing |
+| **Total** | **4,409+** | ✅ **All Passing** |
 
-**Test Files**: 120 test files with comprehensive coverage
+**Test Files**: 120+ test files with comprehensive coverage
 
 ## HBM4 Support
 
@@ -144,7 +169,7 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 | Data Rate | 8-16 GT/s |
 | Interface Width | 2048-bit |
 | Channels | 32 |
-| Peak Bandwidth | 2.048 TB/s |
+| Peak Bandwidth | 4.096 TB/s |
 | Stacks | 1-8 configurable |
 
 ## Development Model
@@ -162,7 +187,7 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 | Random | 19,132 | 29.89 cycles | ~82 GB/s | 0% |
 | Hotspot | 19,147 | 29.25 cycles | ~82 GB/s | 0% |
 
-*Peak Bandwidth: 2.048 TB/s (HBM4 @ 8 GT/s) | Achieved: ~164 GB/s (single channel)*
+*Peak Bandwidth: 4.096 TB/s (HBM4 @ 16 GT/s) | Achieved: ~164 GB/s (single channel)*
 
 ## CI/CD Status
 
@@ -216,13 +241,19 @@ verilator --cc --trace \
 JXTF/HBM/
 ├── model/           # Python 模型
 │   ├── controller/  # HBM 控制器
-│   ├── dram/         # DRAM 模型
-│   ├── phy/          # PHY 模型
+│   ├── dram/        # DRAM 模型
+│   ├── phy/         # PHY 模型
 │   ├── interconnect/  # AXI/NoC 互联
-│   └── benchmark/     # 基准测试
+│   └── benchmark/    # 基准测试
 ├── sim/              # 仿真器
-│   ├── simulator.py   # HBMSimulator
-│   └── unified_simulator.py  # 统一仿真器
+│   ├── simulator.py              # HBMSimulator
+│   ├── hbm4_unified_simulator.py # HBM4 统一仿真器
+│   ├── trace_replayer.py         # Trace 回放
+│   ├── rtl_interface.py         # RTL 协同仿真
+│   ├── result_comparison.py      # 结果对比
+│   ├── visualization/            # 可视化
+│   │   └── advanced_charts.py
+│   └── benchmark_suite.py       # 基准测试套件
 ├── rtl/              # RTL 实现
 │   ├── hbm_controller.sv
 │   ├── dram_model.sv
@@ -230,7 +261,7 @@ JXTF/HBM/
 ├── verification/     # 验证环境
 │   ├── uvm/          # UVM 测试
 │   └── reference_model/
-├── tests/            # 测试套件 (4,333 测试, 120 文件)
+├── tests/            # 测试套件 (4,389 测试, 120+ 文件)
 ├── public_release/   # 发布包 (Git Submodule)
 └── research/        # 研究资料
     └── ramulator2/    # 参考模拟器
@@ -244,4 +275,38 @@ JXTF/HBM/
 | `model/dram/hbm4_channel_model.py` | HBM4 Channel Model |
 | `model/phy/phy_training.py` | PHY Training Sequences |
 | `sim/simulator.py` | Transaction-level Simulator |
+| `sim/hbm4_unified_simulator.py` | HBM4 Unified Simulator (32-channel) |
+| `sim/trace_replayer.py` | Trace Replayer for Ramulator2 |
+| `sim/rtl_interface.py` | RTL Co-simulation Interface |
+| `sim/result_comparison.py` | Python vs RTL Result Comparison |
 | `rtl/hbm_controller.sv` | RTL Controller Implementation |
+
+## Ramulator2 Integration
+
+The project includes [Ramulator2](https://github.com/CMU-SAFARI/ramulator2) as a git submodule for reference simulation and trace generation.
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/dysonaicom-svg/hbm-system-model-public.git
+
+# Update submodule
+git submodule update --init research/ramulator2
+```
+
+### Trace Replay Workflow
+
+1. Generate traces with Ramulator2:
+   ```bash
+   cd research/ramulator2
+   ./ramulator configs/HBM4.cfg --mode=trace ... > trace.ldst
+   ```
+
+2. Replay traces with Python model:
+   ```bash
+   python -m sim.trace_replayer --trace trace.ldst --format ramulator_ld_st
+   ```
+
+3. Compare results:
+   ```bash
+   python -m sim.result_comparison --python model.json --rtl rtl.json
+   ```
