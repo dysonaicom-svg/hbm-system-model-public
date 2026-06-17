@@ -1404,31 +1404,129 @@ class DFI5Interface:
         Handles the dfi_freq_change_en/ack handshake and timing.
         Per DFI 5.0 spec, lp_state should only transition to LP_IDLE
         after the entire frequency change sequence completes.
+
+        Frequency Change Sequence (DFI 5.0):
+        1. FC_IDLE: Normal operation
+        2. FC_REQUESTED: Frequency change requested by controller
+        3. FC_ENTERING: Entering frequency change state (drain pipelines)
+        4. FC_ACTIVE: Frequency being changed (PHY reconfiguring)
+        5. FC_EXITING: Exiting frequency change state
+        6. FC_LOCKING: PLL/DLL re-locking phase
+        7. FC_COMPLETE: Frequency change complete
+        8. FC_IDLE: Return to normal operation
         """
-        if self._fc_state == DFI5FreqChangeState.FC_ENTERING:
+        if self._fc_state == DFI5FreqChangeState.FC_REQUESTED:
+            # Wait for explicit enter_freq_change() call
+            pass
+
+        elif self._fc_state == DFI5FreqChangeState.FC_ENTERING:
             self._fc_latency_counter += 1
-            if self._fc_latency_counter >= self.timing.tLP_CTRL_ENTER:
+            if self._fc_latency_counter >= self.timing.tFC_ENTER:
                 self._fc_state = DFI5FreqChangeState.FC_ACTIVE
                 self._fc_latency_counter = 0
+                # Update PHY PLL configuration
+                self.phy.configure_pll(self.target_frequency_mhz)
+                self.phy.set_pll_locked(False)
+
+        elif self._fc_state == DFI5FreqChangeState.FC_ACTIVE:
+            self._fc_latency_counter += 1
+            # Simulate frequency change in PHY
+            if self._fc_latency_counter >= self.timing.tFC_LATENCY:
+                self._fc_state = DFI5FreqChangeState.FC_EXITING
+                self._fc_latency_counter = 0
+                # Acknowledge frequency change
+                self._freq_change_ack = True
+                self._freq_change_ack_pending = True
 
         elif self._fc_state == DFI5FreqChangeState.FC_EXITING:
             self._fc_latency_counter += 1
             if self._fc_latency_counter >= self.timing.tFC_EXIT:
                 self._fc_state = DFI5FreqChangeState.FC_LOCKING
                 self._fc_latency_counter = 0
+                # Clear the handshake signals
+                self._freq_change_en = False
+                self._freq_change_ack = False
 
         elif self._fc_state == DFI5FreqChangeState.FC_LOCKING:
             self._fc_latency_counter += 1
-            if self._fc_latency_counter >= self.timing.tFC_LATENCY:
+            if self._fc_latency_counter >= self.timing.tFC_PLL_LOCK:
+                # Simulate PLL re-lock
+                self.phy.set_pll_locked(True)
+                self.phy.set_dll_locked(True)
                 self._fc_state = DFI5FreqChangeState.FC_COMPLETE
                 self._fc_latency_counter = 0
 
         elif self._fc_state == DFI5FreqChangeState.FC_COMPLETE:
-            # Only transition to IDLE when frequency change is fully complete
-            # This follows DFI 5.0 spec for proper LP state management
+            # Complete the frequency change
             self.lp_state = DFILowPowerState.LP_IDLE
             self._fc_state = DFI5FreqChangeState.FC_IDLE
             self.frequency_mhz = self.target_frequency_mhz
+            self._fc_request_pending = False
+            self._fc_initiated_by_controller = False
+            # Reset frequency change handshake
+            self._freq_change_data_valid = False
+
+    def initiate_freq_change(self, target_freq_mhz: int) -> bool:
+        """Initiate a complete frequency change sequence
+
+        This is the main entry point for frequency changes from
+        the controller perspective.
+
+        Args:
+            target_freq_mhz: Target frequency in MHz
+
+        Returns:
+            True if frequency change was initiated
+        """
+        if self._fc_state != DFI5FreqChangeState.FC_IDLE:
+            self._record_error("freq_change",
+                             "Cannot initiate frequency change - another in progress",
+                             self._cycle)
+            return False
+
+        if self.lp_state != DFILowPowerState.LP_IDLE:
+            self._record_error("freq_change",
+                             f"Cannot initiate frequency change from LP state {self.lp_state.name}",
+                             self._cycle)
+            return False
+
+        self.target_frequency_mhz = target_freq_mhz
+        self._fc_request_pending = True
+        self._fc_initiated_by_controller = True
+        self._fc_state = DFI5FreqChangeState.FC_REQUESTED
+        return True
+
+    def get_freq_change_progress(self) -> Dict[str, Any]:
+        """Get detailed frequency change progress information
+
+        Returns:
+            Dictionary with FC state and progress information
+        """
+        return {
+            'state': self._fc_state.name,
+            'request_pending': self._fc_request_pending,
+            'initiated_by_controller': self._fc_initiated_by_controller,
+            'latency_counter': self._fc_latency_counter,
+            'current_freq_mhz': self.frequency_mhz,
+            'target_freq_mhz': self.target_frequency_mhz,
+            'freq_change_en': self._freq_change_en,
+            'freq_change_ack': self._freq_change_ack,
+            'data_valid': self._freq_change_data_valid,
+            'pll_locked': self.phy.is_pll_locked(),
+            'dll_locked': self.phy.is_dll_locked(),
+            'remaining_cycles': self.get_freq_change_latency_remaining(),
+        }
+
+    def set_freq_change_data_valid(self, valid: bool):
+        """Set frequency change data valid signal
+
+        Indicates that data on the DFI interface is valid during
+        frequency change.
+
+        Args:
+            valid: True if data is valid
+        """
+        self._freq_change_data_valid = valid
 
     def get_freq_change_state(self) -> DFI5FreqChangeState:
         """Get current frequency change state
@@ -1438,6 +1536,14 @@ class DFI5Interface:
         """
         return self._fc_state
 
+    def is_freq_change_in_progress(self) -> bool:
+        """Check if frequency change is in progress
+
+        Returns:
+            True if FC state is not IDLE
+        """
+        return self._fc_state != DFI5FreqChangeState.FC_IDLE
+
     def is_freq_change_complete(self) -> bool:
         """Check if frequency change sequence is complete
 
@@ -1445,6 +1551,29 @@ class DFI5Interface:
             True if frequency change is complete
         """
         return self._fc_state == DFI5FreqChangeState.FC_IDLE
+
+    def cancel_freq_change(self) -> bool:
+        """Cancel a pending frequency change
+
+        Returns:
+            True if cancellation was successful
+        """
+        if self._fc_state in [DFI5FreqChangeState.FC_ENTERING,
+                              DFI5FreqChangeState.FC_ACTIVE,
+                              DFI5FreqChangeState.FC_EXITING,
+                              DFI5FreqChangeState.FC_LOCKING]:
+            self._record_error("freq_change",
+                             "Cannot cancel frequency change in progress",
+                             self._cycle)
+            return False
+
+        self._fc_state = DFI5FreqChangeState.FC_IDLE
+        self._fc_request_pending = False
+        self._fc_initiated_by_controller = False
+        self._freq_change_en = False
+        self._freq_change_ack = False
+        self._freq_change_data_valid = False
+        return True
 
     def get_freq_change_latency_remaining(self) -> int:
         """Get remaining cycles until frequency change completes
@@ -1455,15 +1584,26 @@ class DFI5Interface:
         if self._fc_state == DFI5FreqChangeState.FC_IDLE:
             return 0
 
-        state_latencies = {
-            DFI5FreqChangeState.FC_REQUESTED: self.timing.tLP_CTRL_ENTER,
-            DFI5FreqChangeState.FC_ENTERING: self.timing.tLP_CTRL_ENTER - self._fc_latency_counter,
-            DFI5FreqChangeState.FC_ACTIVE: self.timing.tFC_EXIT - self._fc_latency_counter,
+        remaining_map = {
+            DFI5FreqChangeState.FC_REQUESTED: self.timing.tFC_ENTER,
+            DFI5FreqChangeState.FC_ENTERING: self.timing.tFC_ENTER - self._fc_latency_counter,
+            DFI5FreqChangeState.FC_ACTIVE: self.timing.tFC_LATENCY - self._fc_latency_counter,
             DFI5FreqChangeState.FC_EXITING: self.timing.tFC_EXIT - self._fc_latency_counter,
-            DFI5FreqChangeState.FC_LOCKING: self.timing.tFC_LATENCY - self._fc_latency_counter,
+            DFI5FreqChangeState.FC_LOCKING: self.timing.tFC_PLL_LOCK - self._fc_latency_counter,
             DFI5FreqChangeState.FC_COMPLETE: 1,
         }
-        return max(0, state_latencies.get(self._fc_state, 0))
+        return max(0, remaining_map.get(self._fc_state, 0))
+
+    def get_total_freq_change_latency(self) -> int:
+        """Get total latency for a complete frequency change
+
+        Returns:
+            Total cycles for frequency change
+        """
+        return (self.timing.tFC_ENTER +
+                self.timing.tFC_LATENCY +
+                self.timing.tFC_EXIT +
+                self.timing.tFC_PLL_LOCK)
 
     @property
     def freq_change_en(self) -> bool:
@@ -1474,6 +1614,14 @@ class DFI5Interface:
     def freq_change_ack(self) -> bool:
         """Get dfi_freq_change_ack signal state"""
         return self._freq_change_ack
+
+    def is_pll_locked(self) -> bool:
+        """Check if PHY PLL is locked"""
+        return self.phy.is_pll_locked()
+
+    def is_dll_locked(self) -> bool:
+        """Check if PHY DLL is locked"""
+        return self.phy.is_dll_locked()
 
     # === DFI 5.0 Power Management ===
 
@@ -2171,11 +2319,18 @@ class DFI5Interface:
             "commands_completed": 0,
             "freq_changes": 0,
             "lp_transitions": 0,
+            "lp_entries": 0,
+            "lp_exits": 0,
+            "lp_timeouts": 0,
             "errors": 0,
             "ctrl_updates": 0,
             "power_cycles": 0,
+            "cke_changes": 0,
         }
         self._error_log.clear()
+        self.lp_state_history.clear()
+        self._lp_idle_counter = 0
+        self._lp_timeout_counter = 0
 
     # === Timing Parameters ===
 
@@ -2298,22 +2453,34 @@ class DFI5Interface:
         and queues.
         """
         self.lp_state = DFILowPowerState.LP_IDLE
+        self.lp_state_history.clear()
         self._fc_state = DFI5FreqChangeState.FC_IDLE
         self._fc_latency_counter = 0
         self._fc_request_pending = False
+        self._fc_initiated_by_controller = False
+        self._freq_change_data_valid = False
 
         # Reset DFI 5.0 signals
         self._ctrlupd_req = False
         self._ctrlupd_ack = False
         self._ctrlupd_latency_counter = 0
+        self._ctrlupd_pending = False
         self._freq_change_en = False
         self._freq_change_ack = False
+        self._freq_change_ack_pending = False
         self._pwr_up_done = False
         self._pwr_down_req = False
         self._pwr_down_ack = False
+        self._pwr_down_latency_counter = 0
         self._lp_req = False
         self._lp_ack = False
         self._lp_wakeup = False
+        self._lp_entry_counter = 0
+        self._lp_exit_counter = 0
+        self._lp_timeout_counter = 0
+        self._lp_idle_counter = 0
+        self._cke = True
+        self._cke_override = False
 
         self.training_complete = False
         self.training_in_progress = False
@@ -2322,3 +2489,62 @@ class DFI5Interface:
         self._error_log.clear()
         self._cycle = 0
         self.reset_statistics()
+
+        # Reset PHY
+        self.phy.set_phy_clock_enable(True)
+        self.phy.set_phy_reset(False)
+        self.phy.set_pll_locked(True)
+        self.phy.set_dll_locked(True)
+
+    def get_interface_status(self) -> Dict[str, Any]:
+        """Get comprehensive interface status
+
+        Returns:
+            Dictionary with all status information
+        """
+        return {
+            'version': self.version,
+            'cycle': self._cycle,
+            'frequency_mhz': self.frequency_mhz,
+            'target_frequency_mhz': self.target_frequency_mhz,
+            'lp_state': self.lp_state.name,
+            'fc_state': self._fc_state.name,
+            'training_complete': self.training_complete,
+            'training_in_progress': self.training_in_progress,
+            'phy_status': self.phy.get_status(),
+            'queue_depth': self.pending_request_count,
+            'queue_full': self.is_queue_full,
+            'ready': self.is_ready(),
+            'error_count': len(self._error_log),
+            'cke': self._cke,
+            'pll_locked': self.phy.is_pll_locked(),
+            'dll_locked': self.phy.is_dll_locked(),
+        }
+
+    def validate_interface(self) -> Tuple[bool, List[str]]:
+        """Validate interface configuration and state
+
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+        """
+        errors = []
+
+        # Validate timing parameters
+        timing_errors = self.timing.validate()
+        errors.extend([f"Timing: {e}" for e in timing_errors])
+
+        # Check for stuck signals
+        if self._lp_req and not self._lp_ack:
+            timeout = self.LP_TIMEOUT_CYCLES.get(self.lp_state, 0)
+            if self._lp_entry_counter > timeout > 0:
+                errors.append(f"LP stuck: req set but ack not received in {self.lp_state.name}")
+
+        # Check frequency change consistency
+        if self._freq_change_en and self._fc_state == DFI5FreqChangeState.FC_IDLE:
+            errors.append("Inconsistent: freq_change_en set but FC state is IDLE")
+
+        # Check PHY state
+        if self.training_complete and not self.phy.is_initialized():
+            errors.append("Training complete but PHY not initialized")
+
+        return len(errors) == 0, errors

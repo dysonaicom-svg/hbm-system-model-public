@@ -2138,6 +2138,11 @@ class HBM4ChannelArray:
     """Array of HBM4 channels for system-level simulation
 
     Manages all 32 HBM4 channels and provides system-level operations.
+    Features:
+    - System-wide performance statistics
+    - Channel-level utilization tracking
+    - Aggregate bandwidth monitoring
+    - Coordinated reset and synchronization
     """
 
     def __init__(self, spec: Optional[HBM4Spec] = None, timing: Optional[HBM4Timing] = None,
@@ -2164,11 +2169,21 @@ class HBM4ChannelArray:
             for i in range(spec.channels)
         ]
 
-        # System-level scheduler
+        # System-level scheduler (for backward compatibility)
         self.scheduler = BankGroupScheduler(timing)
 
         # Timing violations
         self.timing_violations: List[TimingViolation] = []
+
+        # System performance statistics
+        self._system_stats = {
+            'total_acts': 0,
+            'total_reads': 0,
+            'total_writes': 0,
+            'total_refreshes': 0,
+            'total_bytes_read': 0,
+            'total_bytes_written': 0,
+        }
 
     def get_channel(self, channel_id: int) -> Optional[HBM4Channel]:
         """Get a specific channel
@@ -2222,12 +2237,12 @@ class HBM4ChannelArray:
 
     @property
     def total_bandwidth_gbs(self) -> float:
-        """Total system bandwidth in GB/s"""
+        """Total peak system bandwidth in GB/s"""
         return sum(ch.peak_bandwidth_gbs for ch in self.channels)
 
     @property
     def total_bandwidth_tbs(self) -> float:
-        """Total system bandwidth in TB/s"""
+        """Total peak system bandwidth in TB/s"""
         return self.total_bandwidth_gbs / 1000
 
     @property
@@ -2235,8 +2250,80 @@ class HBM4ChannelArray:
         """Total number of banks across all channels"""
         return self.spec.total_banks
 
+    def get_system_performance_summary(self) -> Dict:
+        """Get system-wide performance summary
+
+        Returns:
+            Dictionary with aggregate performance statistics
+        """
+        total_acts = 0
+        total_reads = 0
+        total_writes = 0
+        total_bytes_read = 0
+        total_bytes_written = 0
+        total_latency_reads = 0
+        total_latency_writes = 0
+        total_row_hits = 0
+        total_row_misses = 0
+
+        for ch in self.channels:
+            stats = ch.get_performance_stats()
+            total_acts += stats.act_count
+            total_reads += stats.read_count
+            total_writes += stats.write_count
+            total_bytes_read += stats.read_bytes
+            total_bytes_written += stats.write_bytes
+            total_latency_reads += stats.total_read_latency
+            total_latency_writes += stats.total_write_latency
+            total_row_hits += stats.row_hits
+            total_row_misses += stats.row_misses
+
+        total_ops = total_reads + total_writes
+        row_hit_rate = 0.0
+        if (total_row_hits + total_row_misses) > 0:
+            row_hit_rate = (total_row_hits / (total_row_hits + total_row_misses)) * 100.0
+
+        avg_read_latency = 0.0
+        if total_reads > 0:
+            avg_read_latency = total_latency_reads / total_reads
+
+        avg_write_latency = 0.0
+        if total_writes > 0:
+            avg_write_latency = total_latency_writes / total_writes
+
+        return {
+            'total_activations': total_acts,
+            'total_reads': total_reads,
+            'total_writes': total_writes,
+            'total_bytes_read': total_bytes_read,
+            'total_bytes_written': total_bytes_written,
+            'average_read_latency': avg_read_latency,
+            'average_write_latency': avg_write_latency,
+            'row_hit_rate': row_hit_rate,
+            'peak_bandwidth_gbs': self.total_bandwidth_gbs,
+            'peak_bandwidth_tbs': self.total_bandwidth_tbs,
+        }
+
+    def get_channel_performance(self, channel_id: int) -> Optional[Dict]:
+        """Get performance statistics for a specific channel
+
+        Args:
+            channel_id: Channel index (0-31)
+
+        Returns:
+            Dictionary with channel performance or None if invalid
+        """
+        ch = self.get_channel(channel_id)
+        if ch is None:
+            return None
+        return ch.get_performance_stats().get_summary()
+
     def get_system_state_summary(self) -> dict:
-        """Get system-wide state summary"""
+        """Get system-wide state summary with performance metrics
+
+        Returns:
+            Dictionary with state information and aggregate performance
+        """
         total_violations = sum(len(ch.timing_violations) for ch in self.channels)
 
         return {
@@ -2247,5 +2334,20 @@ class HBM4ChannelArray:
             'peak_bandwidth_gbs': self.total_bandwidth_gbs,
             'peak_bandwidth_tbs': self.total_bandwidth_tbs,
             'timing_violations': total_violations,
-            'channels': [ch.get_state_summary() for ch in self.channels]
+            'channels': [ch.get_state_summary() for ch in self.channels],
+            'performance': self.get_system_performance_summary()
+        }
+
+    def reset_all(self):
+        """Reset all channels and system statistics"""
+        for ch in self.channels:
+            ch.reset()
+        self.timing_violations.clear()
+        self._system_stats = {
+            'total_acts': 0,
+            'total_reads': 0,
+            'total_writes': 0,
+            'total_refreshes': 0,
+            'total_bytes_read': 0,
+            'total_bytes_written': 0,
         }
