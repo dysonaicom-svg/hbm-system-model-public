@@ -20,7 +20,16 @@ class TraceFormat(Enum):
 
 @dataclass
 class TraceRequest:
-    """Request from trace file"""
+    """Request from trace file
+
+    Attributes:
+        request_id: Unique identifier for this request. Uses the line number
+            from the trace file (0-indexed), making it useful for correlating
+            requests with their source in the original trace.
+        addr: Memory address for this request.
+        is_read: True for read operations, False for writes.
+        timestamp: Optional arrival timestamp (if provided by trace format).
+    """
     request_id: int
     addr: int
     is_read: bool
@@ -38,15 +47,21 @@ class TraceReplayer:
     def load(self) -> int:
         """Load trace file, return number of requests"""
         self._requests = []
-        with open(self.trace_file, 'r') as f:
-            for line_num, line in enumerate(f):
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
+        try:
+            with open(self.trace_file, 'r') as f:
+                for line_num, line in enumerate(f):
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
 
-                req = self._parse_line(line, line_num)
-                if req:
-                    self._requests.append(req)
+                    req = self._parse_line(line, line_num)
+                    if req:
+                        self._requests.append(req)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Trace file not found: {self.trace_file}. "
+                f"Please verify the file path is correct and the file exists."
+            )
 
         logger.info(f"Loaded {len(self._requests)} requests from {self.trace_file}")
         return len(self._requests)
