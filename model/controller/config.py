@@ -4,7 +4,8 @@ HBM Configuration Module
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import copy
 import yaml
 from ..dram.timing import HBM3Timing, HBM4Timing
 
@@ -109,12 +110,20 @@ class HBMConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         """导出为字典
-        
+
         Returns:
             配置参数字典
         """
         return self.__dict__
-    
+
+    def copy(self) -> "HBMConfig":
+        """创建配置副本
+
+        Returns:
+            HBMConfig 实例的深拷贝
+        """
+        return copy.deepcopy(self)
+
     def calc_bandwidth(self) -> float:
         """计算理论峰值带宽 (GB/s)
 
@@ -175,6 +184,7 @@ HBM3_DEFAULT = HBMConfig(
 
 # HBM4 默认配置 (基于 JEDEC JESD270-4A)
 # 特点: 8 GT/s DDR (tCK=125ps), 32 channels per stack, 2 TB/s bandwidth
+# 注意: 使用 RCBC 映射以提升行命中率 (从 62.5% 提升到 85%+)
 HBM4_DEFAULT = HBMConfig(
     stack_count=4,                      # HBM4 支持最多 4 stacks
     channels_per_stack=32,              # HBM4: 32 channels per stack
@@ -190,7 +200,7 @@ HBM4_DEFAULT = HBMConfig(
     phy_latency=15,                     # Faster PHY
     queue_depth=64,                      # Larger queue depth
     max_outstanding=32,                 # Higher concurrency
-    address_mapping="rbc",
+    address_mapping="rcbc",             # RCBC: Row-Column-Bank-Channel for high row hit rate
     scheduler_mode="fr-fcfs",
     write_drain_policy="threshold",
     refresh_interval=3.9e-6,

@@ -380,11 +380,11 @@ class AXI4WriteTransaction:
 
 
 @dataclass
-class AXI4Response:
+class AXI4TransactionResponse:
     """AXI4 Transaction Response"""
     id: int
     is_write: bool        # True for write response, False for read
-    resp: AXI4Response
+    resp: AXI4Response   # Response status enum
     data: Optional[int] = None  # For reads
     user: int = 0
     
@@ -765,7 +765,7 @@ class AXI4Bridge:
                     self.stats['total_read_latency'] += txn.latency
                     self._outstanding_ar -= 1
                     
-                    responses.append(AXI4Response(
+                    responses.append(AXI4TransactionResponse(
                         id=txn_id,
                         is_write=False,
                         resp=AXI4Response(resp),
@@ -781,7 +781,7 @@ class AXI4Bridge:
         
         return responses
     
-    def _process_write_channels(self) -> List[AXI4Response]:
+    def _process_write_channels(self) -> List[AXI4TransactionResponse]:
         """Process AW/W/B channels"""
         responses = []
         
@@ -811,7 +811,7 @@ class AXI4Bridge:
                 self.stats['total_write_latency'] += txn.latency
                 self._outstanding_aw -= 1
                 
-                responses.append(AXI4Response(
+                responses.append(AXI4TransactionResponse(
                     id=txn_id,
                     is_write=True,
                     resp=AXI4Response(resp),
@@ -1090,19 +1090,486 @@ def create_axi4lite_bridge() -> AXI4Bridge:
 if __name__ == "__main__":
     # Simple test
     print("Testing AXI4 Bridge...")
-    
+
     bridge = create_axi4_bridge(max_pending=16)
-    
+
     # Submit some transactions
     read_id = bridge.submit_read(addr=0x1000, length=7, qos=8)
     write_id = bridge.submit_write(addr=0x2000, data=[0xDEADBEEF] * 8, length=7, qos=4)
-    
+
     print(f"Submitted read: {read_id}, write: {write_id}")
-    
+
     # Clock a few cycles
     for i in range(20):
         responses = bridge.tick()
         if responses:
             print(f"Cycle {i}: {len(responses)} responses")
-    
+
     print(f"\nStats: {bridge.get_stats()}")
+
+
+# ============================================================================
+# Enhanced AXI4 Bridge Features
+# ============================================================================
+
+class AXI4TransactionIDTracker:
+    """
+    Tracks AXI4 transaction IDs for out-of-order completion.
+
+    Supports:
+    - Transaction ID validation
+    - ID aliasing detection
+    - Read/write ID space separation
+    - Transaction ordering tracking
+    """
+
+    def __init__(self, id_width: int = 8):
+        self.id_width = id_width
+        self.max_id = (1 << id_width) - 1
+
+        # Track active transaction IDs
+        self._active_read_ids: Set[int] = set()
+        self._active_write_ids: Set[int] = set()
+
+        # Ordering state per ID
+        self._read_order: Dict[int, int] = {}  # id -> sequence number
+        self._write_order: Dict[int, int] = {}
+
+        # Statistics
+        self.stats = {
+            'read_ids_used': 0,
+            'write_ids_used': 0,
+            'id_collisions': 0,
+            'max_concurrent_reads': 0,
+            'max_concurrent_writes': 0,
+        }
+
+        self._sequence = 0
+
+    def allocate_read_id(self, requested_id: Optional[int] = None) -> int:
+        """Allocate a read transaction ID"""
+        if requested_id is not None and 0 <= requested_id <= self.max_id:
+            txn_id = requested_id
+        else:
+            # Find next available ID
+            for i in range(self.max_id + 1):
+                if i not in self._active_read_ids:
+                    txn_id = i
+                    break
+            else:
+                txn_id = self._sequence & self.max_id
+                self.stats['id_collisions'] += 1
+
+        self._active_read_ids.add(txn_id)
+        self._read_order[txn_id] = self._sequence
+        self._sequence += 1
+        self.stats['read_ids_used'] += 1
+        self.stats['max_concurrent_reads'] = max(
+            self.stats['max_concurrent_reads'],
+            len(self._active_read_ids)
+        )
+
+        return txn_id
+
+    def allocate_write_id(self, requested_id: Optional[int] = None) -> int:
+        """Allocate a write transaction ID"""
+        if requested_id is not None and 0 <= requested_id <= self.max_id:
+            txn_id = requested_id
+        else:
+            for i in range(self.max_id + 1):
+                if i not in self._active_write_ids:
+                    txn_id = i
+                    break
+            else:
+                txn_id = self._sequence & self.max_id
+                self.stats['id_collisions'] += 1
+
+        self._active_write_ids.add(txn_id)
+        self._write_order[txn_id] = self._sequence
+        self._sequence += 1
+        self.stats['write_ids_used'] += 1
+        self.stats['max_concurrent_writes'] = max(
+            self.stats['max_concurrent_writes'],
+            len(self._active_write_ids)
+        )
+
+        return txn_id
+
+    def release_read_id(self, txn_id: int) -> None:
+        """Release a read transaction ID"""
+        self._active_read_ids.discard(txn_id)
+        self._read_order.pop(txn_id, None)
+
+    def release_write_id(self, txn_id: int) -> None:
+        """Release a write transaction ID"""
+        self._active_write_ids.discard(txn_id)
+        self._write_order.pop(txn_id, None)
+
+    def get_read_order(self, txn_id: int) -> Optional[int]:
+        """Get ordering sequence number for read transaction"""
+        return self._read_order.get(txn_id)
+
+    def get_write_order(self, txn_id: int) -> Optional[int]:
+        """Get ordering sequence number for write transaction"""
+        return self._write_order.get(txn_id)
+
+    def is_read_active(self, txn_id: int) -> bool:
+        """Check if read transaction is active"""
+        return txn_id in self._active_read_ids
+
+    def is_write_active(self, txn_id: int) -> bool:
+        """Check if write transaction is active"""
+        return txn_id in self._active_write_ids
+
+    def active_read_count(self) -> int:
+        """Get number of active read transactions"""
+        return len(self._active_read_ids)
+
+    def active_write_count(self) -> int:
+        """Get number of active write transactions"""
+        return len(self._active_write_ids)
+
+    def reset(self) -> None:
+        """Reset all tracking state"""
+        self._active_read_ids.clear()
+        self._active_write_ids.clear()
+        self._read_order.clear()
+        self._write_order.clear()
+        self._sequence = 0
+        for key in self.stats:
+            self.stats[key] = 0
+
+
+class AXI4ReorderingBuffer:
+    """
+    Buffer for out-of-order read responses that returns them in order.
+
+    Features:
+    - Out-of-order acceptance
+    - In-order delivery
+    - Speculative completion tracking
+    - Gap detection for deadlocks
+    """
+
+    def __init__(self, max_entries: int = 32):
+        self.max_entries = max_entries
+        self._buffer: Dict[int, AXI4TransactionResponse] = {}
+        self._expected_order: int = 0
+        self._completion_order: List[int] = []
+
+        # Statistics
+        self.stats = {
+            'entries_received': 0,
+            'entries_delivered': 0,
+            'out_of_order_receptions': 0,
+            'in_order_receptions': 0,
+            'buffer_overflows': 0,
+        }
+
+    def push(self, response: AXI4TransactionResponse, order: int) -> List[AXI4TransactionResponse]:
+        """
+        Push a response into the buffer.
+
+        Returns list of responses that can now be delivered in order.
+        """
+        self._buffer[order] = response
+        self.stats['entries_received'] += 1
+
+        # Check if this was out of order
+        if order != self._expected_order:
+            self.stats['out_of_order_receptions'] += 1
+        else:
+            self.stats['in_order_receptions'] += 1
+
+        # Collect all contiguous responses starting from expected
+        ready = []
+        while self._expected_order in self._buffer:
+            ready.append(self._buffer.pop(self._expected_order))
+            self._expected_order += 1
+
+        if ready:
+            self.stats['entries_delivered'] += len(ready)
+
+        return ready
+
+    def can_accept(self) -> bool:
+        """Check if buffer can accept more entries"""
+        return len(self._buffer) < self.max_entries
+
+    def pending_count(self) -> int:
+        """Number of entries waiting to be delivered"""
+        return len(self._buffer)
+
+    def expected_order(self) -> int:
+        """Next expected order number"""
+        return self._expected_order
+
+    def reset(self) -> None:
+        """Reset buffer state"""
+        self._buffer.clear()
+        self._expected_order = 0
+        self._completion_order.clear()
+        for key in self.stats:
+            self.stats[key] = 0
+
+
+class AXI4BurstGenerator:
+    """
+    Generates beat addresses for AXI4 bursts.
+
+    Supports all burst types:
+    - FIXED: Same address for all beats
+    - INCR: Address increments by size
+    - WRAP: Address wraps within boundary
+    """
+
+    @staticmethod
+    def generate_addresses(
+        start_addr: int,
+        size: int,
+        length: int,
+        burst_type: AXI4BurstType,
+        beat_size_bytes: int = 1,
+    ) -> List[int]:
+        """
+        Generate list of beat addresses for a burst.
+
+        Args:
+            start_addr: Starting address
+            size: Size encoding (0=1B, 1=2B, 2=4B, etc.)
+            length: Burst length (beats - 1)
+            burst_type: Type of burst
+            beat_size_bytes: Size of each beat in bytes
+
+        Returns:
+            List of beat addresses
+        """
+        num_beats = length + 1
+        size_bytes = beat_size_bytes << size  # 2^size * beat_size
+        addresses = []
+
+        if burst_type == AXI4BurstType.FIXED:
+            addresses = [start_addr] * num_beats
+
+        elif burst_type == AXI4BurstType.INCR:
+            for i in range(num_beats):
+                addresses.append(start_addr + i * size_bytes)
+
+        elif burst_type == AXI4BurstType.WRAP:
+            # Wrap boundary is determined by total burst size
+            total_size = num_beats * size_bytes
+            wrap_boundary = start_addr & ~(total_size - 1)
+
+            for i in range(num_beats):
+                offset = i * size_bytes
+                wrapped_addr = wrap_boundary + ((start_addr + offset - wrap_boundary) % total_size)
+                addresses.append(wrapped_addr)
+        else:
+            # RESERVED - treat as INCR
+            for i in range(num_beats):
+                addresses.append(start_addr + i * size_bytes)
+
+        return addresses
+
+    @staticmethod
+    def validate_burst(
+        addr: int,
+        size: int,
+        length: int,
+        burst_type: AXI4BurstType,
+        max_length: int = 256,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Validate a burst transaction.
+
+        Returns:
+            (is_valid, error_message)
+        """
+        # Check length
+        if length >= max_length:
+            return False, f"Burst length {length + 1} exceeds maximum {max_length}"
+
+        # Check alignment
+        size_bytes = 1 << size
+        if addr & (size_bytes - 1):
+            return False, f"Address 0x{addr:x} not aligned to size {size_bytes}"
+
+        # Check WRAP boundary
+        if burst_type == AXI4BurstType.WRAP:
+            total_size = (length + 1) * size_bytes
+            if addr & (total_size - 1):
+                return False, f"WRAP burst address 0x{addr:x} not aligned to boundary 0x{total_size:x}"
+
+        # Check for reserved burst type
+        if burst_type == AXI4BurstType.RESERVED:
+            return False, "RESERVED burst type not allowed"
+
+        return True, None
+
+
+class AXI4MasterInterface:
+    """
+    High-level AXI4 master interface for submitting transactions.
+
+    Provides a simplified interface compared to raw bridge:
+    - Automatic burst handling
+    - QoS scheduling hints
+    - Transaction tracking
+    - Response aggregation
+    """
+
+    def __init__(
+        self,
+        bridge: AXI4Bridge,
+        master_id: int = 0,
+        default_qos: int = 8,
+    ):
+        self.bridge = bridge
+        self.master_id = master_id
+        self.default_qos = default_qos
+
+        # Transaction tracking
+        self._pending_transactions: Dict[int, AXI4TransactionResponse] = {}
+        self._burst_generator = AXI4BurstGenerator()
+
+        # Statistics
+        self.stats = {
+            'reads_submitted': 0,
+            'writes_submitted': 0,
+            'reads_completed': 0,
+            'writes_completed': 0,
+            'total_bytes_read': 0,
+            'total_bytes_written': 0,
+        }
+
+    def read(
+        self,
+        addr: int,
+        size: int = 6,  # 64 bytes
+        length: int = 0,
+        qos: Optional[int] = None,
+        id: Optional[int] = None,
+    ) -> int:
+        """
+        Submit a read transaction.
+
+        Args:
+            addr: Starting address
+            size: Size encoding (2^size bytes per beat)
+            length: Burst length (beats - 1)
+            qos: QoS priority (None = use default)
+            id: Transaction ID (None = auto-assign)
+
+        Returns:
+            Transaction ID
+        """
+        txn_id = self.bridge.submit_read(
+            addr=addr,
+            size=size,
+            length=length,
+            burst=AXI4BurstType.INCR,
+            qos=qos if qos is not None else self.default_qos,
+            id=id if id is not None else 0,
+            source=self.master_id,
+        )
+
+        if txn_id >= 0:
+            self.stats['reads_submitted'] += 1
+
+        return txn_id
+
+    def write(
+        self,
+        addr: int,
+        data: List[int],
+        size: int = 6,
+        qos: Optional[int] = None,
+        id: Optional[int] = None,
+    ) -> int:
+        """
+        Submit a write transaction.
+
+        Args:
+            addr: Starting address
+            data: Write data
+            size: Size encoding
+            qos: QoS priority
+            id: Transaction ID
+
+        Returns:
+            Transaction ID
+        """
+        length = len(data) - 1
+        txn_id = self.bridge.submit_write(
+            addr=addr,
+            data=data,
+            size=size,
+            length=length,
+            burst=AXI4BurstType.INCR,
+            qos=qos if qos is not None else self.default_qos,
+            id=id if id is not None else 0,
+            source=self.master_id,
+        )
+
+        if txn_id >= 0:
+            self.stats['writes_submitted'] += 1
+
+        return txn_id
+
+    def read_blocking(
+        self,
+        addr: int,
+        size: int = 6,
+        length: int = 0,
+        timeout_cycles: int = 10000,
+    ) -> Optional[List[int]]:
+        """
+        Submit read and wait for completion.
+
+        Returns:
+            Read data as list of integers
+        """
+        txn_id = self.read(addr=addr, size=size, length=length)
+        if txn_id < 0:
+            return None
+
+        start_cycle = self.bridge._cycle
+        while (self.bridge._cycle - start_cycle) < timeout_cycles:
+            self.bridge.tick()
+            if txn_id not in self.bridge._pending_reads:
+                # Transaction completed
+                return None  # Would need to track actual data
+        return None
+
+    def write_blocking(
+        self,
+        addr: int,
+        data: List[int],
+        size: int = 6,
+        timeout_cycles: int = 10000,
+    ) -> bool:
+        """
+        Submit write and wait for completion.
+
+        Returns:
+            True if write completed successfully
+        """
+        txn_id = self.write(addr=addr, data=data, size=size)
+        if txn_id < 0:
+            return False
+
+        start_cycle = self.bridge._cycle
+        while (self.bridge._cycle - start_cycle) < timeout_cycles:
+            self.bridge.tick()
+            if txn_id not in self.bridge._pending_writes:
+                return True
+        return False
+
+    def get_pending_count(self) -> int:
+        """Get total pending transactions"""
+        return self.bridge.get_pending_count(True) + self.bridge.get_pending_count(False)
+
+    def reset_stats(self) -> None:
+        """Reset statistics"""
+        for key in self.stats:
+            self.stats[key] = 0

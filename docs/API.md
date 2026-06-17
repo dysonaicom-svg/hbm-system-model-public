@@ -1,6 +1,6 @@
 # HBM4 System API Documentation
 
-Complete API reference for the HBM4 System Modeling Platform covering HBM3 and HBM4 specifications.
+Complete API reference for the HBM4 System Modeling Platform covering HBM3 and HBM4 specifications with comprehensive usage examples.
 
 ## Table of Contents
 
@@ -14,6 +14,10 @@ Complete API reference for the HBM4 System Modeling Platform covering HBM3 and H
 8. [Interconnect Classes](#8-interconnect-classes)
 9. [Traffic Generator Classes](#9-traffic-generator-classes)
 10. [Simulation Classes](#10-simulation-classes)
+11. [Benchmark Classes](#11-benchmark-classes)
+12. [Complete Usage Examples](#12-complete-usage-examples)
+13. [Migration from HBM3](#13-migration-from-hbm3)
+14. [Performance Tuning](#14-performance-tuning)
 
 ---
 
@@ -59,6 +63,7 @@ HBMConfig(
 | `from_yaml(path: str)` | `HBMConfig` | Load config from YAML file |
 | `from_dict(data: Dict)` | `HBMConfig` | Load config from dictionary |
 | `to_dict()` | `Dict[str, Any]` | Export config as dictionary |
+| `copy()` | `HBMConfig` | Create deep copy |
 | `calc_bandwidth()` | `float` | Calculate peak bandwidth per stack (GB/s) |
 | `calc_bandwidth_total()` | `float` | Calculate total bandwidth for all stacks (GB/s) |
 
@@ -70,10 +75,13 @@ from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT
 # Use default HBM3 config
 config = HBM3_DEFAULT
 
+# Use default HBM4 config
+config = HBM4_DEFAULT
+
 # Create custom HBM4 config
 custom = HBMConfig(
     stack_count=4,
-    channels_per_stack=16,
+    channels_per_stack=32,
     data_rate=12.8e9,  # HBM4 speed
 )
 
@@ -138,6 +146,8 @@ print(HBM4_SPEED_GRADES.keys())  # ['8Gbps', '12Gbps', '16Gbps']
 
 # Create spec for specific speed grade
 spec = create_hbm4_spec_from_speed_grade("8Gbps")
+spec = create_hbm4_spec_from_speed_grade("12Gbps")
+spec = create_hbm4_spec_from_speed_grade("16Gbps")
 ```
 
 ---
@@ -187,6 +197,7 @@ HBMController(config: Optional[HBMConfig] = None)
 | `tick()` | `Tuple[Optional[HBMRequest], Optional[HBMResponse]]` | Execute one cycle |
 | `get_bandwidth()` | `float` | Calculate effective bandwidth (GB/s) |
 | `get_stats()` | `dict` | Get controller statistics |
+| `reset()` | `None` | Reset controller state |
 
 #### Attributes
 
@@ -237,7 +248,75 @@ HBM4-specific controller with 32-channel support.
 #### Constructor
 
 ```python
-HBM4Controller(config: Optional[HBM4Spec] = None)
+HBM4Controller(
+    spec: Optional[HBM4Spec] = None,
+    config: Optional[HBMConfig] = None,
+    enable_qos: bool = True,
+    enable_refresh: bool = True,
+    enable_dfi: bool = True,
+)
+```
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `submit_request(addr, is_read, qos_level, size_bytes)` | `Optional[str]` | Submit request |
+| `tick()` | `List[HBMResponse]` | Execute one cycle |
+| `get_bandwidth_gbs()` | `float` | Effective bandwidth in GB/s |
+| `get_effective_bandwidth_tbps()` | `float` | Effective bandwidth in TB/s |
+| `get_stats()` | `Dict` | Comprehensive statistics |
+| `dfi_request_ctrlupd()` | `None` | Request DFI control update |
+| `dfi_set_frequency(freq_mhz)` | `None` | Set DFI frequency |
+| `dfi_set_low_power(state)` | `None` | Set DFI low power state |
+| `dfi_wakeup()` | `None` | Wakeup from low power |
+| `dfi_get_signals()` | `DFISignals` | Get DFI signal states |
+| `dfi_get_statistics()` | `Dict` | Get DFI statistics |
+| `trigger_training(channel_id)` | `None` | Trigger PHY training |
+| `trigger_repair(channel_id, lane_mask)` | `None` | Trigger lane repair |
+
+#### Example
+
+```python
+from model.controller.hbm4_controller import HBM4Controller
+from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+
+# Create HBM4 controller with 16 Gbps spec
+spec = create_hbm4_spec_from_speed_grade("16Gbps")
+controller = HBM4Controller(
+    spec=spec,
+    enable_qos=True,
+    enable_refresh=True,
+    enable_dfi=True
+)
+
+# Submit read requests with QoS
+request_id = controller.submit_request(
+    addr=0x1_0000_0000,
+    is_read=True,
+    qos_level=12,  # HIGH priority
+    size_bytes=64
+)
+
+# Submit write request
+controller.submit_request(
+    addr=0x2_0000_0000,
+    is_read=False,
+    qos_level=8,   # NORMAL priority
+    size_bytes=64
+)
+
+# Run simulation cycle
+responses = controller.tick()
+for resp in responses:
+    print(f"Completed: {resp.request_id}, latency={resp.latency}")
+
+# Get performance metrics
+bandwidth = controller.get_bandwidth_gbs()
+print(f"Effective bandwidth: {bandwidth:.2f} GB/s")
+
+stats = controller.get_stats()
+print(f"Total requests: {stats['controller']['total_requests']}")
 ```
 
 ---
@@ -255,7 +334,7 @@ Memory request data structure.
 ```python
 HBMRequest(
     addr: int,                               # 64-bit address
-    length: int,                             # Request length in bytes
+    length: int,                            # Request length in bytes
     is_read: bool,                           # True=read, False=write
     qos: int = 8,                            # QoS priority (0-15)
     burst_length: int = 32,                  # Burst size
@@ -371,6 +450,7 @@ HBM4AddressDecoder(
 | `get_column_id(addr: int)` | `int` | Extract column ID (0-63) |
 | `get_stack_id(addr: int)` | `int` | Extract stack ID (0-3) |
 | `validate_address(addr: int)` | `bool` | Validate address format |
+| `get_address_range(channel)` | `Tuple[int, int]` | Get address range |
 
 #### Address Mapping Schemes
 
@@ -472,6 +552,8 @@ HBM4QoSScheduler(config: Optional[HBM4Spec] = None)
 | `get_stats()` | `Dict[str, Any]` | Scheduler statistics |
 | `set_bandwidth_guarantee(qos_level, gbs)` | `None` | Set BW guarantee |
 | `set_bandwidth_cap(qos_level, gbs)` | `None` | Set BW cap |
+| `clear_queue(qos_level)` | `None` | Clear specific queue |
+| `clear_all_queues()` | `None` | Clear all queues |
 
 #### Bandwidth Guarantees (GB/s per stack)
 
@@ -562,11 +644,13 @@ class RefreshMode(Enum):
 | `tick()` | `None` | Advance refresh timer |
 | `can_refresh()` | `bool` | Check if refresh is needed |
 | `get_refresh_command()` | `Optional[tuple]` | Get next refresh command |
+| `get_next_refresh_bank()` | `Optional[Tuple[int,int,int]]` | Next bank to refresh |
 | `set_mode(mode: RefreshMode)` | `None` | Set refresh mode |
 | `mark_bank_refreshed(ch, bank, cycle)` | `None` | Mark bank refreshed |
 | `enable_drfm(enabled, threshold)` | `None` | Enable DRFM |
 | `get_banks_needing_refresh()` | `List[int]` | Get banks needing refresh |
 | `get_stats()` | `Dict[str, Any]` | Refresh statistics |
+| `set_refresh_interval(cycles)` | `None` | Set tREFI interval |
 | `reset()` | `None` | Reset scheduler |
 
 #### Example
@@ -620,6 +704,12 @@ class HBM4Command(IntEnum):
 HBM4Channel(channel_id: int, spec: Optional[HBM4Spec] = None, timing: Optional[HBM4Timing] = None)
 ```
 
+#### Factory Method
+
+```python
+HBM4Channel.create_with_speed_grade(channel_id: int, speed_grade: str = "8Gbps")
+```
+
 #### Methods
 
 | Method | Returns | Description |
@@ -630,12 +720,7 @@ HBM4Channel(channel_id: int, spec: Optional[HBM4Spec] = None, timing: Optional[H
 | `get_bank(pch, bank)` | `Optional[BankStateMachine]` | Get bank state machine |
 | `is_row_hit(pch, row)` | `bool` | Check if row is open |
 | `get_state_summary()` | `dict` | Get channel state |
-
-#### Factory Method
-
-```python
-HBM4Channel.create_with_speed_grade(channel_id: int, speed_grade: str = "8Gbps")
-```
+| `reset()` | `None` | Reset channel |
 
 #### Example
 
@@ -660,6 +745,40 @@ channel.tick()
 state = channel.get_state_summary()
 print(f"Channel {state['channel_id']} state: {state['state']}")
 ```
+
+---
+
+### HBM4ChannelArray
+
+Array of HBM4 channels for system-level simulation.
+
+**File:** `model/dram/hbm4_channel_model.py`
+
+#### Constructor
+
+```python
+HBM4ChannelArray(
+    spec: Optional[HBM4Spec] = None,
+    timing: Optional[HBM4Timing] = None
+)
+```
+
+#### Properties
+
+| Property | Returns | Description |
+|----------|---------|-------------|
+| `total_bandwidth_gbs` | `float` | Total bandwidth in GB/s |
+| `total_bandwidth_tbs` | `float` | Total bandwidth in TB/s |
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_channel(channel_id: int)` | `Optional[HBM4Channel]` | Get specific channel |
+| `get_pseudo_channel(channel_id, pch_id)` | `Optional[PseudoChannel]` | Get pseudo-channel |
+| `tick()` | `None` | Advance all channels |
+| `get_system_state_summary()` | `dict` | System-wide state |
+| `reset()` | `None` | Reset all channels |
 
 ---
 
@@ -720,6 +839,16 @@ DRAMModel(
 )
 ```
 
+#### Factory Methods
+
+```python
+# Create model from configuration
+model = create_dram_model(config)
+
+# Create HBM4 model
+model = DRAMModel(hbm_version="hbm4", stack_count=4)
+```
+
 #### Methods
 
 | Method | Returns | Description |
@@ -739,7 +868,7 @@ DRAMModel(
 
 ---
 
-### DFIInterface
+### DFI5Interface
 
 DFI 5.1 interface for controller-PHY communication.
 
@@ -749,13 +878,22 @@ DFI 5.1 interface for controller-PHY communication.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `drive_address(addr)` | `None` | Drive address on DFI bus |
-| `drive_bank(bank)` | `None` | Drive bank address |
-| `drive_cke(cke)` | `None` | Drive CKE signal |
-| `drive_cs(cs)` | `None` | Drive chip select |
-| `drive_odt(odt)` | `None` | Drive ODT signal |
-| `capture_data()` | `bytes` | Capture read data |
-| `wait_for_phase(phase)` | `None` | Wait for training phase |
+| `encode_command(cmd, addr_vec, priority)` | `DFIRequest` | Encode command |
+| `queue_request(request)` | `bool` | Add request to queue |
+| `get_next_request()` | `Optional[DFIRequest]` | Get next request |
+| `peek_request()` | `Optional[DFIRequest]` | View next request |
+| `clear_requests()` | `None` | Clear all pending requests |
+| `request_freq_change(target_freq_mhz)` | `None` | Request frequency change |
+| `enter_freq_change()` | `None` | Enter frequency change sequence |
+| `exit_freq_change()` | `None` | Exit frequency change sequence |
+| `is_freq_change_complete()` | `bool` | Check if frequency change done |
+| `request_low_power(state)` | `None` | Request low power state |
+| `wakeup_from_low_power()` | `None` | Wakeup from low power |
+| `request_ctrlupd()` | `None` | Request control update |
+| `get_dfi_signals()` | `DFISignals` | Get current DFI signals |
+| `get_statistics()` | `Dict` | Get interface statistics |
+| `is_ready()` | `bool` | Check if ready for commands |
+| `reset()` | `None` | Reset interface |
 
 ---
 
@@ -958,6 +1096,7 @@ HBMSimulator(sim_config: SimulationConfig)
 | `get_channel_stats()` | `Dict[int, ChannelStats]` | Per-channel stats |
 | `get_load_balance_score()` | `float` | Channel balance |
 | `get_stats()` | `SimulationStats` | Get statistics |
+| `reset()` | `None` | Reset simulator |
 
 ### SimulationStats
 
@@ -983,6 +1122,488 @@ Simulation statistics.
 | `row_hit_rate` | `float` | Row hit rate (0-1) |
 | `throughput_gbps` | `float` | Throughput in GB/s |
 | `efficiency` | `float` | Bus efficiency (0-1) |
+| `bandwidth_efficiency` | `float` | Actual/Peak bandwidth ratio |
+| `queue_utilization` | `float` | Queue usage |
+| `queue_overflow` | `bool` | Whether overflow occurred |
+
+---
+
+## 11. Benchmark Classes
+
+### BenchmarkConfig
+
+Master configuration for all benchmarks.
+
+**File:** `model/benchmark/benchmark_config.py`
+
+```python
+BenchmarkConfig(
+    # Enable/disable specific benchmarks
+    run_bandwidth: bool = True,
+    run_latency: bool = True,
+    run_scheduler: bool = True,
+    run_comparison: bool = True,
+    
+    # Individual configurations
+    bandwidth: BandwidthConfig = BandwidthConfig(),
+    latency: LatencyConfig = LatencyConfig(),
+    scheduler: SchedulerConfig = SchedulerConfig(),
+    comparison: ComparisonConfig = ComparisonConfig(),
+    
+    # Output configuration
+    verbose: bool = True,
+    output_file: Optional[str] = None,
+    generate_plots: bool = False,
+    
+    # Random seed
+    random_seed: int = 42,
+)
+```
+
+#### Preset Configurations
+
+```python
+# Quick benchmark for fast testing
+config = BenchmarkConfig.quick()
+
+# Comprehensive benchmark
+config = BenchmarkConfig.comprehensive()
+```
+
+### SpeedGrade
+
+HBM speed grade presets.
+
+```python
+class SpeedGrade(Enum):
+    HBM3_6_4 = ("hbm3", 6.4, 1024)
+    HBM4_8 = ("hbm4", 8.0, 2048)
+    HBM4_12 = ("hbm4", 12.0, 2048)
+    HBM4_16 = ("hbm4", 16.0, 2048)
+```
+
+### BandwidthBenchmark
+
+Bandwidth performance testing.
+
+```python
+from model.benchmark.bandwidth_benchmark import BandwidthBenchmark
+
+benchmark = BandwidthBenchmark(config=BandwidthConfig())
+results = benchmark.run()
+print(f"Peak bandwidth: {results['peak_gbs']:.2f} GB/s")
+print(f"Sustained bandwidth: {results['sustained_gbs']:.2f} GB/s")
+```
+
+### LatencyBenchmark
+
+Latency performance testing.
+
+```python
+from model.benchmark.latency_benchmark import LatencyBenchmark
+
+benchmark = LatencyBenchmark(config=LatencyConfig())
+results = benchmark.run()
+print(f"Average latency: {results['avg_latency']:.2f} cycles")
+print(f"P99 latency: {results['p99_latency']:.2f} cycles")
+```
+
+---
+
+## 12. Complete Usage Examples
+
+### Example 1: Basic HBM4 Controller Setup
+
+```python
+"""
+Basic HBM4 Controller Setup and Usage
+"""
+from model.controller.hbm4_controller import HBM4Controller
+from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+
+# Create HBM4 controller with 16 Gbps specification
+spec = create_hbm4_spec_from_speed_grade("16Gbps")
+controller = HBM4Controller(
+    spec=spec,
+    enable_qos=True,
+    enable_refresh=True,
+    enable_dfi=True
+)
+
+# Submit some memory requests
+for i in range(100):
+    addr = 0x1000_0000 + i * 64
+    is_read = (i % 2 == 0)
+    qos = 12 if is_read else 8  # Reads get higher priority
+    
+    request_id = controller.submit_request(
+        addr=addr,
+        is_read=is_read,
+        qos_level=qos,
+        size_bytes=64
+    )
+    
+# Run simulation for 1000 cycles
+completed = []
+for _ in range(1000):
+    responses = controller.tick()
+    completed.extend(responses)
+
+# Get performance metrics
+stats = controller.get_stats()
+print(f"Total requests: {stats['controller']['total_requests']}")
+print(f"Completed: {stats['controller']['completed_requests']}")
+print(f"Bandwidth: {controller.get_bandwidth_gbs():.2f} GB/s")
+```
+
+### Example 2: Traffic Generator with Multiple Patterns
+
+```python
+"""
+Traffic Generator with Multiple Patterns
+"""
+from model.traffic.traffic_generator import (
+    TrafficGenerator,
+    TrafficConfig,
+    TrafficPattern
+)
+from model.controller.hbm4_controller import HBM4Controller
+
+# Configure traffic generator
+config = TrafficConfig(
+    read_write_ratio=0.7,
+    request_rate=1e6,
+    burst_size=32,
+    address_range=0x100_0000_0000  # 1TB range
+)
+
+tg = TrafficGenerator(config)
+controller = HBM4Controller()
+
+# Generate and submit sequential traffic
+tg.set_pattern(TrafficPattern.SYNTHETIC_SEQUENTIAL)
+requests = tg.generate(count=1000)
+for req in requests:
+    controller.submit_request(req)
+
+# Run simulation
+for _ in range(5000):
+    controller.tick()
+
+# Generate AI training traffic
+tg.set_pattern(TrafficPattern.TRAINING_WEIGHT_UPDATE)
+requests = tg.generate(count=1000)
+for req in requests:
+    controller.submit_request(req)
+
+# Continue simulation
+for _ in range(5000):
+    controller.tick()
+
+# Get combined statistics
+stats = controller.get_stats()
+print(f"Total throughput: {stats['throughput']:.2f} GB/s")
+```
+
+### Example 3: QoS Scheduling with Priority Levels
+
+```python
+"""
+QoS Scheduling with Multiple Priority Levels
+"""
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.request import HBMRequest
+
+scheduler = HBM4QoSScheduler()
+
+# Submit requests with different QoS levels
+requests = [
+    # Critical real-time traffic
+    HBMRequest(addr=0x1000, length=64, is_read=True, qos=QoSLevel.CRITICAL),
+    
+    # High priority reads
+    HBMRequest(addr=0x2000, length=64, is_read=True, qos=QoSLevel.HIGH),
+    
+    # Normal traffic
+    HBMRequest(addr=0x3000, length=64, is_read=True, qos=QoSLevel.NORMAL),
+    
+    # Background batch traffic
+    HBMRequest(addr=0x4000, length=64, is_read=False, qos=QoSLevel.LOW),
+]
+
+for req in requests:
+    scheduler.submit_request(
+        request_id=req.request_id,
+        addr=req.addr,
+        qos=req.qos,
+        is_read=req.is_read,
+        row_hit=False
+    )
+
+# Schedule with QoS priority
+scheduled = []
+while True:
+    next_req = scheduler.schedule()
+    if next_req is None:
+        break
+    scheduled.append(next_req)
+    print(f"Scheduled: req={next_req.request_id}, QoS={next_req.qos}")
+
+# Verify QoS ordering
+assert scheduled[0].qos == QoSLevel.CRITICAL, "Critical should be first"
+print(f"QoS scheduling verified: {len(scheduled)} requests ordered by priority")
+
+# Configure bandwidth guarantees
+scheduler.set_bandwidth_guarantee(QoSLevel.CRITICAL, 200.0)  # 200 GB/s
+scheduler.set_bandwidth_cap(QoSLevel.LOW, 50.0)               # Max 50 GB/s
+
+# Get queue status
+for level in [QoSLevel.CRITICAL, QoSLevel.HIGH, QoSLevel.NORMAL, QoSLevel.LOW]:
+    size = scheduler.get_queue_size(level)
+    print(f"Queue {level.name}: {size} requests")
+```
+
+### Example 4: Refresh Scheduler Configuration
+
+```python
+"""
+Refresh Scheduler Configuration
+"""
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+
+# Create refresh scheduler for HBM4
+spec = create_hbm4_spec_from_speed_grade("8Gbps")
+scheduler = HBM4RefreshScheduler(spec)
+
+# Configure refresh mode
+scheduler.set_mode(RefreshMode.PER_BANK)  # Staggered refresh
+
+# Enable row hammer mitigation (DRFM)
+scheduler.enable_drfm(enabled=True, threshold=1000)
+
+# Set custom refresh interval (tREFI)
+scheduler.set_refresh_interval(cycles=3900)  # 3.9 us @ 8 GT/s
+
+# Simulate refresh operations
+for cycle in range(100000):
+    scheduler.tick()
+    
+    if scheduler.can_refresh():
+        cmd = scheduler.get_refresh_command()
+        if cmd:
+            print(f"Cycle {cycle}: {cmd}")
+            
+            # Get next bank to refresh
+            bank_info = scheduler.get_next_refresh_bank()
+            if bank_info:
+                channel, pch, bank = bank_info
+                scheduler.mark_bank_refreshed(channel, pch, bank, cycle)
+
+# Check banks needing refresh (DRFM mode)
+banks_needing = scheduler.get_banks_needing_refresh()
+print(f"Banks needing refresh: {len(banks_needing)}")
+
+# Get statistics
+stats = scheduler.get_stats()
+print(f"Total refreshes: {stats['refresh_count']}")
+print(f"DRFM activations: {stats.get('drfm_count', 0)}")
+```
+
+### Example 5: Running Full Simulation with Statistics
+
+```python
+"""
+Running Full Simulation with Statistics
+"""
+from sim.simulator import HBMSimulator, SimulationConfig, TrafficPattern
+from model.controller.config import HBM4_DEFAULT
+
+# Create simulation configuration
+sim_config = SimulationConfig(
+    clock_freq_hz=1.6e9,           # 16 GT/s
+    simulation_time_us=100.0,     # 100 us simulation
+    traffic_pattern=TrafficPattern.RANDOM,
+    request_rate=0.8,             # 80% utilization
+    read_ratio=0.7,               # 70% reads
+    burst_size=64,
+    hbm_config=HBM4_DEFAULT,
+    queue_depth=256,
+    enable_stats=True,
+    seed=42
+)
+
+# Create and run simulator
+simulator = HBMSimulator(sim_config)
+
+# Run with verbose output
+print("Running simulation...")
+stats = simulator.run_verbose()
+
+# Print results
+print(f"\n=== Simulation Results ===")
+print(f"Total cycles: {stats.total_cycles:,}")
+print(f"Completed requests: {stats.completed_requests:,}")
+print(f"Average latency: {stats.avg_latency:.2f} cycles")
+print(f"Row hit rate: {stats.row_hit_rate:.2%}")
+print(f"Throughput: {stats.throughput_gbps:.2f} GB/s")
+print(f"Efficiency: {stats.efficiency:.2%}")
+print(f"Queue overflow: {stats.queue_overflow}")
+
+# Get per-channel statistics
+channel_stats = simulator.get_channel_stats()
+print(f"\n=== Channel Statistics ===")
+for ch_id, ch_stats in sorted(channel_stats.items()):
+    print(f"Channel {ch_id}: {ch_stats.total_requests} requests, "
+          f"{ch_stats.hit_rate:.2%} hit rate")
+```
+
+---
+
+## 13. Migration from HBM3
+
+### Key Differences
+
+| Feature | HBM3 | HBM4 |
+|---------|------|------|
+| Channels per stack | 8 | 32 |
+| Interface width | 1024-bit | 2048-bit |
+| Pseudo-channels | 16 | 64 |
+| Data rate | 6.4 GT/s | 8/12/16 GT/s |
+| Peak bandwidth | 819.2 GB/s | 2.048 TB/s |
+| Burst length | 32 bytes | 4 beats |
+| Address bits | 42 | 48 |
+
+### Configuration Migration
+
+```python
+# HBM3 Configuration (OLD)
+from model.controller.config import HBMConfig, HBM3_DEFAULT
+
+config = HBMConfig(
+    stack_count=2,
+    channels_per_stack=8,
+    io_width=1024,
+    data_rate=6.4e9,
+)
+
+# HBM4 Configuration (NEW)
+from model.controller.config import HBMConfig, HBM4_DEFAULT
+from model.dram.hbm4_spec import HBM4Spec
+
+# Option 1: Use default HBM4 config
+config = HBM4_DEFAULT
+
+# Option 2: Create custom HBM4 config
+config = HBMConfig(
+    stack_count=4,
+    channels_per_stack=32,      # Changed from 8
+    io_width=2048,              # Changed from 1024
+    data_rate=8.0e9,            # Changed from 6.4e9
+    burst_length=4,             # Changed from 32
+)
+
+# Option 3: Use HBM4Spec directly
+spec = HBM4Spec(
+    channels=32,
+    data_rate_gtps=8.0,
+    io_width=2048,
+)
+```
+
+### Controller Migration
+
+```python
+# HBM3 Controller (OLD)
+from model.controller.controller import HBMController
+
+controller = HBMController(hbm_config)
+
+# HBM4 Controller (NEW)
+from model.controller.hbm4_controller import HBM4Controller
+from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+
+spec = create_hbm4_spec_from_speed_grade("16Gbps")
+controller = HBM4Controller(
+    spec=spec,
+    config=hbm_config,
+    enable_qos=True,
+    enable_refresh=True,
+    enable_dfi=True
+)
+```
+
+### Speed Grade Selection
+
+```python
+from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+
+# 8 GT/s (JEDEC baseline)
+spec_8g = create_hbm4_spec_from_speed_grade("8Gbps")
+print(f"8Gbps bandwidth: {spec_8g.bandwidth:.3f} TB/s")
+
+# 12 GT/s (Extended rate)
+spec_12g = create_hbm4_spec_from_speed_grade("12Gbps")
+print(f"12Gbps bandwidth: {spec_12g.bandwidth:.3f} TB/s")
+
+# 16 GT/s (Maximum rate)
+spec_16g = create_hbm4_spec_from_speed_grade("16Gbps")
+print(f"16Gbps bandwidth: {spec_16g.bandwidth:.3f} TB/s")
+```
+
+---
+
+## 14. Performance Tuning
+
+### Address Mapping Selection
+
+Choose the right mapping for your workload:
+
+```python
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+
+# Sequential/streaming workloads - RBC (Row-Bank-Channel)
+decoder = HBM4AddressDecoder(mapping_scheme="rbc")
+
+# Random access with bank parallelism - BCR (Bank-Channel-Row)
+decoder = HBM4AddressDecoder(mapping_scheme="bcr")
+
+# Cross-channel random access - CRB (Channel-Row-Bank)
+decoder = HBM4AddressDecoder(mapping_scheme="crb")
+```
+
+### Queue Depth Configuration
+
+```python
+from model.controller.config import HBMConfig
+
+# Low latency requirements
+config_low_latency = HBMConfig(
+    queue_depth=32,
+    max_outstanding=16,
+)
+
+# High throughput (batch processing)
+config_high_throughput = HBMConfig(
+    queue_depth=256,
+    max_outstanding=128,
+)
+
+# Balanced
+config_balanced = HBMConfig(
+    queue_depth=64,
+    max_outstanding=32,
+)
+```
+
+### Performance Checklist
+
+1. **Row Locality**: Aim for >60% row hit rate
+2. **Queue Sizing**: Keep utilization below 80%
+3. **Channel Balance**: Monitor load balance score >0.8
+4. **Refresh Overhead**: Target <5% overhead
+5. **QoS Guarantees**: Ensure critical traffic meets latency SLAs
+6. **Bandwidth Efficiency**: Target >20% of peak
 
 ---
 
@@ -996,6 +1617,7 @@ from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT
 
 # Controller
 from model.controller.controller import HBMController
+from model.controller.hbm4_controller import HBM4Controller
 
 # Requests
 from model.controller.request import HBMRequest, HBMResponse, RequestState
@@ -1010,6 +1632,7 @@ from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler
 from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 
 # DRAM Model
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
 from model.dram.hbm4_channel_model import HBM4Channel, HBM4Command
 
 # Interconnect
@@ -1017,6 +1640,9 @@ from model.interconnect.interconnect import CrossbarInterconnect, MeshInterconne
 
 # Traffic Generator
 from model.traffic.traffic_generator import TrafficGenerator, TrafficConfig, TrafficPattern
+
+# Simulation
+from sim.simulator import HBMSimulator, SimulationConfig, SimulationStats
 ```
 
 ### Common Patterns
@@ -1049,3 +1675,5 @@ print(f"Ch={decoded.channel_id}, Row=0x{decoded.row_id:x}")
 - [Architecture Documentation](ARCHITECTURE.md)
 - [Quick Start Guide](QUICKSTART.md)
 - [Design Document](design/2026-06-15-hbm-system-model-design.md)
+- [HBM3 Specification Reference](specs/hbm3_spec.md)
+- [API Reference](API_REFERENCE.md) - Complete API documentation

@@ -100,8 +100,9 @@ class TestCommandSequence:
         assert pc.state == PseudoChannelState.READING
 
         # Step 3: PRE - Precharge the bank
-        # Advance time for read to complete (tCL + tBL)
-        channel.set_time(hbm4_timing.nRCDRD + hbm4_timing.nCL + hbm4_timing.nBL)
+        # Advance time for read to complete (tCL + tBL + tRAS)
+        # Must meet tRAS minimum before precharge
+        channel.set_time(hbm4_timing.nRCDRD + hbm4_timing.nCL + hbm4_timing.nBL + hbm4_timing.nRAS)
         success = channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
         assert success, "PRE command should succeed"
 
@@ -130,7 +131,8 @@ class TestCommandSequence:
         assert pc.state == PseudoChannelState.WRITING
 
         # PRE
-        channel.set_time(hbm4_timing.nRCDWR + hbm4_timing.nCWL + hbm4_timing.nBL + hbm4_timing.nWR)
+        # Must meet tRAS minimum before precharge
+        channel.set_time(hbm4_timing.nRCDWR + hbm4_timing.nCWL + hbm4_timing.nBL + hbm4_timing.nWR + hbm4_timing.nRAS)
         success = channel.issue_command('PRE', pseudo_channel=0, bank=1, row=100)
         assert success, "PRE command should succeed"
 

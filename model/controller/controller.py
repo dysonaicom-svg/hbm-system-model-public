@@ -168,12 +168,7 @@ class HBMController:
             self._last_scheduled_request = scheduled
 
             # 生成 DRAM 命令序列 (使用 CommandSequencer)
-            # 创建 BankState 用于命令序列生成
-            seq_bank_state = SeqBankState(
-                bank_id=scheduled.bank_id,
-                open_row=scheduled.row_id if scheduled.row_hit else -1,
-                state=BankStateEnum.ACTIVE if scheduled.row_hit else BankStateEnum.IDLE
-            )
+            # _generate_command_sequence 会从 bank_states 获取当前银行状态
             cmd_sequence = self._generate_command_sequence(scheduled, self.current_time)
 
             # 通过 CommandPipeline 跟踪命令 (用于延迟估算)
@@ -189,6 +184,30 @@ class HBMController:
 
             # 标记完成
             scheduled.mark_completed(self.current_time)
+
+            # 更新银行状态 (根据命令序列)
+            bank_key = (scheduled.channel_id, scheduled.pseudo_channel_id, scheduled.bank_id)
+            if bank_key not in self.bank_states:
+                self.bank_states[bank_key] = BankState(bank_id=scheduled.bank_id)
+            bank_state = self.bank_states[bank_key]
+
+            # 根据命令序列更新银行状态
+            # cmd_sequence.is_row_hit 指示是否是行命中
+            # 行命中时保持行打开状态（同一行后续访问会命中）
+            # 行未命中时需要预充电/激活序列，访问完成后行被预充电关闭
+            if cmd_sequence.is_row_hit:
+                # 行命中：保持行打开状态
+                bank_state.is_open = True
+                bank_state.open_row = scheduled.row_id
+                bank_state.last_row = scheduled.row_id  # 记住最近访问的行
+                # 更新 last_command 以便后续访问
+                if cmd_sequence.commands:
+                    self.last_command = cmd_sequence.commands[-1].command
+            else:
+                # 行未命中：行被预充电关闭
+                bank_state.is_open = False
+                bank_state.open_row = -1
+                bank_state.last_row = scheduled.row_id  # 记住最近访问的行以便下次命中
 
             # 记录调度统计
             self.scheduler_stats.record_schedule(scheduled)
@@ -223,6 +242,7 @@ class HBMController:
             seq_bank_state = SeqBankState(
                 bank_id=request.bank_id,
                 open_row=bank_state.open_row if bank_state.is_open else -1,
+                last_row=bank_state.last_row if hasattr(bank_state, 'last_row') else -1,
                 state=BankStateEnum.ACTIVE if bank_state.is_open else BankStateEnum.IDLE
             )
         else:

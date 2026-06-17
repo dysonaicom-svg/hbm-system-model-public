@@ -296,7 +296,7 @@ class FixedPatternGenerator:
     
     def generate_byte(self) -> int:
         """Generate a full byte
-        
+
         Returns:
             8-bit value
         """
@@ -305,7 +305,11 @@ class FixedPatternGenerator:
         elif self.mode == LoopbackMode.FIXED_ALL_ONES:
             return 0xFF
         elif self.mode == LoopbackMode.FIXED_ALTERNATING:
-            return 0xAA if (self._counter // 8) % 2 == 0 else 0x55
+            # Alternating pattern: 0xAA (10101010) and 0x55 (01010101)
+            # Increment counter for each bit, then check byte position
+            byte_idx = self._counter // 8
+            self._counter += 8  # Advance 8 bits
+            return 0xAA if byte_idx % 2 == 0 else 0x55
         elif self.mode == LoopbackMode.MODE_8N:
             # 8N mode: Generate byte by cycling through next() 8 times
             # Each call to next() increments _counter

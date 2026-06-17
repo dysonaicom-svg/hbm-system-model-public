@@ -210,7 +210,7 @@ class TestChannelBitExtraction:
         from model.multi_channel import ChannelSelector
 
         # HBM3: 8 channels = 3 bits, channel at bits [45:43], LSB at bit 43
-        selector_hbm3 = ChannelSelector(num_channels=8)
+        selector_hbm3 = ChannelSelector(num_channels=8, strategy=ChannelSelector.ADDR_BASED)
         # Test specific addresses to verify correct bit extraction
         # For channel N: addr = N << 43
         test_addrs = [
@@ -231,7 +231,7 @@ class TestChannelBitExtraction:
                 f"HBM3: addr={hex(addr)}: expected channel {expected_channel}, got {actual}"
 
         # HBM4: 32 channels = 5 bits, channel at bits [45:41], LSB at bit 41
-        selector_hbm4 = ChannelSelector(num_channels=32)
+        selector_hbm4 = ChannelSelector(num_channels=32, strategy=ChannelSelector.ADDR_BASED)
         # For channel N: addr = N << 41
         test_addrs_hbm4 = [
             (0, 0),                           # Channel 0

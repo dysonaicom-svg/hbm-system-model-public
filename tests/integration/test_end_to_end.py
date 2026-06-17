@@ -334,7 +334,7 @@ class TestHBM4Integration:
 
         # 验证功率估算
         power_summary = power.get_summary()
-        assert power_summary['spec']['bandwidth_tbs'] > 1.0  # > 1 TB/s
+        assert power_summary['spec']['bandwidth_tbps'] > 1.0  # > 1 TB/s
 
     def test_hbm4_controller_integration(self):
         """测试 HBM4 Controller 集成"""

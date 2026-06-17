@@ -59,10 +59,12 @@ class TestPHYTrainingStateMachine:
         expected_sequence = [
             TrainingPhase.TRAIN_RD_DQS,
             TrainingPhase.TRAIN_WR_LEVELING,
-            TrainingPhase.TRAIN_RD_MT,
-            TrainingPhase.TRAIN_WR_MT,
             TrainingPhase.TRAIN_RD_DQ,
+            TrainingPhase.TRAIN_RD_DQ_EYE,
             TrainingPhase.TRAIN_WR_DQ,
+            TrainingPhase.TRAIN_WR_DQ_EYE,
+            TrainingPhase.TRAIN_GATE,
+            TrainingPhase.TRAIN_GATE_DELAY,
             TrainingPhase.TRAIN_VREF_CA,
             TrainingPhase.TRAIN_VREF_DQ,
         ]
@@ -99,17 +101,17 @@ class TestPHYTrainingStateMachine:
         assert tra_mode == 1
         assert tra_type == 1
 
-        # Test RD_MT encoding
-        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_RD_MT)
+        # Test RD_DQ encoding
+        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_RD_DQ)
         assert tra_req is True
         assert tra_mode == 2
         assert tra_type == 0
 
-        # Test WR_MT encoding
-        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_WR_MT)
+        # Test WR_DQ encoding
+        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_WR_DQ)
         assert tra_req is True
-        assert tra_mode == 2
-        assert tra_type == 1
+        assert tra_mode == 3
+        assert tra_type == 0
 
     def test_dfi_training_control_idle(self):
         """Test DFI training control for idle state"""
@@ -432,10 +434,12 @@ class TestTrainingPhaseEnums:
             TrainingPhase.TRAIN_INIT,
             TrainingPhase.TRAIN_RD_DQS,
             TrainingPhase.TRAIN_WR_LEVELING,
-            TrainingPhase.TRAIN_RD_MT,
-            TrainingPhase.TRAIN_WR_MT,
             TrainingPhase.TRAIN_RD_DQ,
+            TrainingPhase.TRAIN_RD_DQ_EYE,
             TrainingPhase.TRAIN_WR_DQ,
+            TrainingPhase.TRAIN_WR_DQ_EYE,
+            TrainingPhase.TRAIN_GATE,
+            TrainingPhase.TRAIN_GATE_DELAY,
             TrainingPhase.TRAIN_VREF_CA,
             TrainingPhase.TRAIN_VREF_DQ,
             TrainingPhase.TRAIN_VERIFY,
@@ -453,16 +457,32 @@ class TestTrainingPhaseEnums:
         expected_phases = [
             TrainingPhase.TRAIN_RD_DQS,
             TrainingPhase.TRAIN_WR_LEVELING,
-            TrainingPhase.TRAIN_RD_MT,
-            TrainingPhase.TRAIN_WR_MT,
             TrainingPhase.TRAIN_RD_DQ,
+            TrainingPhase.TRAIN_RD_DQ_EYE,
             TrainingPhase.TRAIN_WR_DQ,
+            TrainingPhase.TRAIN_WR_DQ_EYE,
+            TrainingPhase.TRAIN_GATE,
+            TrainingPhase.TRAIN_GATE_DELAY,
             TrainingPhase.TRAIN_VREF_CA,
             TrainingPhase.TRAIN_VREF_DQ,
         ]
 
         for phase in expected_phases:
             assert phase in sequence
+
+    def test_training_phase_has_all_dq_phases(self):
+        """Test all DQ training phases are defined"""
+        # Read DQ phases
+        assert TrainingPhase.TRAIN_RD_DQ is not None
+        assert TrainingPhase.TRAIN_RD_DQ_EYE is not None
+        # Write DQ phases
+        assert TrainingPhase.TRAIN_WR_DQ is not None
+        assert TrainingPhase.TRAIN_WR_DQ_EYE is not None
+
+    def test_training_phase_has_gate_phases(self):
+        """Test gate training phases are defined"""
+        assert TrainingPhase.TRAIN_GATE is not None
+        assert TrainingPhase.TRAIN_GATE_DELAY is not None
 
 
 class TestTrainingResultEnums:
@@ -508,13 +528,49 @@ class TestDFI5TrainingControl:
         tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_VREF_CA)
 
         assert tra_req is True
-        assert tra_mode == 4
+        assert tra_mode == 5
         assert tra_type == 0
 
     def test_encode_vref_dq(self):
         """Test VREF DQ training encoding"""
         ctrl = DFI5TrainingControl()
         tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_VREF_DQ)
+
+        assert tra_req is True
+        assert tra_mode == 5
+        assert tra_type == 1
+
+    def test_encode_rd_dq_eye(self):
+        """Test RD DQ eye center training encoding"""
+        ctrl = DFI5TrainingControl()
+        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_RD_DQ_EYE)
+
+        assert tra_req is True
+        assert tra_mode == 2
+        assert tra_type == 1
+
+    def test_encode_wr_dq_eye(self):
+        """Test WR DQ eye center training encoding"""
+        ctrl = DFI5TrainingControl()
+        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_WR_DQ_EYE)
+
+        assert tra_req is True
+        assert tra_mode == 3
+        assert tra_type == 1
+
+    def test_encode_gate_training(self):
+        """Test gate training encoding"""
+        ctrl = DFI5TrainingControl()
+        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_GATE)
+
+        assert tra_req is True
+        assert tra_mode == 4
+        assert tra_type == 0
+
+    def test_encode_gate_delay(self):
+        """Test gate delay training encoding"""
+        ctrl = DFI5TrainingControl()
+        tra_req, tra_mode, tra_type = ctrl.encode_training_cmd(TrainingPhase.TRAIN_GATE_DELAY)
 
         assert tra_req is True
         assert tra_mode == 4

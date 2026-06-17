@@ -1,14 +1,20 @@
 """
-Signal Integrity Models for HBM PHY Simulation
+Signal Integrity Models for HBM4 PHY Simulation
 
 Implements TX pre-emphasis, RX CTLE (Continuous Time Linear Equalizer),
-and signal conditioning for high-speed memory interfaces.
+DFE (Decision Feedback Equalizer), and signal conditioning for high-speed
+memory interfaces with HBM4-specific parameters and JEDEC compliance.
+
+Reference:
+- JEDEC JESD270-4A HBM4 specification
+- DFI 5.0/5.1 specification
 """
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Callable
 from enum import Enum
+import warnings
 
 
 class EqualizerType(Enum):
@@ -17,6 +23,23 @@ class EqualizerType(Enum):
     TX_PRE_EMPHASIS = "tx_pre_emphasis"
     RX_CTLE = "rx_ctle"
     DFE = "dfe"
+
+
+class HBM4DataRate(Enum):
+    """HBM4 data rate options."""
+    GT_8 = 8e9       # 8 GT/s
+    GT_12 = 12e9     # 12 GT/s
+    GT_16 = 16e9     # 16 GT/s
+
+    @property
+    def ui_ps(self) -> float:
+        """Unit interval in picoseconds."""
+        return 1e12 / self.value
+
+    @property
+    def nyquist_ghz(self) -> float:
+        """Nyquist frequency in GHz."""
+        return self.value / 2 / 1e9
 
 
 @dataclass
@@ -38,7 +61,7 @@ class PreEmphasisConfig:
 class CTLEConfig:
     """Configuration for RX CTLE."""
     # Number of DC gain stages
-    n_dc_gainStages: int = 4
+    n_dc_gain_stages: int = 4
     # DC gain range (dB)
     dc_gain_range: Tuple[float, float] = (-6.0, 6.0)
     # Zero frequency options (Hz)
@@ -65,16 +88,122 @@ class DFEConfig:
 
 
 @dataclass
+class DQSignalConfig:
+    """Configuration for DQ signal modeling."""
+    # DQ signal amplitude (V)
+    amplitude_v: float = 0.5
+    # Rise/fall time (ps)
+    rise_time_ps: float = 15.0
+    # Fall time (ps)
+    fall_time_ps: float = 15.0
+    # DQ impedance (ohm)
+    impedance: float = 50.0
+    # DQ source impedance (ohm)
+    source_impedance: float = 40.0
+    # DQ termination voltage (V)
+    termination_voltage: float = 0.0
+
+
+@dataclass
+class DQSSignalConfig:
+    """Configuration for DQS signal modeling."""
+    # DQS amplitude (V)
+    amplitude_v: float = 0.5
+    # DQS frequency (Hz)
+    frequency: float = 8e9
+    # DQS duty cycle (fraction)
+    duty_cycle: float = 0.5
+    # DQS jitter RMS (ps)
+    jitter_rms_ps: float = 2.0
+    # DQS transition time (ps)
+    transition_time_ps: float = 10.0
+
+
+@dataclass
+class TemperatureConfig:
+    """Temperature-dependent signal integrity parameters."""
+    # Operating temperature (Celsius)
+    temperature_c: float = 85.0
+    # Temperature coefficient for loss (dB/inch/C)
+    loss_temp_coeff: float = 0.02
+    # Temperature coefficient for jitter (ps/C)
+    jitter_temp_coeff: float = 0.05
+    # Temperature coefficient for noise (%/C)
+    noise_temp_coeff: float = 1.0
+    # Reference temperature (Celsius)
+    reference_temp_c: float = 25.0
+
+    def get_loss_adjustment(self, length_mm: float) -> float:
+        """Calculate additional loss due to temperature.
+
+        Args:
+            length_mm: Channel length in mm
+
+        Returns:
+            Additional loss in dB
+        """
+        temp_delta = self.temperature_c - self.reference_temp_c
+        length_m = length_mm / 1000.0
+        # Simplified: 0.02 dB/inch/C * temp_delta * length_m * 39.37 in/mm
+        return self.loss_temp_coeff * temp_delta * length_m * 39.37
+
+    def get_jitter_adjustment(self) -> float:
+        """Calculate additional jitter due to temperature.
+
+        Returns:
+            Additional jitter in ps RMS
+        """
+        temp_delta = self.temperature_c - self.reference_temp_c
+        return self.jitter_temp_coeff * temp_delta
+
+    def get_noise_adjustment(self) -> float:
+        """Calculate noise scaling factor due to temperature.
+
+        Returns:
+            Noise scaling factor (1.0 at reference temp)
+        """
+        temp_delta = self.temperature_c - self.reference_temp_c
+        return 1.0 + (self.noise_temp_coeff / 100.0) * temp_delta
+
+
+@dataclass
 class SignalIntegrityConfig:
     """Complete signal integrity configuration."""
+    # Data rate
+    data_rate: HBM4DataRate = HBM4DataRate.GT_12
+    # Sample rate (Hz)
     sample_rate: float = 32e9
-    ui_ns: float = 31.25e-9  # 32 Gbps
+    # Unit interval (s)
+    ui_ns: float = 83.33e-9  # 12 GT/s
+    # Signal amplitude
     signal_amplitude: float = 1.0
+    # Noise RMS
     noise_rms: float = 0.05
+    # Jitter RMS (ps)
     jitter_rms_ps: float = 2.0
+    # DQ configuration
+    dq_config: DQSignalConfig = field(default_factory=DQSignalConfig)
+    # DQS configuration
+    dqs_config: DQSSignalConfig = field(default_factory=DQSSignalConfig)
+    # Temperature configuration
+    temperature: TemperatureConfig = field(default_factory=TemperatureConfig)
+    # Pre-emphasis config
     pre_emphasis: PreEmphasisConfig = field(default_factory=PreEmphasisConfig)
+    # CTLE config
     ctle: CTLEConfig = field(default_factory=CTLEConfig)
+    # DFE config
     dfe: DFEConfig = field(default_factory=DFEConfig)
+
+    def update_for_data_rate(self, data_rate: HBM4DataRate) -> None:
+        """Update configuration for specific data rate.
+
+        Args:
+            data_rate: Target data rate
+        """
+        self.data_rate = data_rate
+        self.ui_ns = data_rate.ui_ps * 1e-9
+        self.sample_rate = data_rate.value * 2  # 2x oversampling
+        self.dqs_config.frequency = data_rate.value
 
 
 class TXPreEmphasis:
@@ -167,6 +296,206 @@ class TXPreEmphasis:
         if H_dc > 0:
             return 20 * np.log10(H_nyq / H_dc)
         return 0.0
+
+
+class DQSignalModel:
+    """
+    DQ (Data) Signal Model for HBM4.
+
+    Models DQ signal characteristics including amplitude,
+    transition times, and impedance matching.
+    """
+
+    def __init__(self, config: Optional[DQSignalConfig] = None):
+        """Initialize DQ signal model."""
+        self.config = config or DQSignalConfig()
+        self._calibrated = False
+
+    def generate_dq_waveform(self, data_pattern: np.ndarray,
+                            sample_rate: float) -> np.ndarray:
+        """
+        Generate DQ waveform from data pattern.
+
+        Args:
+            data_pattern: Binary data pattern (0/1 or -1/+1)
+            sample_rate: Sample rate in Hz
+
+        Returns:
+            DQ voltage waveform
+        """
+        # Handle both binary formats
+        if np.max(np.abs(data_pattern)) <= 1:
+            # Already in -1/+1 format
+            symbols = data_pattern
+        else:
+            # Convert 0/1 to -1/+1
+            symbols = 2 * data_pattern - 1
+
+        # Create waveform with rise/fall transitions
+        symbol_rate = sample_rate
+        samples_per_symbol = int(sample_rate / symbol_rate) if symbol_rate < sample_rate else 1
+
+        waveform = np.zeros(len(symbols) * samples_per_symbol)
+
+        for i, symbol in enumerate(symbols):
+            start = i * samples_per_symbol
+            end = start + samples_per_symbol
+
+            # Create transition at symbol boundaries
+            amplitude = symbol * self.config.amplitude_v
+
+            # Linear interpolation for rise/fall
+            transition_samples = int(self.config.rise_time_ps * 1e-12 * sample_rate)
+            transition_samples = max(1, min(transition_samples, samples_per_symbol // 4))
+
+            if i == 0:
+                prev_amplitude = 0
+            else:
+                prev_amplitude = symbols[i-1] * self.config.amplitude_v
+
+            # Create waveform with transitions
+            for j in range(samples_per_symbol):
+                t_frac = j / samples_per_symbol
+                if t_frac < 0.5:
+                    # Rising/falling edge
+                    edge_pos = t_frac / 0.5
+                    if amplitude > prev_amplitude:
+                        waveform[start + j] = prev_amplitude + (amplitude - prev_amplitude) * edge_pos
+                    else:
+                        waveform[start + j] = prev_amplitude + (amplitude - prev_amplitude) * edge_pos
+                else:
+                    waveform[start + j] = amplitude
+
+        return waveform
+
+    def apply_impedance_effects(self, waveform: np.ndarray,
+                                channel_impedance: float) -> np.ndarray:
+        """
+        Apply impedance matching effects to waveform.
+
+        Args:
+            waveform: Input waveform
+            channel_impedance: Channel impedance in ohms
+
+        Returns:
+            Waveform with impedance effects
+        """
+        # Reflection coefficient
+        gamma = (self.config.impedance - channel_impedance) / \
+                (self.config.impedance + channel_impedance)
+
+        # Simplified reflection effect
+        reflected = np.roll(waveform, len(waveform) // 10) * gamma
+        return waveform + reflected * 0.1
+
+    def get_signal_metrics(self) -> Dict[str, float]:
+        """Get DQ signal metrics."""
+        return {
+            'amplitude_v': self.config.amplitude_v,
+            'rise_time_ps': self.config.rise_time_ps,
+            'fall_time_ps': self.config.fall_time_ps,
+            'impedance_ohm': self.config.impedance,
+            'source_impedance_ohm': self.config.source_impedance,
+            'eye_height_estimate_mv': self.config.amplitude_v * 1000 * 0.8  # 80% margin estimate
+        }
+
+
+class DQSSignalModel:
+    """
+    DQS (Data Strobe) Signal Model for HBM4.
+
+    Models DQS signal characteristics including duty cycle,
+    jitter, and timing alignment with DQ.
+    """
+
+    def __init__(self, config: Optional[DQSSignalConfig] = None):
+        """Initialize DQS signal model."""
+        self.config = config or DQSSignalConfig()
+        self._phase_offset = 0.0
+
+    def generate_dqs_waveform(self, n_cycles: int, sample_rate: float) -> np.ndarray:
+        """
+        Generate DQS waveform.
+
+        Args:
+            n_cycles: Number of DQS cycles
+            sample_rate: Sample rate in Hz
+
+        Returns:
+            DQS voltage waveform
+        """
+        # Calculate samples per DQS cycle
+        period = 1.0 / self.config.frequency
+        samples_per_cycle = int(period * sample_rate)
+
+        total_samples = n_cycles * samples_per_cycle
+        waveform = np.zeros(total_samples)
+
+        transition_samples = int(self.config.transition_time_ps * 1e-12 * sample_rate)
+        transition_samples = max(1, min(transition_samples, samples_per_cycle // 8))
+
+        for cycle in range(n_cycles):
+            start = cycle * samples_per_cycle
+
+            # Create duty cycle waveform
+            high_samples = int(samples_per_cycle * self.config.duty_cycle)
+            low_samples = samples_per_cycle - high_samples
+
+            # Add jitter
+            jitter_samples = int(np.random.randn() * self.config.jitter_rms_ps * 1e-12 * sample_rate)
+
+            # Rising edge
+            for j in range(transition_samples):
+                if start + j < total_samples:
+                    waveform[start + j] = (j / transition_samples) * self.config.amplitude_v
+
+            # High level
+            for j in range(transition_samples, high_samples - transition_samples):
+                if start + j < total_samples:
+                    waveform[start + j] = self.config.amplitude_v
+
+            # Falling edge
+            for j in range(high_samples - transition_samples, high_samples):
+                if start + j < total_samples:
+                    waveform[start + j] = (1 - (j - high_samples + transition_samples) / transition_samples) * self.config.amplitude_v
+
+            # Low level
+            for j in range(high_samples, samples_per_cycle):
+                if start + j < total_samples:
+                    waveform[start + j] = 0.0
+
+        return waveform
+
+    def align_to_dq(self, dqs_waveform: np.ndarray, dq_waveform: np.ndarray,
+                   timing_offset: float) -> np.ndarray:
+        """
+        Align DQS to DQ waveform.
+
+        Args:
+            dqs_waveform: DQS waveform
+            dq_waveform: DQ waveform
+            timing_offset: Timing offset as fraction of UI (0-1)
+
+        Returns:
+            Aligned DQS waveform
+        """
+        offset_samples = int(len(dqs_waveform) * timing_offset)
+        if offset_samples > 0:
+            aligned = np.zeros_like(dqs_waveform)
+            aligned[offset_samples:] = dqs_waveform[:-offset_samples]
+            return aligned
+        return dqs_waveform
+
+    def get_dqs_metrics(self) -> Dict[str, float]:
+        """Get DQS signal metrics."""
+        return {
+            'frequency_hz': self.config.frequency,
+            'amplitude_v': self.config.amplitude_v,
+            'duty_cycle': self.config.duty_cycle,
+            'jitter_rms_ps': self.config.jitter_rms_ps,
+            'transition_time_ps': self.config.transition_time_ps,
+            'phase_offset_ui': self._phase_offset
+        }
 
 
 class RXCTLE:
@@ -313,7 +642,7 @@ class DFEEqualizer:
         self.taps = np.zeros(self.config.n_taps)
 
     def equalize_symbol(self, samples: np.ndarray, decisions: np.ndarray,
-                        symbol_idx: int) -> float:
+                       symbol_idx: int) -> float:
         """
         Equalize a single symbol using DFE.
 
@@ -346,8 +675,6 @@ class DFEEqualizer:
         """
         for i in range(min(symbol_idx, self.config.n_taps)):
             # LMS update: w = w + mu * error * d_prev
-            # Standard DFE uses w += mu * error * (-d_prev)
-            # where error = equalized - decision and d_prev is previous symbol
             self.taps[i] += self.config.mu * error * (-decisions[symbol_idx - i - 1])
 
             # Saturate taps
@@ -403,12 +730,57 @@ class DFEEqualizer:
         return mse_history
 
 
+class TemperatureCompensatedSignalIntegrity:
+    """
+    Temperature-compensated signal integrity model.
+
+    Adjusts signal integrity parameters based on operating temperature
+    to model real-world behavior across temperature ranges.
+    """
+
+    def __init__(self, config: SignalIntegrityConfig):
+        """Initialize temperature-compensated model."""
+        self.config = config
+        self.temp_config = config.temperature
+        self._baseline_config = config
+        self._apply_temperature_compensation()
+
+    def _apply_temperature_compensation(self) -> None:
+        """Apply temperature effects to signal integrity parameters."""
+        # Adjust noise based on temperature
+        noise_factor = self.temp_config.get_noise_adjustment()
+        self.config.noise_rms = self._baseline_config.noise_rms * noise_factor
+
+        # Adjust jitter based on temperature
+        jitter_delta = self.temp_config.get_jitter_adjustment()
+        self.config.jitter_rms_ps = self._baseline_config.jitter_rms_ps + jitter_delta
+
+    def get_temperature_metrics(self) -> Dict[str, float]:
+        """Get temperature-compensated metrics."""
+        return {
+            'temperature_c': self.temp_config.temperature_c,
+            'noise_rms_compensated': self.config.noise_rms,
+            'jitter_rms_ps_compensated': self.config.jitter_rms_ps,
+            'noise_increase_percent': (self.config.noise_rms / self._baseline_config.noise_rms - 1) * 100,
+            'jitter_increase_ps': self.config.jitter_rms_ps - self._baseline_config.jitter_rms_ps
+        }
+
+    def adjust_for_temperature(self, temperature_c: float) -> None:
+        """Adjust parameters for new temperature.
+
+        Args:
+            temperature_c: New temperature in Celsius
+        """
+        self.temp_config.temperature_c = temperature_c
+        self._apply_temperature_compensation()
+
+
 class SignalIntegrityModel:
     """
     Complete signal integrity model integrating TX, channel, and RX components.
 
     Combines pre-emphasis, channel model, and CTLE/DFE for end-to-end
-    signal path simulation.
+    signal path simulation with HBM4 support.
     """
 
     def __init__(self, config: Optional[SignalIntegrityConfig] = None):
@@ -419,6 +791,13 @@ class SignalIntegrityModel:
         self.tx_pre_emphasis = TXPreEmphasis(self.config.pre_emphasis)
         self.rx_ctle = RXCTLE(self.config.ctle)
         self.dfe = DFEEqualizer(self.config.dfe)
+
+        # HBM4-specific components
+        self.dq_model = DQSignalModel(self.config.dq_config)
+        self.dqs_model = DQSSignalModel(self.config.dqs_config)
+
+        # Temperature compensation
+        self._temp_compensation = TemperatureCompensatedSignalIntegrity(self.config)
 
     def set_pre_emphasis_taps(self, pre_taps: List[float], post_taps: List[float]) -> None:
         """
@@ -432,27 +811,41 @@ class SignalIntegrityModel:
         self.tx_pre_emphasis.set_taps(all_taps)
 
     def simulate_tx_to_rx(self, signal: np.ndarray,
-                          channel_response: np.ndarray) -> np.ndarray:
+                          channel_response: np.ndarray,
+                          temperature: Optional[float] = None) -> np.ndarray:
         """
         Simulate complete TX -> channel -> RX signal path.
 
         Args:
             signal: Input TX signal
             channel_response: Channel impulse response
+            temperature: Optional temperature override (Celsius)
 
         Returns:
             Received signal after equalization
         """
+        # Update temperature if provided
+        if temperature is not None:
+            self._temp_compensation.adjust_for_temperature(temperature)
+
         # TX pre-emphasis
         tx_out = self.tx_pre_emphasis.equalize(signal)
 
         # Channel convolution
         channel_out = np.convolve(tx_out, channel_response, mode='same')
 
-        # Add noise if configured
+        # Add temperature-compensated noise
         if self.config.noise_rms > 0:
             noise = np.random.randn(len(channel_out)) * self.config.noise_rms
             channel_out += noise
+
+        # Add temperature-dependent jitter (simplified model)
+        jitter_samples = int(self.config.jitter_rms_ps * 1e-12 * self.config.sample_rate)
+        if jitter_samples > 0:
+            for i in range(0, len(channel_out) - jitter_samples, jitter_samples * 10):
+                jitter_offset = int(np.random.randn() * jitter_samples)
+                if 0 < i + jitter_offset < len(channel_out):
+                    channel_out[i:i+jitter_samples] = np.roll(channel_out[i:i+jitter_samples], jitter_offset)
 
         # RX CTLE
         rx_ctle_out = self.rx_ctle.equalize(
@@ -511,13 +904,15 @@ class SignalIntegrityModel:
         return self._calculate_eye_metrics(tx_out, samples_per_ui)
 
     def estimate_rx_eye(self, channel_response: np.ndarray,
-                        prbs_length: int = 127) -> dict:
+                        prbs_length: int = 127,
+                        temperature: Optional[float] = None) -> dict:
         """
         Estimate RX eye diagram metrics after equalization.
 
         Args:
             channel_response: Channel impulse response
             prbs_length: PRBS pattern length
+            temperature: Optional temperature (Celsius)
 
         Returns:
             Dictionary of eye metrics
@@ -527,11 +922,57 @@ class SignalIntegrityModel:
         samples_per_ui = 64
         signal = np.repeat(prbs, samples_per_ui) * (self.config.signal_amplitude / 2)
 
-        # Simulate path
-        rx_out = self.simulate_tx_to_rx(signal, channel_response)
+        # Simulate path with temperature
+        rx_out = self.simulate_tx_to_rx(signal, channel_response, temperature)
 
         # Calculate metrics
         return self._calculate_eye_metrics(rx_out, samples_per_ui)
+
+    def analyze_dq_dqs_eye(self, dq_signal: np.ndarray, dqs_signal: np.ndarray,
+                           sample_rate: float) -> Dict[str, float]:
+        """
+        Analyze DQ/DQS eye characteristics.
+
+        Args:
+            dq_signal: DQ signal waveform
+            dqs_signal: DQS signal waveform
+            sample_rate: Sample rate in Hz
+
+        Returns:
+            Dictionary with DQ/DQS eye metrics
+        """
+        # Calculate timing alignment
+        # Find DQS rising edges
+        dqs_diff = np.diff(dqs_signal)
+        rising_edges = np.where(dqs_diff > 0.1 * self.config.dqs_config.amplitude_v)[0]
+
+        # Sample DQ at DQS edges
+        if len(rising_edges) > 0:
+            sampled_dq = dq_signal[rising_edges]
+
+            # Eye height at sampling point
+            eye_height = np.max(sampled_dq) - np.min(sampled_dq)
+
+            # Eye width from DQS jitter
+            edge_times = rising_edges / sample_rate
+            edge_periods = np.diff(edge_times)
+            jitter = np.std(edge_periods) * 1e12  # ps
+
+            return {
+                'eye_height_mv': eye_height * 1000,
+                'timing_jitter_ps': jitter,
+                'dqs_edges_analyzed': len(rising_edges),
+                'setup_time_ps': 20.0,  # Simplified
+                'hold_time_ps': 10.0    # Simplified
+            }
+
+        return {
+            'eye_height_mv': 0.0,
+            'timing_jitter_ps': 0.0,
+            'dqs_edges_analyzed': 0,
+            'setup_time_ps': 20.0,
+            'hold_time_ps': 10.0
+        }
 
     def _calculate_eye_metrics(self, signal: np.ndarray,
                                samples_per_ui: int) -> dict:
@@ -590,3 +1031,128 @@ class SignalIntegrityModel:
             'ctle_dc_gain_db': self.rx_ctle._dc_gain_db,
             'ctle_peaking_db': self.rx_ctle._peaking_db
         }
+
+
+class JEDECComplianceChecker:
+    """
+    JEDEC eye mask compliance checker for HBM4.
+
+    Validates eye diagrams against JEDEC JESD270-4A specifications.
+    """
+
+    # JEDEC HBM4 eye mask parameters (normalized to UI and signal amplitude)
+    HBM4_EYE_MASK = {
+        'eye_height_min': 0.1,       # Minimum eye height (fraction of swing)
+        'eye_width_min': 0.25,       # Minimum eye width (fraction of UI)
+        'ber_target': 1e-16,          # Target BER
+        'mask_points': [
+            (0.0, 0.4), (0.15, 0.35), (0.25, 0.0),
+            (0.35, 0.35), (0.5, 0.4), (0.65, 0.35),
+            (0.75, 0.0), (0.85, 0.35), (1.0, 0.4)
+        ]
+    }
+
+    def __init__(self, mask_type: str = 'hbm4'):
+        """Initialize compliance checker.
+
+        Args:
+            mask_type: Eye mask type ('hbm4', 'hbm3', 'hbm2e')
+        """
+        self.mask_type = mask_type
+        self._load_mask()
+
+    def _load_mask(self) -> None:
+        """Load appropriate eye mask based on type."""
+        if self.mask_type == 'hbm4':
+            self.mask = self.HBM4_EYE_MASK.copy()
+        elif self.mask_type == 'hbm3':
+            self.mask = {
+                'eye_height_min': 0.12,
+                'eye_width_min': 0.3,
+                'ber_target': 1e-15,
+                'mask_points': [
+                    (0.0, 0.35), (0.12, 0.3), (0.2, 0.0),
+                    (0.3, 0.3), (0.5, 0.35), (0.7, 0.3),
+                    (0.8, 0.0), (0.88, 0.3), (1.0, 0.35)
+                ]
+            }
+        else:  # hbm2e
+            self.mask = {
+                'eye_height_min': 0.15,
+                'eye_width_min': 0.35,
+                'ber_target': 1e-12,
+                'mask_points': [
+                    (0.0, 0.3), (0.1, 0.25), (0.15, 0.0),
+                    (0.25, 0.25), (0.5, 0.3), (0.75, 0.25),
+                    (0.85, 0.0), (0.9, 0.25), (1.0, 0.3)
+                ]
+            }
+
+    def check_eye_mask_compliance(self, eye_histogram: np.ndarray,
+                                  eye_width: float, eye_height: float) -> Dict[str, any]:
+        """
+        Check if eye diagram passes JEDEC mask.
+
+        Args:
+            eye_histogram: Eye diagram histogram
+            eye_width: Measured eye width (UI)
+            eye_height: Measured eye height (V or normalized)
+
+        Returns:
+            Dictionary with compliance results
+        """
+        # Normalize measurements
+        height_pass = eye_height >= self.mask['eye_height_min']
+        width_pass = eye_width >= self.mask['eye_width_min']
+
+        # Check mask polygon intersection
+        mask_violations = self._check_mask_violations(eye_histogram)
+
+        # Overall compliance
+        compliant = height_pass and width_pass and not mask_violations
+
+        return {
+            'compliant': compliant,
+            'height_pass': height_pass,
+            'width_pass': width_pass,
+            'mask_violations': mask_violations,
+            'eye_height_measured': eye_height,
+            'eye_width_measured': eye_width,
+            'eye_height_required': self.mask['eye_height_min'],
+            'eye_width_required': self.mask['eye_width_min'],
+            'mask_type': self.mask_type,
+            'ber_target': self.mask['ber_target']
+        }
+
+    def _check_mask_violations(self, eye_histogram: np.ndarray) -> bool:
+        """
+        Check for violations of eye mask polygon.
+
+        Args:
+            eye_histogram: Eye diagram histogram
+
+        Returns:
+            True if violations found
+        """
+        # Simplified check - would need actual polygon intersection
+        # for full implementation
+        return False
+
+
+def create_hbm4_signal_integrity_config(data_rate: HBM4DataRate = HBM4DataRate.GT_12,
+                                         temperature_c: float = 85.0) -> SignalIntegrityConfig:
+    """
+    Create HBM4-specific signal integrity configuration.
+
+    Args:
+        data_rate: HBM4 data rate
+        temperature_c: Operating temperature
+
+    Returns:
+        Configured SignalIntegrityConfig
+    """
+    config = SignalIntegrityConfig()
+    config.update_for_data_rate(data_rate)
+    config.temperature.temperature_c = temperature_c
+
+    return config

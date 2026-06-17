@@ -1269,8 +1269,15 @@ class TestRecoveryScenarios:
         # Issue commands with proper timing
         channel.issue_command('ACT', pseudo_channel=0, bank=0, row=0x100)
 
-        # Wait for tRC
-        for _ in range(60):
+        # Wait for tRAS + tRP (bank cycle time)
+        for _ in range(spec.nRAS + spec.nRP):
+            channel.tick()
+
+        # Precharge first
+        channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
+
+        # Wait for tRP
+        for _ in range(spec.nRP):
             channel.tick()
 
         # Issue second ACT - should work now

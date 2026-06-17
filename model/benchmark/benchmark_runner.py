@@ -25,6 +25,15 @@ from .bandwidth_benchmark import BandwidthBenchmark, BandwidthResult
 from .latency_benchmark import LatencyBenchmark, LatencyResult
 from .scheduler_benchmark import SchedulerBenchmark, SchedulerResult
 from .comparison_benchmark import ComparisonBenchmark, ComparisonReport, ComparisonResult
+from .enhanced_benchmark import (
+    EnhancedBenchmark,
+    EnhancedBenchmarkReport,
+    MultiChannelResult,
+    MixedTrafficResult,
+    BankGroupConflictResult,
+    RefreshImpactResult,
+    QoSImpactResult,
+)
 
 
 _logger = logging.getLogger(__name__)
@@ -37,13 +46,14 @@ class BenchmarkReport:
     timestamp: str = ""
     duration_seconds: float = 0.0
     config: str = ""
-    
+
     # Individual results
     bandwidth: Optional[BandwidthResult] = None
     latency: Optional[LatencyResult] = None
     scheduler: Optional[SchedulerResult] = None
     comparison: Optional[ComparisonReport] = None
-    
+    enhanced: Optional[EnhancedBenchmarkReport] = None  # Enhanced multi-channel/mixed-traffic results
+
     # Summary metrics
     peak_bandwidth_gbs: float = 0.0
     sustained_bandwidth_gbs: float = 0.0
@@ -51,14 +61,19 @@ class BenchmarkReport:
     p99_latency_ns: float = 0.0
     row_hit_rate_percent: float = 0.0
     bank_conflict_rate_percent: float = 0.0
-    
+
+    # Enhanced summary metrics
+    multi_channel_efficiency_percent: float = 0.0
+    refresh_bandwidth_loss_percent: float = 0.0
+    qos_effectiveness_percent: float = 0.0
+
     # Key findings
     findings: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     
     def to_dict(self) -> Dict:
         """Convert to dictionary"""
-        return {
+        result = {
             'timestamp': self.timestamp,
             'duration_seconds': self.duration_seconds,
             'config': self.config,
@@ -68,9 +83,16 @@ class BenchmarkReport:
             'p99_latency_ns': self.p99_latency_ns,
             'row_hit_rate_percent': self.row_hit_rate_percent,
             'bank_conflict_rate_percent': self.bank_conflict_rate_percent,
+            'multi_channel_efficiency_percent': self.multi_channel_efficiency_percent,
+            'refresh_bandwidth_loss_percent': self.refresh_bandwidth_loss_percent,
+            'qos_effectiveness_percent': self.qos_effectiveness_percent,
             'findings': self.findings,
             'warnings': self.warnings,
         }
+        # Add enhanced results if available
+        if self.enhanced:
+            result['enhanced'] = self.enhanced.to_dict()
+        return result
     
     def to_json(self, indent: int = 2) -> str:
         """Convert to JSON string"""
@@ -181,7 +203,89 @@ class BenchmarkReport:
                     f"- **Latency Improvement:** {self.comparison.hbm4_vs_hbm3_latency_improvement * 100:.1f}%",
                     "",
                 ])
-        
+
+        # Enhanced benchmark results
+        if self.enhanced:
+            lines.extend([
+                "## Enhanced Benchmark Results",
+                "",
+                f"| Metric | Value |",
+                f"|--------|-------|",
+                f"| Multi-Channel Efficiency | {self.multi_channel_efficiency_percent:.1f}% |",
+                f"| Refresh Bandwidth Loss | {self.refresh_bandwidth_loss_percent:.2f}% |",
+                f"| QoS Effectiveness | {self.qos_effectiveness_percent:.1f}% |",
+                "",
+            ])
+
+            # Multi-channel results
+            if self.enhanced.multi_channel:
+                mc = self.enhanced.multi_channel
+                lines.extend([
+                    "### Multi-Channel Parallel Access",
+                    "",
+                    f"- **Channels Active:** {mc.channels_active}/{mc.num_channels}",
+                    f"- **Peak BW:** {mc.peak_bandwidth_gbs:.1f} GB/s",
+                    f"- **Measured BW:** {mc.measured_bandwidth_gbs:.1f} GB/s",
+                    f"- **Channel Utilization:** {mc.channel_utilization_percent:.1f}%",
+                    "",
+                ])
+
+            # Mixed traffic results
+            if self.enhanced.mixed_traffic:
+                mt = self.enhanced.mixed_traffic
+                lines.extend([
+                    "### Mixed Traffic (Read/Write)",
+                    "",
+                    f"- **Read/Write Ratio:** {mt.read_ratio:.0%}/{mt.write_ratio:.0%}",
+                    f"- **Read BW:** {mt.read_bandwidth_gbs:.1f} GB/s",
+                    f"- **Write BW:** {mt.write_bandwidth_gbs:.1f} GB/s",
+                    f"- **Total BW:** {mt.total_bandwidth_gbs:.1f} GB/s",
+                    f"- **Read Latency:** {mt.read_latency_avg_ns:.1f} ns (P99: {mt.read_latency_p99_ns:.1f})",
+                    f"- **Write Latency:** {mt.write_latency_avg_ns:.1f} ns (P99: {mt.write_latency_p99_ns:.1f})",
+                    "",
+                ])
+
+            # Bank group conflict results
+            if self.enhanced.bank_group_conflict:
+                bg = self.enhanced.bank_group_conflict
+                lines.extend([
+                    "### Bank Group Conflict",
+                    "",
+                    f"- **Same BG Latency:** {bg.same_bg_latency_avg_ns:.1f} ns",
+                    f"- **Different BG Latency:** {bg.different_bg_latency_avg_ns:.1f} ns",
+                    f"- **Latency Penalty:** {bg.latency_penalty_ns:.1f} ns",
+                    f"- **Conflict Rate:** {bg.conflict_rate_percent:.1f}%",
+                    "",
+                ])
+
+            # Refresh impact results
+            if self.enhanced.refresh_impact:
+                rf = self.enhanced.refresh_impact
+                lines.extend([
+                    "### Refresh Impact",
+                    "",
+                    f"- **Refresh Count:** {rf.refresh_count}",
+                    f"- **Total Refresh Time:** {rf.refresh_total_time_ns:.1f} ns",
+                    f"- **Bandwidth Loss:** {rf.bandwidth_loss_percent:.2f}%",
+                    f"- **Effective BW:** {rf.effective_bandwidth_gbs:.1f} GB/s",
+                    "",
+                ])
+
+            # QoS impact results
+            if self.enhanced.qos_impact:
+                qos = self.enhanced.qos_impact
+                lines.extend([
+                    "### QoS Priority Impact",
+                    "",
+                    f"- **Critical Latency:** {qos.critical_latency_ns:.1f} ns",
+                    f"- **High Latency:** {qos.high_latency_ns:.1f} ns",
+                    f"- **Normal Latency:** {qos.normal_latency_ns:.1f} ns",
+                    f"- **Low Latency:** {qos.low_latency_ns:.1f} ns",
+                    f"- **Critical/Normal Ratio:** {qos.critical_to_normal_ratio:.2f}x",
+                    f"- **Starvation Detected:** {'Yes' if qos.starvation_detected else 'No'}",
+                    "",
+                ])
+
         # Warnings
         if self.warnings:
             lines.extend([
@@ -203,23 +307,24 @@ class BenchmarkReport:
 
 class BenchmarkRunner:
     """Main benchmark runner orchestrator"""
-    
+
     def __init__(self, config: Optional[BenchmarkConfig] = None):
         """Initialize benchmark runner
-        
+
         Args:
             config: Benchmark configuration (uses default if None)
         """
         self.config = config or BenchmarkConfig()
         self.start_time: float = 0.0
         self.end_time: float = 0.0
-        
+
         # Individual benchmarks
         self.bandwidth_benchmark: Optional[BandwidthBenchmark] = None
         self.latency_benchmark: Optional[LatencyBenchmark] = None
         self.scheduler_benchmark: Optional[SchedulerBenchmark] = None
         self.comparison_benchmark: Optional[ComparisonBenchmark] = None
-        
+        self.enhanced_benchmark: Optional[EnhancedBenchmark] = None
+
         # Results
         self.report: Optional[BenchmarkReport] = None
     
@@ -286,21 +391,40 @@ class BenchmarkRunner:
     
     def run_comparison_benchmarks(self) -> ComparisonReport:
         """Run configuration comparison benchmarks
-        
+
         Returns:
             Comparison report
         """
         _logger.info("Running comparison benchmarks...")
-        
+
         self.comparison_benchmark = ComparisonBenchmark(
             config=self.config.comparison
         )
-        
+
         report = self.comparison_benchmark.run_comparison()
-        
+
         _logger.info(f"Comparison benchmarks complete: best={report.best_bandwidth_config} @ "
                     f"{report.best_bandwidth_gbs:.1f} GB/s")
-        
+
+        return report
+
+    def run_enhanced_benchmarks(self) -> EnhancedBenchmarkReport:
+        """Run enhanced benchmarks (multi-channel, mixed traffic, BG conflicts, etc.)
+
+        Returns:
+            Enhanced benchmark report
+        """
+        _logger.info("Running enhanced benchmarks...")
+
+        self.enhanced_benchmark = EnhancedBenchmark(
+            speed_grade="8Gbps"
+        )
+
+        report = self.enhanced_benchmark.run_all_tests()
+
+        _logger.info(f"Enhanced benchmarks complete: total_bw={report.total_bandwidth_gbs:.1f} GB/s, "
+                    f"avg_latency={report.average_latency_ns:.1f} ns")
+
         return report
     
     def run_all_benchmarks(self) -> BenchmarkReport:
@@ -350,10 +474,24 @@ class BenchmarkRunner:
             _logger.info("Configuration Comparison")
             _logger.info("-" * 40)
             report.comparison = self.run_comparison_benchmarks()
-        
+
+        if self.config.run_enhanced:
+            _logger.info("-" * 40)
+            _logger.info("Enhanced Tests (Multi-Channel, Mixed Traffic, BG Conflicts, Refresh, QoS)")
+            _logger.info("-" * 40)
+            report.enhanced = self.run_enhanced_benchmarks()
+            # Extract enhanced summary metrics
+            if report.enhanced:
+                if report.enhanced.multi_channel:
+                    report.multi_channel_efficiency_percent = report.enhanced.multi_channel.bandwidth_efficiency_percent
+                if report.enhanced.refresh_impact:
+                    report.refresh_bandwidth_loss_percent = report.enhanced.refresh_impact.bandwidth_loss_percent
+                if report.enhanced.qos_impact:
+                    report.qos_effectiveness_percent = report.enhanced.qos_impact.qos_effectiveness_percent
+
         self.end_time = time.time()
         report.duration_seconds = self.end_time - self.start_time
-        
+
         # Generate findings
         report.findings = self._generate_findings(report)
         report.warnings = self._generate_warnings(report)
@@ -404,34 +542,89 @@ class BenchmarkRunner:
         # Comparison findings
         if report.comparison and report.comparison.hbm4_vs_hbm3_bandwidth_speedup > 0:
             findings.append(f"HBM4 provides {report.comparison.hbm4_vs_hbm3_bandwidth_speedup:.2f}x bandwidth vs HBM3")
-        
+
         if report.comparison and report.comparison.hbm4_vs_hbm3_latency_improvement > 0:
             findings.append(f"HBM4 improves latency by {report.comparison.hbm4_vs_hbm3_latency_improvement * 100:.1f}% vs HBM3")
-        
+
+        # Enhanced benchmark findings
+        if report.enhanced:
+            # Multi-channel findings
+            if report.enhanced.multi_channel:
+                eff = report.enhanced.multi_channel.bandwidth_efficiency_percent
+                if eff > 80:
+                    findings.append(f"Excellent multi-channel efficiency at {eff:.1f}%")
+                elif eff > 50:
+                    findings.append(f"Good multi-channel efficiency at {eff:.1f}%")
+
+            # Mixed traffic findings
+            if report.enhanced.mixed_traffic:
+                rw_diff = abs(report.enhanced.mixed_traffic.read_latency_avg_ns -
+                             report.enhanced.mixed_traffic.write_latency_avg_ns)
+                if rw_diff < 50:
+                    findings.append(f"Consistent read/write latency (diff: {rw_diff:.1f}ns)")
+
+            # Bank group findings
+            if report.enhanced.bank_group_conflict:
+                penalty = report.enhanced.bank_group_conflict.latency_penalty_ns
+                if penalty < 20:
+                    findings.append(f"Low bank group switching overhead ({penalty:.1f}ns)")
+
+            # Refresh findings
+            if report.enhanced.refresh_impact:
+                loss = report.enhanced.refresh_impact.bandwidth_loss_percent
+                if loss < 2:
+                    findings.append(f"Minimal refresh overhead ({loss:.2f}% bandwidth loss)")
+
+            # QoS findings
+            if report.enhanced.qos_impact:
+                ratio = report.enhanced.qos_impact.critical_to_normal_ratio
+                if ratio > 1.5:
+                    findings.append(f"Strong QoS prioritization (critical {ratio:.2f}x faster)")
+                elif ratio > 1.0:
+                    findings.append(f"QoS scheduling working ({ratio:.2f}x critical vs normal)")
+
         return findings
     
     def _generate_warnings(self, report: BenchmarkReport) -> List[str]:
         """Generate warnings from results"""
         warnings = []
-        
+
         if report.bandwidth:
             if report.bandwidth.peak_efficiency_percent < 50:
                 warnings.append("Bandwidth efficiency critically low - investigate bottlenecks")
-            
+
             if report.bandwidth.refresh_overhead_percent > 5:
                 warnings.append("Refresh overhead exceeds 5% - consider refresh optimization")
-        
+
         if report.latency:
             if report.latency.average_latency_ns > 100:
                 warnings.append("Average latency exceeds 100ns - investigate timing or queue delays")
-        
+
         if report.scheduler:
             if report.scheduler.average_queue_depth > 50:
                 warnings.append("High average queue depth - may indicate throughput bottleneck")
-            
+
             if report.scheduler.queue_full_count > 0:
                 warnings.append("Queue overflow events detected - requests rejected")
-        
+
+        # Enhanced benchmark warnings
+        if report.enhanced:
+            if report.enhanced.multi_channel:
+                if report.enhanced.multi_channel.bandwidth_efficiency_percent < 50:
+                    warnings.append("Multi-channel bandwidth efficiency critically low")
+
+            if report.enhanced.refresh_impact:
+                if report.enhanced.refresh_impact.bandwidth_loss_percent > 5:
+                    warnings.append("Refresh bandwidth loss exceeds 5% threshold")
+
+            if report.enhanced.qos_impact:
+                if report.enhanced.qos_impact.starvation_detected:
+                    warnings.append("Low priority request starvation detected")
+
+            if report.enhanced.bank_group_conflict:
+                if report.enhanced.bank_group_conflict.conflict_rate_percent > 30:
+                    warnings.append("High bank group conflict rate - consider address mapping")
+
         return warnings
     
     def run_quick_benchmark(self) -> BenchmarkReport:

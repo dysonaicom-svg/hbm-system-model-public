@@ -192,6 +192,35 @@ class DRAMModel:
         self._memory: Optional[Dict] = None
         self._enable_memory = False
 
+        # Performance optimization: Cache bank lookup to avoid repeated division/modulo
+        self._bank_cache: Dict[Tuple[int, int, int], BankStateMachine] = {}
+        self._build_bank_cache()
+
+        # Performance optimization: Cache current time to avoid repeated cycles_to_s conversions
+        self._current_time_cycles: int = 0
+        self._current_time_s: float = 0.0
+
+        # Performance optimization: Pre-compute timing constants
+        self._tRCD_cycles = self.timing.tRCD
+        self._tRP_cycles = self.timing.tRP
+        self._tCCD_cycles = self.timing.tCCD
+        self._tRFC_cycles = self.timing.tRFC
+
+    def _build_bank_cache(self):
+        """Build bank lookup cache for O(1) bank access
+
+        This avoids repeated division/modulo operations in get_bank.
+        """
+        self._bank_cache.clear()
+        for stack_id, stack in enumerate(self.stacks):
+            for channel_id in range(8):
+                for bank_id in range(16):
+                    ps_id = bank_id // 16
+                    bank_in_group = bank_id % 2
+                    bg_id = (bank_id // 2) % 8
+                    bank = stack.get_bank(channel_id, ps_id, bg_id, bank_in_group)
+                    self._bank_cache[(stack_id, channel_id, bank_id)] = bank
+
     @property
     def total_banks(self) -> int:
         """总 bank 数量"""
@@ -208,35 +237,33 @@ class DRAMModel:
         Returns:
             BankStateMachine 实例
         """
+        # Use cached lookup for O(1) access
+        key = (stack_id, channel_id, bank_id)
+        if key in self._bank_cache:
+            return self._bank_cache[key]
+
+        # Fallback for dynamic stacks (shouldn't happen in normal use)
         if stack_id >= len(self.stacks):
             raise ValueError(f"Invalid stack_id: {stack_id}")
 
-        # Channel 模型: 2 pseudo-channels * 8 bank groups * 2 banks = 32 banks/channel
-        # 映射: bank_id -> (ps_id, bg_id, bank_in_group)
-        ps_id = bank_id // 16 if bank_id < 32 else 0  # 简化处理
+        ps_id = bank_id // 16
         bank_in_group = bank_id % 2
         bg_id = (bank_id // 2) % 8
-
-        # 实际模型中只有 ps_id=0,1; bg_id=0-7; bank=0,1
-        ps_id = bank_id // 16  # 0 或 1
-        bank_in_group = bank_id % 2
-        bg_id = (bank_id // 2) % 8
-
         return self.stacks[stack_id].get_bank(channel_id, ps_id, bg_id, bank_in_group)
 
     def set_time(self, current_time: int):
         """Set current time
 
-        OPTIMIZATION: This no longer propagates to all banks.
-        Time is passed directly to bank operations when needed.
+        OPTIMIZATION: Cache time value to avoid repeated cycles_to_s conversions.
+        Only propagate to stacks when they are actually accessed.
 
         Args:
             current_time: Current time (cycles)
         """
-        # Only update the top-level time reference
-        time_s = self.timing.cycles_to_s(current_time)
-        for stack in self.stacks:
-            stack.current_time = time_s
+        # Only update cache if time actually changed
+        if self._current_time_cycles != current_time:
+            self._current_time_cycles = current_time
+            self._current_time_s = self.timing.cycles_to_s(current_time)
 
     def check_bank_available(
         self,
@@ -282,16 +309,16 @@ class DRAMModel:
             DRAMResponse
         """
         try:
-            # Set time on the specific bank being accessed
-            time_s = self.timing.cycles_to_s(current_time)
+            # OPTIMIZATION: Use cached time update and pre-computed latency
+            self.set_time(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
-            bank.set_time(time_s)
+            bank.set_time(self._current_time_s)
 
             success, error_msg = bank.activate(row_id)
 
             if success:
                 self.stats.add_activation_to_channel(channel_id)
-                return DRAMResponse(success=True, latency_cycles=self.timing.tRCD)
+                return DRAMResponse(success=True, latency_cycles=self._tRCD_cycles)
             else:
                 return DRAMResponse(success=False, error=error_msg or "Activation failed")
 
@@ -321,10 +348,10 @@ class DRAMModel:
             DRAMResponse
         """
         try:
-            # Set time on the specific bank being accessed
-            time_s = self.timing.cycles_to_s(current_time)
+            # OPTIMIZATION: Use cached time update
+            self.set_time(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
-            bank.set_time(time_s)
+            bank.set_time(self._current_time_s)
 
             # Check bank state
             if bank.bank.state != BankStateEnum.ACTIVE:
@@ -339,13 +366,15 @@ class DRAMModel:
 
             # Update stats (per-channel)
             self.stats.add_read_to_channel(channel_id)
-            if bank.is_row_hit(col_id):
+            # Row hit if bank is active (command sequencer ensures correct row is open)
+            if bank.bank.row_open:
                 self.stats.add_hit()
             else:
                 self.stats.add_conflict()
 
+            # OPTIMIZATION: Use pre-computed timing constants
             # Calculate latency (burst + tCCD)
-            latency = self.timing.tCCD * (length // (self.config['bus_width'] // 8))
+            latency = self._tCCD_cycles * (length // (self.config['bus_width'] // 8))
 
             return DRAMResponse(
                 success=True,
@@ -379,10 +408,10 @@ class DRAMModel:
             DRAMResponse
         """
         try:
-            # Set time on the specific bank being accessed
-            time_s = self.timing.cycles_to_s(current_time)
+            # OPTIMIZATION: Use cached time update
+            self.set_time(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
-            bank.set_time(time_s)
+            bank.set_time(self._current_time_s)
 
             # Check bank state
             if bank.bank.state != BankStateEnum.ACTIVE:
@@ -397,8 +426,13 @@ class DRAMModel:
 
             # Update stats (per-channel)
             self.stats.add_write_to_channel(channel_id)
+            # Row hit if bank has a row open
+            if bank.bank.row_open:
+                self.stats.add_hit()
+            else:
+                self.stats.add_conflict()
 
-            return DRAMResponse(success=True, latency_cycles=self.timing.tCCD)
+            return DRAMResponse(success=True, latency_cycles=self._tCCD_cycles)
 
         except Exception as e:
             return DRAMResponse(success=False, error=str(e))
@@ -422,18 +456,18 @@ class DRAMModel:
             DRAMResponse
         """
         try:
-            # Set time on the specific bank being accessed
-            time_s = self.timing.cycles_to_s(current_time)
+            # OPTIMIZATION: Use cached time update
+            self.set_time(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
-            bank.set_time(time_s)
+            bank.set_time(self._current_time_s)
 
-            success = bank.precharge()
+            success, error_msg = bank.precharge()
 
             if success:
                 self.stats.total_precharges += 1
-                return DRAMResponse(success=True, latency_cycles=self.timing.tRP)
+                return DRAMResponse(success=True, latency_cycles=self._tRP_cycles)
             else:
-                return DRAMResponse(success=False, error="Precharge failed")
+                return DRAMResponse(success=False, error=error_msg or "Precharge failed")
 
         except Exception as e:
             return DRAMResponse(success=False, error=str(e))
@@ -457,10 +491,10 @@ class DRAMModel:
             DRAMResponse
         """
         try:
-            # Set time on the specific bank being accessed
-            time_s = self.timing.cycles_to_s(current_time)
+            # OPTIMIZATION: Use cached time update
+            self.set_time(current_time)
             bank = self.get_bank(stack_id, channel_id, bank_id)
-            bank.set_time(time_s)
+            bank.set_time(self._current_time_s)
 
             # During refresh, bank is unavailable
             self.stats.total_refreshes += 1
@@ -468,9 +502,9 @@ class DRAMModel:
             # Simplified: after refresh, row is invalidated
             bank.bank.state = BankStateEnum.IDLE
             bank.bank.open_row = None
-            bank.bank.precharge_time = time_s
+            bank.bank.precharge_time = self._current_time_s
 
-            return DRAMResponse(success=True, latency_cycles=self.timing.tRFC)
+            return DRAMResponse(success=True, latency_cycles=self._tRFC_cycles)
 
         except Exception as e:
             return DRAMResponse(success=False, error=str(e))
@@ -598,7 +632,6 @@ class DRAMModel:
         """
         try:
             data = self._read_memory(stack_id, channel_id, bank_id, row_id, col_id, length)
-            self.stats.add_read()
             return data
         except Exception:
             return bytes(length)

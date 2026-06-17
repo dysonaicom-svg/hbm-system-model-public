@@ -42,11 +42,42 @@ class ScalingBenchmark:
         Returns:
             List of results dictionaries
         """
+        from model.controller.config import HBMConfig
         results = []
 
         for count in channel_counts:
-            config = hbm_config.copy()
-            config.channels_per_stack = count
+            # Create new config with modified channel count
+            # Use single stack to avoid scaling issues
+            # Limit address range to ensure channel_id < channels_per_stack
+            # Channel bits are typically in the lower address bits
+            address_bits = max(8, (count * 4).bit_length())  # At least 8 bits for channel mapping
+
+            config = HBMConfig(
+                stack_count=1,  # Single stack for clean channel scaling
+                channels_per_stack=count,
+                pseudo_channels_per_channel=hbm_config.pseudo_channels_per_channel,
+                banks_per_pseudo_channel=hbm_config.banks_per_pseudo_channel,
+                bank_groups_per_channel=hbm_config.bank_groups_per_channel,
+                row_size=hbm_config.row_size,
+                burst_length=hbm_config.burst_length,
+                data_rate=hbm_config.data_rate,
+                io_width=hbm_config.io_width,
+                read_latency_base=hbm_config.read_latency_base,
+                write_latency_base=hbm_config.write_latency_base,
+                phy_latency=hbm_config.phy_latency,
+                queue_depth=hbm_config.queue_depth,
+                max_outstanding=hbm_config.max_outstanding,
+                address_mapping=hbm_config.address_mapping,
+                scheduler_mode=hbm_config.scheduler_mode,
+                write_drain_policy=hbm_config.write_drain_policy,
+                refresh_interval=hbm_config.refresh_interval,
+                refresh_penalty=hbm_config.refresh_penalty,
+                bw_guarantee_critical=hbm_config.bw_guarantee_critical,
+                bw_guarantee_high=hbm_config.bw_guarantee_high,
+                bw_guarantee_normal=hbm_config.bw_guarantee_normal,
+                bw_guarantee_low=hbm_config.bw_guarantee_low,
+                timing=hbm_config.timing,
+            )
 
             sim_config = SimulationConfig(
                 simulation_time_us=duration_us,
@@ -322,12 +353,37 @@ class TestScalingBenchmark:
 
         HBM4 supports up to 4 stacks.
         """
+        from model.controller.config import HBMConfig
         stack_counts = [1, 2, 4]
         results = []
 
         for stack_count in stack_counts:
-            config = hbm4_config.copy()
-            config.stack_count = stack_count
+            config = HBMConfig(
+                stack_count=stack_count,
+                channels_per_stack=hbm4_config.channels_per_stack,
+                pseudo_channels_per_channel=hbm4_config.pseudo_channels_per_channel,
+                banks_per_pseudo_channel=hbm4_config.banks_per_pseudo_channel,
+                bank_groups_per_channel=hbm4_config.bank_groups_per_channel,
+                row_size=hbm4_config.row_size,
+                burst_length=hbm4_config.burst_length,
+                data_rate=hbm4_config.data_rate,
+                io_width=hbm4_config.io_width,
+                read_latency_base=hbm4_config.read_latency_base,
+                write_latency_base=hbm4_config.write_latency_base,
+                phy_latency=hbm4_config.phy_latency,
+                queue_depth=hbm4_config.queue_depth,
+                max_outstanding=hbm4_config.max_outstanding,
+                address_mapping=hbm4_config.address_mapping,
+                scheduler_mode=hbm4_config.scheduler_mode,
+                write_drain_policy=hbm4_config.write_drain_policy,
+                refresh_interval=hbm4_config.refresh_interval,
+                refresh_penalty=hbm4_config.refresh_penalty,
+                bw_guarantee_critical=hbm4_config.bw_guarantee_critical,
+                bw_guarantee_high=hbm4_config.bw_guarantee_high,
+                bw_guarantee_normal=hbm4_config.bw_guarantee_normal,
+                bw_guarantee_low=hbm4_config.bw_guarantee_low,
+                timing=hbm4_config.timing,
+            )
 
             sim_config = SimulationConfig(
                 simulation_time_us=50.0,

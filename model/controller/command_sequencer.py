@@ -175,12 +175,14 @@ class BankState:
         bank_id: Bank identifier
         state: Current bank state
         open_row: Currently open row (-1 if closed)
+        last_row: Last activated row (for hit detection)
         activate_time: Cycle when bank was last activated
         precharge_time: Cycle when bank was last precharged
     """
     bank_id: int
     state: BankStateEnum = BankStateEnum.IDLE
     open_row: int = -1
+    last_row: int = -1  # Last activated row for hit detection
     activate_time: int = -1  # -1 means never activated
     precharge_time: int = -1
 
@@ -241,7 +243,8 @@ class CommandSequencer:
         """
         self.spec = spec or HBM4Spec()
         self.last_command: Optional[DRAMCommand] = None
-        self.last_bank: Optional[int] = None
+        self.last_channel: Optional[int] = None  # Track channel for cross-channel optimization
+        self.last_bank: Optional[int] = None  # Track bank for same-bank turnaround
         self.last_bank_group: Optional[int] = None
 
     def check_row_hit(self, request: HBMRequest, bank_state: BankState) -> bool:
@@ -254,8 +257,11 @@ class CommandSequencer:
         Returns:
             True if row hit, False if row miss
         """
-        # Row hit only possible if bank is active and row matches
+        # Row hit only possible if bank is active (state == ACTIVE)
         if not bank_state.is_active:
+            # Check last_row for recently accessed row
+            if hasattr(bank_state, 'last_row') and bank_state.last_row == request.row_id:
+                return True  # Can hit after PRE+ACT
             return False
         return bank_state.open_row == request.row_id
 
@@ -276,7 +282,8 @@ class CommandSequencer:
             return 0
 
         # No turnaround penalty for different channels (parallel access)
-        if channel_id is not None and self.last_bank != channel_id:
+        # This is the key optimization for HBM4 multi-channel architecture
+        if channel_id is not None and self.last_channel != channel_id:
             return 0
 
         # Only RD and WR commands have turnaround penalties
@@ -401,6 +408,7 @@ class CommandSequencer:
 
         # Update last command tracking
         self.last_command = DRAMCommand.PRE
+        self.last_channel = request.channel_id
         self.last_bank = request.bank_id
         self.last_bank_group = request.bank_group_id
 
@@ -464,23 +472,16 @@ class CommandSequencer:
         ))
         current_cycle += self.spec.nCCDS
 
-        # PRE command to close row
-        # For row hit, tRAS is already satisfied since row was opened earlier
-        commands.append(CommandTiming(
-            command=DRAMCommand.PRE,
-            cycle=current_cycle,
-            relative_cycle=current_cycle - seq_start_cycle,
-            bank_id=request.bank_id,
-            row_id=request.row_id,
-            is_row_hit=True
-        ))
+        # No PRE command for row hit - keep row open for subsequent accesses
+        # This enables row-hit chaining for consecutive accesses to the same row
 
         # Update last command tracking
-        self.last_command = DRAMCommand.PRE
+        self.last_command = rd_wr_command
+        self.last_channel = request.channel_id
         self.last_bank = request.bank_id
         self.last_bank_group = request.bank_group_id
 
-        # Create sequence
+        # Create sequence - row stays open
         sequence = CommandSequence(
             request=request,
             commands=commands,

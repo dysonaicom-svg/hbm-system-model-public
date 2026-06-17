@@ -86,6 +86,23 @@ class ChannelHeatmap:
         "#08519c",  # 100% - Full activity
     ])
     
+    def _get_color_for_value(self, value: float) -> str:
+        """Get color for a normalized value (0-1)
+        
+        Args:
+            value: Normalized value between 0 and 1
+            
+        Returns:
+            CSS color string
+        """
+        if value <= 0:
+            return self.heatmap_colors[0]
+        elif value >= 1:
+            return self.heatmap_colors[-1]
+        else:
+            idx = int(value * (len(self.heatmap_colors) - 1))
+            return self.heatmap_colors[min(idx, len(self.heatmap_colors) - 1)]
+    
     def generate_utilization_heatmap_data(self) -> Dict[str, Any]:
         """Generate data for channel utilization heatmap
         
@@ -100,7 +117,7 @@ class ChannelHeatmap:
         channel_labels = [f"CH{i}" for i in range(num_channels)]
         bg_labels = [f"BG{j}" for j in range(bank_groups)]
         
-        # Generate heatmap data array
+        # Generate heatmap data array with static colors
         heatmap_data = []
         for ch in range(num_channels):
             for bg in range(bank_groups):
@@ -113,10 +130,14 @@ class ChannelHeatmap:
                     if bg_activity > 0:
                         util = max(util, bg_activity)
                 
+                # Get static color for this value
+                color = self._get_color_for_value(util)
+                
                 heatmap_data.append({
                     'x': bg,
                     'y': ch,
                     'v': util,
+                    'color': color,
                 })
         
         return {
@@ -125,7 +146,6 @@ class ChannelHeatmap:
                 'datasets': [{
                     'label': 'Channel Utilization',
                     'data': heatmap_data,
-                    'backgroundColor': self._get_color_for_value(util),
                 }]
             },
             'options': {
@@ -134,9 +154,6 @@ class ChannelHeatmap:
                 'plugins': {
                     'legend': {
                         'display': True,
-                        'labels': {
-                            'generateLabels': self._generate_legend_labels
-                        }
                     },
                     'title': {
                         'display': True,
@@ -163,23 +180,6 @@ class ChannelHeatmap:
                 }
             }
         }
-    
-    def _get_color_for_value(self, value: float) -> str:
-        """Get color for a normalized value (0-1)
-        
-        Args:
-            value: Normalized value between 0 and 1
-            
-        Returns:
-            CSS color string
-        """
-        if value <= 0:
-            return self.heatmap_colors[0]
-        elif value >= 1:
-            return self.heatmap_colors[-1]
-        else:
-            idx = int(value * (len(self.heatmap_colors) - 1))
-            return self.heatmap_colors[min(idx, len(self.heatmap_colors) - 1)]
     
     def _generate_legend_labels(self, chart) -> List[Dict[str, Any]]:
         """Generate legend labels for heatmap"""
@@ -268,10 +268,14 @@ class ChannelHeatmap:
                 if ch in self.data.bank_group_activity:
                     activity = self.data.bank_group_activity[ch].get(bg, 0.0)
                 
+                # Get static color
+                color = self._get_color_for_value(activity)
+                
                 heatmap_data.append({
                     'x': bg,
                     'y': ch,
                     'v': activity,
+                    'color': color,
                 })
         
         return {
@@ -280,7 +284,6 @@ class ChannelHeatmap:
                 'datasets': [{
                     'label': 'Bank Group Activity',
                     'data': heatmap_data,
-                    'backgroundColor': self._get_color_for_value(util),
                 }]
             },
             'options': {
@@ -315,12 +318,35 @@ class ChannelHeatmap:
         }
     
     def to_chartjs_script(self) -> str:
-        """Generate JavaScript for Chart.js integration"""
+        """Generate JavaScript for Chart.js integration with heatmap coloring"""
         util_data = self.generate_utilization_heatmap_data()
         density_data = self.generate_request_density_data()
         bg_data = self.generate_bank_group_activity_data()
         
-        return f"""
+        # Generate color lookup function
+        color_function = """
+function getHeatmapColor(value) {{
+    const colors = {colors};
+    if (value <= 0) return colors[0];
+    if (value >= 1) return colors[colors.length - 1];
+    const idx = Math.floor(value * (colors.length - 1));
+    return colors[Math.min(idx, colors.length - 1)];
+}}
+""".format(colors=json.dumps(self.heatmap_colors))
+        
+        # Generate callback for dynamic coloring
+        color_callback = """
+function(ctx) {{
+    const value = ctx.raw?.v || 0;
+    return getHeatmapColor(value);
+}}
+"""
+        
+        # Update datasets with color callback
+        util_data['data']['datasets'][0]['backgroundColor'] = json.loads(color_callback)
+        bg_data['data']['datasets'][0]['backgroundColor'] = json.loads(color_callback)
+        
+        return color_function + f"""
 // Heatmap: Channel utilization
 const utilHeatCtx = document.getElementById('channelUtilHeatmap');
 if (utilHeatCtx) {{
@@ -518,7 +544,7 @@ def generate_ascii_heatmap(
     for ch in range(num_channels):
         util = channel_utilization.get(ch, 0.0)
         bar_len = int(util * width)
-        bar = "█" * bar_len + "░" * (width - bar_len)
+        bar = "#" * bar_len + "." * (width - bar_len)
         
         # Split bar into bank groups
         seg_len = width // bank_groups
@@ -530,7 +556,7 @@ def generate_ascii_heatmap(
     
     # Legend
     lines.append("\nLegend:")
-    lines.append("░ = 0%    " + "▓" * 1 + " = 25%    " + "▓" * 2 + " = 50%    " + "▓" * 3 + " = 75%    " + "█" * 4 + " = 100%")
+    lines.append(". = 0%    # = 25%    ## = 50%    ### = 75%    #### = 100%")
     
     return "\n".join(lines)
 

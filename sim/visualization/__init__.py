@@ -28,7 +28,9 @@ from sim.visualization.channel_heatmap import (
 )
 from sim.visualization.report_generator import (
     ReportGenerator,
+    ReportData,
     VisualizationConfig,
+    OutputFormat,
     generate_html_report,
     generate_ascii_report,
     generate_json_report,
@@ -55,7 +57,9 @@ __all__ = [
     'generate_request_density_chart',
     # Report generator
     'ReportGenerator',
+    'ReportData',
     'VisualizationConfig',
+    'OutputFormat',
     'generate_html_report',
     'generate_ascii_report',
     'generate_json_report',

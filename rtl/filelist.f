@@ -23,6 +23,3 @@
 
 # DRAM model
 /home/ic/JXTF/HBM/rtl/dram_model.sv
-
-# Testbench (for simulation, add via command line: hbm_controller_tb.sv hbm_controller_tb_main.cpp)
-# hbm_controller_tb.sv

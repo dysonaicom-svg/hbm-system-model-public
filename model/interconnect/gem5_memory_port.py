@@ -981,3 +981,352 @@ __all__ = [
     "create_memory_port",
     "create_traffic_generator",
 ]
+
+
+# ============================================================================
+# Enhanced gem5 Port Features
+# ============================================================================
+
+class BurstTransaction:
+    """
+    Represents a burst transaction for multi-beat transfers.
+
+    Handles:
+    - Beat tracking
+    - Data buffering
+    - Completion detection
+    """
+
+    def __init__(
+        self,
+        req_id: int,
+        addr: int,
+        size: int,
+        is_write: bool,
+        num_beats: int = 1,
+        data: Optional[List[int]] = None,
+    ):
+        self.req_id = req_id
+        self.addr = addr
+        self.size = size
+        self.is_write = is_write
+        self.num_beats = num_beats
+        self.data = data or []
+        self.current_beat = 0
+        self.state = "pending"
+
+    @property
+    def is_complete(self) -> bool:
+        """Check if all beats have been transferred"""
+        return self.current_beat >= self.num_beats
+
+    @property
+    def progress(self) -> float:
+        """Get transfer progress (0.0 to 1.0)"""
+        if self.num_beats == 0:
+            return 1.0
+        return self.current_beat / self.num_beats
+
+    def advance_beat(self) -> None:
+        """Advance to next beat"""
+        self.current_beat += 1
+        if self.is_complete:
+            self.state = "complete"
+
+
+class MultiChannelPort:
+    """
+    Multi-channel HBM4 port with independent scheduling per channel.
+
+    Features:
+    - Per-channel request queues
+    - Channel-aware routing
+    - Load balancing
+    - Parallel access support
+    """
+
+    def __init__(
+        self,
+        name: str,
+        num_channels: int = 32,
+        cache_line_size: int = 64,
+        queue_depth_per_channel: int = 16,
+    ):
+        self.name = name
+        self.num_channels = num_channels
+        self.cache_line_size = cache_line_size
+
+        # Per-channel queues
+        self._channel_queues: Dict[int, List[HBM4MemoryRequest]] = {
+            ch: [] for ch in range(num_channels)
+        }
+        self._queue_depth = queue_depth_per_channel
+
+        # Active transactions
+        self._active_transactions: Dict[int, BurstTransaction] = {}
+        self._request_counter = 0
+
+        # Statistics
+        self.stats = {
+            'total_requests': 0,
+            'requests_per_channel': {ch: 0 for ch in range(num_channels)},
+            'channel_load': {ch: 0 for ch in range(num_channels)},
+            'total_beats': 0,
+            'overflows': 0,
+        }
+
+    def send_request(
+        self,
+        addr: int,
+        size: int,
+        is_write: bool,
+        channel_hint: Optional[int] = None,
+        **kwargs
+    ) -> Optional[int]:
+        """
+        Send request to specified or auto-selected channel.
+
+        Args:
+            addr: Target address
+            size: Request size
+            is_write: Write flag
+            channel_hint: Preferred channel (None = auto-select)
+
+        Returns:
+            Request ID, or None if queue full
+        """
+        # Select channel
+        if channel_hint is not None:
+            channel = channel_hint % self.num_channels
+        else:
+            channel = self._select_channel(addr)
+
+        # Check queue depth
+        if len(self._channel_queues[channel]) >= self._queue_depth:
+            self.stats['overflows'] += 1
+            return None
+
+        # Create request
+        req_id = self._request_counter
+        self._request_counter += 1
+
+        num_beats = (size + 63) // 64  # 64-byte beats
+        txn = BurstTransaction(
+            req_id=req_id,
+            addr=addr,
+            size=size,
+            is_write=is_write,
+            num_beats=num_beats,
+        )
+
+        # Queue the transaction
+        self._channel_queues[channel].append(txn)
+        self.stats['total_requests'] += 1
+        self.stats['requests_per_channel'][channel] += 1
+        self.stats['channel_load'][channel] += 1
+
+        return req_id
+
+    def _select_channel(self, addr: int) -> int:
+        """Select channel based on address"""
+        # Simple address hash
+        return (addr // self.cache_line_size) % self.num_channels
+
+    def recv_response(
+        self,
+        req_id: int,
+        timeout_cycles: int = 1000
+    ) -> Optional[HBM4MemoryResponse]:
+        """Receive response for a specific request"""
+        if req_id in self._active_transactions:
+            txn = self._active_transactions[req_id]
+            if txn.is_complete:
+                del self._active_transactions[req_id]
+                return HBM4MemoryResponse(
+                    req_id=req_id,
+                    addr=txn.addr,
+                    status="OK",
+                    data=txn.data if txn.is_write else None,
+                    latency_cycles=1,
+                )
+        return None
+
+    def tick(self) -> None:
+        """Advance simulation by one cycle"""
+        # Process one transaction per channel
+        for channel in range(self.num_channels):
+            queue = self._channel_queues[channel]
+            if queue and queue[0].is_complete:
+                queue.pop(0)
+
+    def get_channel_load(self, channel: int) -> int:
+        """Get number of pending requests in channel"""
+        return len(self._channel_queues[channel])
+
+    def get_total_load(self) -> int:
+        """Get total pending requests across all channels"""
+        return sum(len(q) for q in self._channel_queues.values())
+
+    def get_least_loaded_channel(self) -> int:
+        """Get ID of least loaded channel"""
+        min_load = float('inf')
+        min_channel = 0
+        for ch in range(self.num_channels):
+            load = len(self._channel_queues[ch])
+            if load < min_load:
+                min_load = load
+                min_channel = ch
+        return min_channel
+
+    def reset(self) -> None:
+        """Reset all state"""
+        for ch in range(self.num_channels):
+            self._channel_queues[ch].clear()
+        self._active_transactions.clear()
+        for key in self.stats:
+            if key == 'requests_per_channel':
+                self.stats[key] = {ch: 0 for ch in range(self.num_channels)}
+            elif key == 'channel_load':
+                self.stats[key] = {ch: 0 for ch in range(self.num_channels)}
+            else:
+                self.stats[key] = 0
+
+
+class AXI4ToMemoryBridge:
+    """
+    Bridge between AXI4 transactions and memory port requests.
+
+    Features:
+    - AXI4 burst decomposition
+    - Transaction reordering
+    - QoS propagation
+    - Response aggregation
+    """
+
+    def __init__(
+        self,
+        memory_port: HBM4MemoryPort,
+        max_outstanding: int = 32,
+        enable_reordering: bool = True,
+    ):
+        self.memory_port = memory_port
+        self.max_outstanding = max_outstanding
+        self.enable_reordering = enable_reordering
+
+        # Transaction tracking
+        self._pending_axi: Dict[int, Dict] = {}
+        self._request_to_axi: Dict[int, int] = {}  # mem_req_id -> axi_txn_id
+
+        # Statistics
+        self.stats = {
+            'axi_reads': 0,
+            'axi_writes': 0,
+            'mem_requests': 0,
+            'responses': 0,
+            'outstanding': 0,
+        }
+
+    def submit_axi_read(
+        self,
+        axi_addr: int,
+        size: int,
+        length: int,
+        axi_id: int,
+        qos: int = 8,
+    ) -> int:
+        """
+        Submit AXI4 read transaction.
+
+        Returns:
+            Internal request ID
+        """
+        if self.stats['outstanding'] >= self.max_outstanding:
+            return -1
+
+        # Generate AXI transaction ID
+        txn_id = axi_id
+        self._pending_axi[txn_id] = {
+            'addr': axi_addr,
+            'size': size,
+            'length': length,
+            'is_write': False,
+            'qos': qos,
+            'beats_remaining': length + 1,
+            'data': [],
+        }
+
+        # Submit memory request
+        num_beats = length + 1
+        for beat in range(num_beats):
+            beat_addr = axi_addr + beat * size
+            mem_req_id = self.memory_port.send_request(
+                addr=beat_addr,
+                size=size,
+                is_write=False,
+                qos=qos,
+            )
+            if mem_req_id is not None:
+                self._request_to_axi[mem_req_id] = txn_id
+                self.stats['mem_requests'] += 1
+
+        self.stats['axi_reads'] += 1
+        self.stats['outstanding'] += 1
+
+        return txn_id
+
+    def submit_axi_write(
+        self,
+        axi_addr: int,
+        data: List[int],
+        size: int,
+        axi_id: int,
+        qos: int = 8,
+    ) -> int:
+        """Submit AXI4 write transaction"""
+        if self.stats['outstanding'] >= self.max_outstanding:
+            return -1
+
+        txn_id = axi_id
+        self._pending_axi[txn_id] = {
+            'addr': axi_addr,
+            'size': size,
+            'length': len(data) - 1,
+            'is_write': True,
+            'qos': qos,
+            'beats_remaining': len(data),
+            'data': data,
+        }
+
+        # Submit memory requests
+        for beat, beat_data in enumerate(data):
+            beat_addr = axi_addr + beat * size
+            mem_req_id = self.memory_port.send_request(
+                addr=beat_addr,
+                size=size,
+                is_write=True,
+                data=[beat_data],
+                qos=qos,
+            )
+            if mem_req_id is not None:
+                self._request_to_axi[mem_req_id] = txn_id
+                self.stats['mem_requests'] += 1
+
+        self.stats['axi_writes'] += 1
+        self.stats['outstanding'] += 1
+
+        return txn_id
+
+    def tick(self) -> None:
+        """Process responses"""
+        # Check for completed memory requests
+        self.memory_port.tick()
+
+    def is_complete(self, txn_id: int) -> bool:
+        """Check if AXI transaction is complete"""
+        if txn_id not in self._pending_axi:
+            return True
+        return self._pending_axi[txn_id]['beats_remaining'] <= 0
+
+    def get_pending_count(self) -> int:
+        """Get number of pending AXI transactions"""
+        return len(self._pending_axi)

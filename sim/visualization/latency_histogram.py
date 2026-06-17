@@ -478,8 +478,8 @@ def generate_ascii_histogram(
     max_count = max(c for _, c in sorted_bins)
     
     # Find latency range
-    min_lat = min(l for l, _ in latencies)
-    max_lat = max(l for l, _ in latencies)
+    min_lat = min(latencies)
+    max_lat = max(latencies)
     
     lines = []
     lines.append(f"Latency Histogram (bin={bin_size} cycles)")

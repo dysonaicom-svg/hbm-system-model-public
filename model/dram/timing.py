@@ -58,6 +58,11 @@ class HBM3Timing:
     _clock_period_s: float = 0.78125e-9  # Pre-computed clock period in seconds
 
     @property
+    def tCK(self) -> float:
+        """Clock period in ps - alias for tCK_ps for compatibility"""
+        return self.tCK_ps
+
+    @property
     def clock_freq(self) -> float:
         """时钟频率 (Hz)"""
         return 1e12 / self.tCK_ps
@@ -338,6 +343,11 @@ class HBM4Timing:
     def ns_to_cycles(self, ns: float) -> int:
         """ns 转换为 cycles"""
         return int(ns * 1000 / self.tCK_ps + 0.5)
+
+    @property
+    def tCK(self) -> float:
+        """Clock period in ps - alias for tCK_ps for compatibility"""
+        return self.tCK_ps
 
     # Aliases for backward compatibility with HBM3 naming
     @property

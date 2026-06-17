@@ -31,7 +31,7 @@ import logging
 
 from model.interconnect.axi4_bridge import (
     AXI4Bridge, AXI4BridgeConfig, AXI4ReadTransaction, AXI4WriteTransaction,
-    AXI4Response as AXI4BridgeResponse, AXI4BurstType, AXI4Response,
+    AXI4TransactionResponse, AXI4BurstType, AXI4Response,
     AXI4Size, create_axi4_bridge
 )
 from model.controller.request import HBMRequest, HBMResponse, RequestState

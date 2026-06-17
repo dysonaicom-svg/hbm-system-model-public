@@ -39,11 +39,13 @@ Based on:
   - Synopsys HBM4 Controller IP
 """
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from collections import deque
 import random
 import struct
+import time
 
 
 class RepairStatus(Enum):
@@ -58,6 +60,75 @@ class RepairStatus(Enum):
     PARTIAL_REPAIR = "partial_repair"
     FULL_REPAIR = "full_repair"
     UNREPAIRABLE = "unrepairable"
+
+
+class ServiceEventType(Enum):
+    """Types of lane repair service events for RAS tracking."""
+    REPAIR_COMPLETED = "repair_completed"
+    REPAIR_FAILED = "repair_failed"
+    SPARE_EXHAUSTED = "spare_exhausted"
+    CHANNEL_UNREPAIRABLE = "channel_unrepairable"
+    REPAIR_VERIFICATION = "repair_verification"
+    REPAIR_UNDO = "repair_undo"
+    BULK_REPAIR_LOADED = "bulk_repair_loaded"
+
+
+class LaneFailureMode(Enum):
+    """Classification of lane failure modes for diagnostics."""
+    STUCK_AT_0 = "stuck_at_0"
+    STUCK_AT_1 = "stuck_at_1"
+    FLICKERING = "flickering"
+    MARGINAL = "marginal"
+    COMPLETE = "complete"
+
+
+@dataclass
+class LaneFailureInfo:
+    """Detailed information about a lane failure for diagnostics."""
+    lane_id: int
+    channel_id: int
+    failure_mode: LaneFailureMode
+    first_detected_cycle: int
+    bit_error_mask: int = 0  # For partial lane failures
+    confidence: float = 1.0  # 0.0-1.0 confidence level
+    repair_type: str = "bit"
+
+
+@dataclass
+class ServiceEvent:
+    """Lane repair service event for RAS tracking."""
+    event_type: ServiceEventType
+    timestamp: float
+    cycle: int
+    channel_id: int
+    lane_id: Optional[int] = None
+    spare_lane: Optional[int] = None
+    repair_type: Optional[str] = None
+    details: str = ""
+
+
+@dataclass
+class LaneRepairErrorStats:
+    """Extended error statistics for lane repair RAS features."""
+    total_error_injections: int = 0
+    successful_corrections: int = 0
+    failed_corrections: int = 0
+    remap_transactions: int = 0
+    spare_allocation_count: int = 0
+    repair_verification_count: int = 0
+    repair_undo_count: int = 0
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for reporting."""
+        return {
+            'total_error_injections': self.total_error_injections,
+            'successful_corrections': self.successful_corrections,
+            'failed_corrections': self.failed_corrections,
+            'remap_transactions': self.remap_transactions,
+            'spare_allocation_count': self.spare_allocation_count,
+            'repair_verification_count': self.repair_verification_count,
+            'repair_undo_count': self.repair_undo_count,
+        }
 
 
 @dataclass
@@ -85,6 +156,8 @@ class LaneRepairMap:
       - List of allocated spare lanes (in use)
       - Repair entries (failed -> spare mappings)
       - Repair capacity tracking
+      - Failure info for diagnostics
+      - Service events for RAS tracking
 
     Lane Indexing Convention:
       - Data lanes: indices 0 to (total_lanes - 1)
@@ -100,6 +173,11 @@ class LaneRepairMap:
     # Repair state
     repair_count: int = 0
     max_repair_count: int = 0  # Set during initialization
+
+    # Extended RAS tracking
+    failure_info: Dict[int, LaneFailureInfo] = field(default_factory=dict)
+    service_events: deque = field(default_factory=lambda: deque(maxlen=100))
+    current_cycle: int = 0
 
     def __post_init__(self):
         if self.max_repair_count == 0:
@@ -131,6 +209,39 @@ class LaneRepairMap:
             return RepairStatus.FULL_REPAIR
         return RepairStatus.UNREPAIRABLE
 
+    def get_failure_info(self, lane_id: int) -> Optional[LaneFailureInfo]:
+        """Get failure information for a specific lane."""
+        return self.failure_info.get(lane_id)
+
+    def get_all_failure_info(self) -> List[LaneFailureInfo]:
+        """Get all failure information."""
+        return list(self.failure_info.values())
+
+    def get_recent_service_events(self, count: int = 10) -> List[ServiceEvent]:
+        """Get recent service events."""
+        return list(self.service_events)[-count:]
+
+    def record_service_event(
+        self,
+        event_type: ServiceEventType,
+        lane_id: Optional[int] = None,
+        spare_lane: Optional[int] = None,
+        repair_type: Optional[str] = None,
+        details: str = "",
+    ):
+        """Record a service event."""
+        event = ServiceEvent(
+            event_type=event_type,
+            timestamp=time.time(),
+            cycle=self.current_cycle,
+            channel_id=self.channel_id,
+            lane_id=lane_id,
+            spare_lane=spare_lane,
+            repair_type=repair_type,
+            details=details,
+        )
+        self.service_events.append(event)
+
 
 class HBM4LaneRepairModel:
     """HBM4 Lane Repair (Redundancy) Model
@@ -146,6 +257,9 @@ class HBM4LaneRepairModel:
     - Lane remapping: Transparent traffic redirection via get_remapped_lane()
     - Repair status tracking: NO_REPAIR -> PARTIAL_REPAIR -> FULL_REPAIR -> UNREPAIRABLE
     - Yield simulation: Simulate random failures to analyze system-level impact
+    - Error injection: Test error detection and correction paths
+    - Service events: Track repair operations for RAS compliance
+    - Failure diagnostics: Record failure modes and confidence levels
 
     USAGE EXAMPLE:
     ==============
@@ -165,6 +279,9 @@ class HBM4LaneRepairModel:
     # Query system health
     stats = model.get_stats()
     print(f"Total repairs: {stats['total_repairs']}, Unrepairable channels: {stats['unrepairable_channels']}")
+
+    # Error injection for testing
+    model.inject_lane_error(channel_id=0, lane_id=10, error_mask=0xFF)
     ```
 
     INTEGRATION POINTS:
@@ -173,6 +290,7 @@ class HBM4LaneRepairModel:
     - Memory BIST: Register defects found during manufacturing test
     - Traffic Monitor: Use get_remapped_lane() to redirect traffic through spares
     - System Simulation: simulate_yield_loss() for statistical analysis
+    - ECC/CRC: Integrate with error tracking for RAS compliance
     """
 
     def __init__(
@@ -180,6 +298,8 @@ class HBM4LaneRepairModel:
         num_channels: int = 32,
         lanes_per_channel: int = 64,
         spare_lanes_per_channel: int = 4,
+        enable_service_events: bool = True,
+        enable_error_injection: bool = True,
     ):
         """Initialize Lane Repair Model
 
@@ -187,10 +307,18 @@ class HBM4LaneRepairModel:
             num_channels: Number of HBM4 channels (default 32 for full HBM4 stack)
             lanes_per_channel: Data lanes per channel (default 64 for x64 DQ interface)
             spare_lanes_per_channel: Number of spare lanes (typical: 2-4 per JEDEC)
+            enable_service_events: Enable service event tracking for RAS
+            enable_error_injection: Enable error injection for testing
         """
         self.num_channels = num_channels
         self.lanes_per_channel = lanes_per_channel
         self.spare_lanes_per_channel = spare_lanes_per_channel
+        self.enable_service_events = enable_service_events
+        self.enable_error_injection = enable_error_injection
+
+        # Simulation cycle counter
+        self._current_cycle: int = 0
+        self._start_time: float = time.time()
 
         # Initialize per-channel repair maps
         self._repair_maps: Dict[int, LaneRepairMap] = {}
@@ -205,6 +333,17 @@ class HBM4LaneRepairModel:
         self._total_repairs: int = 0
         self._total_failed_lanes: int = 0
         self._unrepairable_channels: List[int] = []
+
+        # Extended RAS statistics
+        self._error_stats = LaneRepairErrorStats()
+        self._global_service_events: deque = deque(maxlen=1000)
+
+        # Error injection state (for testing)
+        self._injected_errors: Dict[int, Dict[int, int]] = {}  # channel -> lane -> error_mask
+
+        # Callback hooks for integration
+        self._on_repair_complete: Optional[Callable] = None
+        self._on_channel_unrepairable: Optional[Callable] = None
 
     # ==================== Configuration ====================
 
@@ -235,12 +374,22 @@ class HBM4LaneRepairModel:
 
     # ==================== Repair Operations ====================
 
-    def add_failed_lane(self, channel_id: int, lane_id: int) -> bool:
+    def add_failed_lane(
+        self,
+        channel_id: int,
+        lane_id: int,
+        failure_mode: LaneFailureMode = LaneFailureMode.COMPLETE,
+        bit_error_mask: int = 0,
+        confidence: float = 1.0,
+    ) -> bool:
         """Add a failed lane to repair map
 
         Args:
             channel_id: Channel with failed lane
             lane_id: Failed lane index
+            failure_mode: Classification of failure type
+            bit_error_mask: Bit mask for partial failures (8 bits for byte-level)
+            confidence: Confidence level 0.0-1.0 for failure detection
 
         Returns:
             True if lane added successfully
@@ -258,12 +407,140 @@ class HBM4LaneRepairModel:
         if not rm.is_repairable:
             if channel_id not in self._unrepairable_channels:
                 self._unrepairable_channels.append(channel_id)
+                self._record_service_event(
+                    rm, ServiceEventType.CHANNEL_UNREPAIRABLE,
+                    details=f"Channel {channel_id} has {len(rm.failed_lanes)} failed lanes, exceeds {rm.total_spares} spares"
+                )
             return False
 
         rm.failed_lanes.append(lane_id)
         self._total_failed_lanes += 1
 
+        # Record failure info for diagnostics
+        rm.failure_info[lane_id] = LaneFailureInfo(
+            lane_id=lane_id,
+            channel_id=channel_id,
+            failure_mode=failure_mode,
+            first_detected_cycle=rm.current_cycle,
+            bit_error_mask=bit_error_mask,
+            confidence=confidence,
+        )
+
         return True
+
+    def perform_repair(
+        self,
+        channel_id: int,
+        failed_lane: int,
+        repair_type: str = "bit",
+        failure_mode: LaneFailureMode = LaneFailureMode.COMPLETE,
+    ) -> Optional[int]:
+        """Perform repair by allocating first available spare lane.
+
+        This is the main repair operation - it:
+          1. Checks if lane is already remapped (return existing spare)
+          2. Adds the failed lane to the track list (if not already tracked)
+          3. Finds the first available spare lane
+          4. Creates the repair mapping entry
+
+        Args:
+            channel_id: Channel to repair
+            failed_lane: Failed lane index (0 to lanes_per_channel-1)
+            repair_type: Granularity of repair ("bit", "byte", "channel")
+            failure_mode: Classification of the failure for diagnostics
+
+        Returns:
+            Spare lane index allocated, or None if repair failed (no spares available)
+        """
+        if channel_id not in self._repair_maps:
+            return None
+
+        rm = self._repair_maps[channel_id]
+
+        # Check if lane is already remapped - return existing spare
+        for entry in rm.repair_entries:
+            if entry.failed_lane == failed_lane:
+                return entry.spare_lane
+
+        # Add failed lane if not already tracked
+        if failed_lane not in rm.failed_lanes:
+            if not self.add_failed_lane(channel_id, failed_lane, failure_mode):
+                self._record_service_event(
+                    rm, ServiceEventType.REPAIR_FAILED,
+                    lane_id=failed_lane,
+                    details=f"Failed to add lane {failed_lane} - unrepairable"
+                )
+                self._error_stats.failed_corrections += 1
+                return None
+
+        # Find first available spare
+        spare_base = rm.total_lanes  # Spares are after data lanes
+        for i in range(rm.total_spares):
+            spare_lane = spare_base + i
+            if spare_lane not in rm.spare_lanes:
+                if self.allocate_spare(channel_id, failed_lane, spare_lane, repair_type):
+                    # Record service event
+                    self._record_service_event(
+                        rm, ServiceEventType.REPAIR_COMPLETED,
+                        lane_id=failed_lane,
+                        spare_lane=spare_lane,
+                        repair_type=repair_type,
+                        details=f"Repaired lane {failed_lane} using spare {spare_lane}"
+                    )
+                    self._error_stats.successful_corrections += 1
+
+                    # Update failure info with repair type
+                    if failed_lane in rm.failure_info:
+                        rm.failure_info[failed_lane].repair_type = repair_type
+
+                    # Check if spares exhausted
+                    if rm.available_spares == 0:
+                        self._record_service_event(
+                            rm, ServiceEventType.SPARE_EXHAUSTED,
+                            details=f"All {rm.total_spares} spares exhausted on channel {channel_id}"
+                        )
+
+                    # Invoke callback if registered
+                    if self._on_repair_complete:
+                        self._on_repair_complete(channel_id, failed_lane, spare_lane)
+
+                    return spare_lane
+
+        # No spare available
+        self._record_service_event(
+            rm, ServiceEventType.REPAIR_FAILED,
+            lane_id=failed_lane,
+            details=f"No spare lanes available for lane {failed_lane}"
+        )
+        self._error_stats.failed_corrections += 1
+        return None
+
+    def _record_service_event(
+        self,
+        rm: LaneRepairMap,
+        event_type: ServiceEventType,
+        lane_id: Optional[int] = None,
+        spare_lane: Optional[int] = None,
+        repair_type: Optional[str] = None,
+        details: str = "",
+    ):
+        """Record a service event both locally and globally."""
+        if not self.enable_service_events:
+            return
+
+        event = ServiceEvent(
+            event_type=event_type,
+            timestamp=time.time(),
+            cycle=rm.current_cycle,
+            channel_id=rm.channel_id,
+            lane_id=lane_id,
+            spare_lane=spare_lane,
+            repair_type=repair_type,
+            details=details,
+        )
+
+        rm.service_events.append(event)
+        self._global_service_events.append(event)
 
     def allocate_spare(
         self,
@@ -307,55 +584,9 @@ class HBM4LaneRepairModel:
         rm.spare_lanes.append(spare_lane)
         rm.repair_count += 1
         self._total_repairs += 1
+        self._error_stats.spare_allocation_count += 1
 
         return True
-
-    def perform_repair(
-        self,
-        channel_id: int,
-        failed_lane: int,
-        repair_type: str = "bit",
-    ) -> Optional[int]:
-        """Perform repair by allocating first available spare lane.
-
-        This is the main repair operation - it:
-          1. Checks if lane is already remapped (return existing spare)
-          2. Adds the failed lane to the track list (if not already tracked)
-          3. Finds the first available spare lane
-          4. Creates the repair mapping entry
-
-        Args:
-            channel_id: Channel to repair
-            failed_lane: Failed lane index (0 to lanes_per_channel-1)
-            repair_type: Granularity of repair ("bit", "byte", "channel")
-
-        Returns:
-            Spare lane index allocated, or None if repair failed (no spares available)
-        """
-        if channel_id not in self._repair_maps:
-            return None
-
-        rm = self._repair_maps[channel_id]
-
-        # Check if lane is already remapped - return existing spare
-        for entry in rm.repair_entries:
-            if entry.failed_lane == failed_lane:
-                return entry.spare_lane
-
-        # Add failed lane if not already tracked
-        if failed_lane not in rm.failed_lanes:
-            if not self.add_failed_lane(channel_id, failed_lane):
-                return None
-
-        # Find first available spare
-        spare_base = rm.total_lanes  # Spares are after data lanes
-        for i in range(rm.total_spares):
-            spare_lane = spare_base + i
-            if spare_lane not in rm.spare_lanes:
-                if self.allocate_spare(channel_id, failed_lane, spare_lane, repair_type):
-                    return spare_lane
-
-        return None
 
     def is_lane_remapped(self, channel_id: int, lane_id: int) -> bool:
         """Check if a lane has been remapped to a spare.
@@ -392,6 +623,7 @@ class HBM4LaneRepairModel:
         rm = self._repair_maps[channel_id]
         for entry in rm.repair_entries:
             if entry.failed_lane == lane_id:
+                self._error_stats.remap_transactions += 1
                 return entry.spare_lane
         return lane_id
 
@@ -786,4 +1018,319 @@ class HBM4LaneRepairModel:
             'valid': len(errors) == 0,
             'errors': errors,
             'warnings': warnings,
+        }
+
+    # ==================== Error Injection for Testing ====================
+
+    def inject_lane_error(
+        self,
+        channel_id: int,
+        lane_id: int,
+        error_mask: int = 0xFF,
+        failure_mode: LaneFailureMode = LaneFailureMode.COMPLETE,
+    ) -> bool:
+        """Inject an error into a lane for testing error detection paths.
+
+        This is used to test that the error detection and correction
+        mechanisms work properly.
+
+        Args:
+            channel_id: Channel with the lane to inject error into
+            lane_id: Lane index to inject error into (0 to lanes-1)
+            error_mask: 8-bit mask for partial lane errors (which bits to corrupt)
+            failure_mode: Classification of the failure for diagnostics
+
+        Returns:
+            True if error injection succeeded
+        """
+        if not self.enable_error_injection:
+            return False
+
+        if channel_id not in self._repair_maps:
+            return False
+
+        rm = self._repair_maps[channel_id]
+        if lane_id < 0 or lane_id >= rm.total_lanes:
+            return False
+
+        # Record injected error
+        if channel_id not in self._injected_errors:
+            self._injected_errors[channel_id] = {}
+        self._injected_errors[channel_id][lane_id] = error_mask
+        self._error_stats.total_error_injections += 1
+
+        # Record failure info if not already tracked
+        if lane_id not in rm.failed_lanes:
+            rm.failed_lanes.append(lane_id)
+            rm.failure_info[lane_id] = LaneFailureInfo(
+                lane_id=lane_id,
+                channel_id=channel_id,
+                failure_mode=failure_mode,
+                first_detected_cycle=rm.current_cycle,
+                bit_error_mask=error_mask,
+                confidence=1.0,
+            )
+
+        return True
+
+    def clear_injected_error(self, channel_id: int, lane_id: int) -> bool:
+        """Clear an injected error (for recovery testing).
+
+        Args:
+            channel_id: Channel with the injected error
+            lane_id: Lane index to clear
+
+        Returns:
+            True if error was cleared
+        """
+        if channel_id in self._injected_errors:
+            if lane_id in self._injected_errors[channel_id]:
+                del self._injected_errors[channel_id][lane_id]
+                return True
+        return False
+
+    def get_injected_errors(self, channel_id: int) -> Dict[int, int]:
+        """Get all injected errors for a channel.
+
+        Args:
+            channel_id: Channel to query
+
+        Returns:
+            Dictionary mapping lane_id to error_mask
+        """
+        return self._injected_errors.get(channel_id, {}).copy()
+
+    def clear_all_injected_errors(self) -> None:
+        """Clear all injected errors."""
+        self._injected_errors.clear()
+
+    def apply_error_to_data(self, data: int, lane_id: int, error_mask: int) -> int:
+        """Apply an injected error to data.
+
+        This simulates the effect of a lane failure on actual data.
+
+        Args:
+            data: Original data (64-bit for a lane)
+            lane_id: Lane index
+            error_mask: 8-bit mask for which bits to corrupt
+
+        Returns:
+            Corrupted data
+        """
+        # XOR with error mask (corrupt bits where mask has 1s)
+        return data ^ error_mask
+
+    # ==================== Service Events ====================
+
+    def get_service_events(
+        self,
+        channel_id: Optional[int] = None,
+        event_type: Optional[ServiceEventType] = None,
+        count: int = 100,
+    ) -> List[ServiceEvent]:
+        """Get service events, optionally filtered.
+
+        Args:
+            channel_id: Filter by channel (None for all channels)
+            event_type: Filter by event type (None for all types)
+            count: Maximum number of events to return
+
+        Returns:
+            List of service events
+        """
+        events = list(self._global_service_events)
+
+        if channel_id is not None:
+            events = [e for e in events if e.channel_id == channel_id]
+
+        if event_type is not None:
+            events = [e for e in events if e.event_type == event_type]
+
+        return events[-count:]
+
+    def get_channel_service_events(
+        self,
+        channel_id: int,
+        count: int = 100,
+    ) -> List[ServiceEvent]:
+        """Get service events for a specific channel.
+
+        Args:
+            channel_id: Channel to query
+            count: Maximum number of events to return
+
+        Returns:
+            List of service events for the channel
+        """
+        rm = self._repair_maps.get(channel_id)
+        if rm is None:
+            return []
+        return list(rm.service_events)[-count:]
+
+    # ==================== Cycle Tracking ====================
+
+    def advance_cycle(self, cycles: int = 1) -> None:
+        """Advance the simulation cycle counter.
+
+        This is used for timing-related diagnostics.
+
+        Args:
+            cycles: Number of cycles to advance
+        """
+        self._current_cycle += cycles
+        for rm in self._repair_maps.values():
+            rm.current_cycle += cycles
+
+    def set_cycle(self, cycle: int) -> None:
+        """Set the simulation cycle counter.
+
+        Args:
+            cycle: Cycle number to set
+        """
+        self._current_cycle = cycle
+        for rm in self._repair_maps.values():
+            rm.current_cycle = cycle
+
+    def get_cycle(self) -> int:
+        """Get the current simulation cycle.
+
+        Returns:
+            Current cycle number
+        """
+        return self._current_cycle
+
+    def get_uptime(self) -> float:
+        """Get elapsed time since model creation.
+
+        Returns:
+            Elapsed time in seconds
+        """
+        return time.time() - self._start_time
+
+    # ==================== Callbacks ====================
+
+    def register_repair_complete_callback(
+        self,
+        callback: Callable[[int, int, int], None],
+    ) -> None:
+        """Register a callback for repair completion events.
+
+        The callback will be invoked with (channel_id, failed_lane, spare_lane)
+        when a repair is completed.
+
+        Args:
+            callback: Function to call on repair completion
+        """
+        self._on_repair_complete = callback
+
+    def register_unrepairable_callback(
+        self,
+        callback: Callable[[int], None],
+    ) -> None:
+        """Register a callback for unrepairable channel events.
+
+        The callback will be invoked with (channel_id,) when a channel
+        becomes unrepairable.
+
+        Args:
+            callback: Function to call when channel becomes unrepairable
+        """
+        self._on_channel_unrepairable = callback
+
+    # ==================== Enhanced Statistics ====================
+
+    def get_error_stats(self) -> Dict:
+        """Get extended error statistics for RAS reporting.
+
+        Returns:
+            Dictionary with detailed error statistics
+        """
+        return self._error_stats.to_dict()
+
+    def get_full_stats(self) -> Dict:
+        """Get complete statistics including all RAS metrics.
+
+        Returns:
+            Dictionary with comprehensive statistics
+        """
+        basic_stats = self.get_stats()
+        error_stats = self.get_error_stats()
+
+        return {
+            **basic_stats,
+            **error_stats,
+            'current_cycle': self._current_cycle,
+            'uptime_seconds': self.get_uptime(),
+            'total_service_events': len(self._global_service_events),
+        }
+
+    def get_repair_efficiency(self) -> float:
+        """Calculate repair efficiency (repairs attempted vs successful).
+
+        Returns:
+            Efficiency as a percentage (0-100)
+        """
+        total_attempted = (
+            self._error_stats.successful_corrections +
+            self._error_stats.failed_corrections
+        )
+        if total_attempted == 0:
+            return 100.0
+        return (self._error_stats.successful_corrections / total_attempted) * 100.0
+
+    # ==================== Integration Helpers ====================
+
+    def get_lane_bit_error_rate(
+        self,
+        channel_id: int,
+        lane_id: int,
+    ) -> Optional[float]:
+        """Calculate bit error rate for a specific lane.
+
+        Based on failure info and repair attempts.
+
+        Args:
+            channel_id: Channel to query
+            lane_id: Lane to query
+
+        Returns:
+            Estimated bit error rate, or None if no data
+        """
+        rm = self._repair_maps.get(channel_id)
+        if rm is None or lane_id not in rm.failure_info:
+            return None
+
+        info = rm.failure_info[lane_id]
+        if info.bit_error_mask == 0:
+            return 0.0
+
+        # Calculate as bits in error / total bits
+        bits_in_error = bin(info.bit_error_mask).count('1')
+        return bits_in_error / 8.0  # 8 bits per lane
+
+    def get_failure_analysis(self, channel_id: int) -> Dict:
+        """Get comprehensive failure analysis for a channel.
+
+        Args:
+            channel_id: Channel to analyze
+
+        Returns:
+            Dictionary with failure statistics and patterns
+        """
+        rm = self._repair_maps.get(channel_id)
+        if rm is None:
+            return {}
+
+        failure_modes = {}
+        for info in rm.failure_info.values():
+            mode = info.failure_mode.value
+            failure_modes[mode] = failure_modes.get(mode, 0) + 1
+
+        return {
+            'channel_id': channel_id,
+            'total_failures': len(rm.failure_info),
+            'failure_modes': failure_modes,
+            'repairs_completed': rm.repair_count,
+            'spares_remaining': rm.available_spares,
+            'status': rm.status.value,
         }

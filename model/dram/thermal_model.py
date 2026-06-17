@@ -1,803 +1,808 @@
 """
-HBM3/4 Thermal Model
+HBM4 Layer-by-Layer Thermal Model
 
-Per-channel thermal modeling with:
-- Thermal coupling between channels
-- Thermal time constants (transient thermal response)
-- Junction temperature estimation
-- Thermal emergency handling
-- Package thermal model
+Provides comprehensive thermal modeling for HBM4 stacked architecture with:
+- Layer-by-layer thermal simulation
+- TSV thermal resistance network
+- Activity factor-based thermal modeling
+- Virtual probe placement and monitoring
+- Hotspot detection and reporting
 
 Reference:
-- JEDEC JESD238 HBM3 specification
 - JEDEC JESD270-4A HBM4 specification
 - JESD51-14 Thermal test method
-- Semiconductor Thermal Measurement and Management Manual
+- TSV thermal resistance models (0.5 C/mW)
 
-Thermal Characteristics:
-- HBM3: Junction-to-case thermal resistance ~0.5 C/W
-- HBM4: Improved thermal design ~0.4 C/W
-- Thermal time constants: 1-100ms range
-- Max junction temperature: 95C (HBM3), 105C (HBM4)
+HBM4 Stack Architecture:
+    +-------------------+
+    |   Logic Base Die  |  <- 50-100 um thickness
+    +-------------------+
+    |      TSV Layer    |  <- Thermal interface
+    +-------------------+
+    |    DRAM Die 1     |  <- 20-50 um thickness
+    +-------------------+
+    |      TSV Layer    |
+    +-------------------+
+    |    DRAM Die 2     |
+    +-------------------+
+    +-------------------+
+    |    DRAM Die 4-8   |
+    +-------------------+
+    +-------------------+
+    |   Package Base    |
+    +-------------------+
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable
 from enum import Enum
 import math
 import time
+import random
 
 
-class ThermalState(Enum):
-    """Thermal state of a channel or device"""
-    NORMAL = "normal"              # Temperature within spec
-    ELEVATED = "elevated"          # Above normal but safe
-    WARNING = "warning"            # Approaching thermal limit
-    CRITICAL = "critical"          # Near thermal limit
-    EMERGENCY = "emergency"        # Thermal emergency shutdown
+class ThermalLayer(Enum):
+    """HBM4 stack thermal layers"""
+    PACKAGE_TOP = "package_top"
+    LOGIC_BASE_DIE = "logic_base_die"
+    TSV_LAYER_1 = "tsv_layer_1"
+    DRAM_DIE_1 = "dram_die_1"
+    TSV_LAYER_2 = "tsv_layer_2"
+    DRAM_DIE_2 = "dram_die_2"
+    TSV_LAYER_3 = "tsv_layer_3"
+    DRAM_DIE_3 = "dram_die_3"
+    TSV_LAYER_4 = "tsv_layer_4"
+    DRAM_DIE_4 = "dram_die_4"
+    DRAM_DIE_5 = "dram_die_5"
+    DRAM_DIE_6 = "dram_die_6"
+    DRAM_DIE_7 = "dram_die_7"
+    DRAM_DIE_8 = "dram_die_8"
+    PACKAGE_BASE = "package_base"
 
 
-class ThermalEvent(Enum):
-    """Thermal events for monitoring"""
-    TEMP_THRESHOLD_EXCEEDED = "temp_threshold_exceeded"
-    THERMAL_COUPLED_WARNING = "thermal_coupled_warning"
-    EMERGENCY_SHUTDOWN = "emergency_shutdown"
-    THERMAL_RECOVERY = "thermal_recovery"
+class HotspotSeverity(Enum):
+    """Hotspot severity levels"""
+    NONE = "none"
+    WARNING = "warning"      # > 85C
+    THROTTLE = "throttle"   # > 95C
+    CRITICAL = "critical"  # > 100C
+    EMERGENCY = "emergency" # > 105C
 
 
 @dataclass
-class ThermalParameters:
-    """Thermal model parameters
-
-    All temperatures in Celsius unless noted.
-    All resistances in C/W unless noted.
-    """
-    # === Package Thermal Resistance ===
-    # Junction-to-case (die to package top)
-    theta_jc: float = 0.5       # C/W (HBM3 typical)
-    theta_jc_hbm4: float = 0.4  # C/W (HBM4 improved)
-
-    # Junction-to-ambient (with heat sink)
-    theta_ja: float = 10.0      # C/W (typical with heat sink)
-    theta_ja_no_hs: float = 25.0  # C/W (without heat sink)
-
-    # Channel-to-channel thermal coupling
-    theta_cc: float = 2.0       # C/W (coupling between adjacent channels)
-
-    # === Temperature Limits ===
-    max_junction_temp_c: float = 95.0    # HBM3 max junction temp
-    max_junction_temp_hbm4_c: float = 105.0  # HBM4 max junction temp
-    warning_threshold_c: float = 80.0    # Warning threshold
-    critical_threshold_c: float = 88.0   # Critical threshold
-    emergency_threshold_c: float = 92.0  # Emergency threshold
-
-    # === Ambient Conditions ===
-    ambient_temp_c: float = 45.0        # Typical ambient
-    max_ambient_temp_c: float = 85.0    # Max operating ambient
-
-    # === Thermal Time Constants ===
-    # RC thermal model time constants (in seconds)
-    tau_fast: float = 0.001      # 1ms - fast thermal transient (local heating)
-    tau_medium: float = 0.1      # 100ms - medium thermal transient
-    tau_slow: float = 1.0        # 1s - slow thermal transient (package)
-
-    # Thermal capacitance (J/C)
-    c_thermal_jc: float = 0.5    # Junction-to-case thermal cap
-    c_thermal_ja: float = 5.0    # Junction-to-ambient thermal cap
-
-    # === Power Calibration ===
-    power_to_temp_factor: float = 1.0  # mW to temperature factor
+class LayerProperties:
+    """Physical properties of each thermal layer"""
+    name: str
+    thickness_um: float = 50.0
+    thermal_conductivity: float = 100.0  # W/(m-K)
+    thermal_capacity: float = 1.0  # J/(g-K)
+    density: float = 2.33  # g/cm^3 (silicon)
+    area_mm2: float = 100.0  # Die area
 
     @property
-    def max_junction_temp(self) -> float:
-        """Get max junction temp (HBM3 default)"""
-        return self.max_junction_temp_c
-
-    def get_thermal_resistance(self, model: str = "jc") -> float:
-        """Get thermal resistance for model type
-
-        Args:
-            model: "jc" (junction-case) or "ja" (junction-ambient)
-
-        Returns:
-            Thermal resistance in C/W
-        """
-        if model == "jc":
-            return self.theta_jc
-        elif model == "ja":
-            return self.theta_ja
-        else:
-            return self.theta_jc
-
-    def get_safe_temperature(self) -> float:
-        """Get safe operating temperature (below warning)"""
-        return self.warning_threshold_c - 5.0
+    def thermal_mass(self) -> float:
+        """Calculate thermal mass (J/K)"""
+        # Volume in m^3
+        volume = (self.area_mm2 * 1e-6) * (self.thickness_um * 1e-6)
+        # Mass in kg
+        mass = volume * self.density * 1000
+        # Thermal mass
+        return mass * self.thermal_capacity
 
 
 @dataclass
-class ChannelThermalState:
-    """Per-channel thermal state"""
-    channel_id: int
+class TSVNetworkConfig:
+    """TSV thermal resistance network configuration"""
+    # TSV thermal resistance (C/mW per TSV)
+    tsv_thermal_resistance: float = 0.5
 
-    # Temperature tracking (Celsius)
-    junction_temp_c: float = 45.0      # Current junction temperature
-    local_temp_c: float = 45.0         # Local hot-spot temperature
-    case_temp_c: float = 42.0          # Case temperature
-    neighbor_avg_temp_c: float = 45.0   # Average of neighboring channels
+    # Number of TSVs per channel
+    tsv_count: int = 100000
 
-    # Thermal history for RC model
-    temp_history: List[Tuple[float, float]] = field(default_factory=list)  # (time, temp)
-    power_history: List[Tuple[float, float]] = field(default_factory=list)   # (time, power_mw)
+    # TSV pitch (um)
+    tsv_pitch: float = 5.0
 
-    # Thermal state
-    state: ThermalState = ThermalState.NORMAL
+    # TSV diameter (um)
+    tsv_diameter: float = 2.0
 
-    # Time tracking
-    last_update_time_s: float = 0.0
+    # Thermal interface material (TIM) resistance
+    tim_resistance: float = 0.1  # C/W
 
-    def update_temperature(self, power_mw: float, dt_s: float, params: ThermalParameters):
-        """Update temperature using RC thermal model
+    # TSV density factor (fraction of area)
+    tsv_density: float = 0.01
+
+    # Temperature gradient along TSV
+    temperature_gradient: float = 0.0
+
+    def get_effective_resistance(self, tsv_count: int) -> float:
+        """Get effective TSV thermal resistance for given count"""
+        # Parallel thermal resistances
+        if tsv_count > 0:
+            return self.tsv_thermal_resistance / tsv_count
+        return self.tsv_thermal_resistance
+
+
+@dataclass
+class LayerTemperature:
+    """Temperature state for a thermal layer"""
+    layer: ThermalLayer
+    temperature_c: float = 45.0
+    previous_temp_c: float = 45.0
+    rate_of_change: float = 0.0  # C/s
+    power_dissipation_mw: float = 0.0
+    thermal_resistance: float = 0.5  # C/W
+    last_update_ns: int = 0
+
+
+@dataclass
+class ActivityFactor:
+    """Activity factor for thermal modeling"""
+    read_activity: float = 0.5  # 0-1
+    write_activity: float = 0.3  # 0-1
+    refresh_activity: float = 0.1  # 0-1
+    idle_fraction: float = 0.2  # Fraction of time idle
+
+    @property
+    def effective_activity(self) -> float:
+        """Calculate effective activity factor"""
+        return (
+            self.read_activity * 0.4 +
+            self.write_activity * 0.5 +
+            self.refresh_activity * 0.1
+        ) * (1.0 - self.idle_fraction)
+
+
+@dataclass
+class VirtualProbe:
+    """Virtual probe for internal thermal monitoring"""
+    probe_id: int
+    name: str
+    layer: ThermalLayer
+    position_x: float  # Normalized position (0-1)
+    position_y: float  # Normalized position (0-1)
+    sampling_interval_ns: int = 1000
+    measurement_count: int = 0
+    measurements: List[Tuple[int, float]] = field(default_factory=list)
+
+    # Threshold configuration
+    warning_threshold_c: float = 85.0
+    throttle_threshold_c: float = 95.0
+    critical_threshold_c: float = 105.0
+
+    def get_severity(self, temperature_c: float) -> HotspotSeverity:
+        """Determine hotspot severity"""
+        if temperature_c >= self.critical_threshold_c:
+            return HotspotSeverity.EMERGENCY
+        elif temperature_c >= self.throttle_threshold_c:
+            return HotspotSeverity.CRITICAL
+        elif temperature_c >= self.warning_threshold_c:
+            return HotspotSeverity.WARNING
+        return HotspotSeverity.NONE
+
+
+@dataclass
+class HotspotReport:
+    """Hotspot detection report"""
+    timestamp_ns: int
+    detected: bool
+    severity: HotspotSeverity
+    temperature_c: float
+    threshold_c: float
+    layer: ThermalLayer
+    probe_id: Optional[int] = None
+    location_x: float = 0.0
+    location_y: float = 0.0
+
+
+@dataclass
+class LayeredThermalModel:
+    """HBM4 Layer-by-Layer Thermal Model
+
+    Models thermal behavior of HBM4 stacked memory with:
+    - Per-layer temperature tracking
+    - TSV thermal resistance network
+    - Activity-based power dissipation
+    - Virtual probe placement and monitoring
+    - Hotspot detection and reporting
+    """
+    num_channels: int = 32
+    ambient_temp_c: float = 45.0
+
+    # Layer configuration
+    layers: Dict[ThermalLayer, LayerTemperature] = field(default_factory=dict)
+    layer_properties: Dict[ThermalLayer, LayerProperties] = field(default_factory=dict)
+
+    # TSV network
+    tsv_config: TSVNetworkConfig = field(default_factory=TSVNetworkConfig)
+
+    # Virtual probes
+    probes: List[VirtualProbe] = field(default_factory=list)
+
+    # Hotspot tracking
+    hotspots: List[HotspotReport] = field(default_factory=list)
+    max_hotspots: int = 100
+
+    # Thermal thresholds (HBM4 spec)
+    warning_threshold_c: float = 85.0
+    throttle_threshold_c: float = 95.0
+    critical_threshold_c: float = 105.0
+    emergency_threshold_c: float = 110.0
+
+    # Simulation state
+    current_time_ns: int = 0
+    activity_factors: Dict[int, ActivityFactor] = field(default_factory=dict)
+
+    # Statistics
+    peak_temperature_c: float = 45.0
+    hotspot_detection_count: int = 0
+
+    def __post_init__(self):
+        """Initialize thermal model"""
+        self._initialize_layers()
+        self._initialize_default_probes()
+
+    def _initialize_layers(self):
+        """Initialize stack layers with HBM4 defaults"""
+        # HBM4 Stack Layer Configuration
+        layer_configs = {
+            ThermalLayer.LOGIC_BASE_DIE: LayerProperties(
+                name="Logic Base Die",
+                thickness_um=50.0,  # 50-100 um for base die
+                thermal_conductivity=120.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.TSV_LAYER_1: LayerProperties(
+                name="TSV Layer 1",
+                thickness_um=5.0,
+                thermal_conductivity=50.0,  # Lower due to TSV
+                area_mm2=100.0,
+            ),
+            ThermalLayer.DRAM_DIE_1: LayerProperties(
+                name="DRAM Die 1",
+                thickness_um=30.0,  # 20-50 um for DRAM
+                thermal_conductivity=100.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.TSV_LAYER_2: LayerProperties(
+                name="TSV Layer 2",
+                thickness_um=5.0,
+                thermal_conductivity=50.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.DRAM_DIE_2: LayerProperties(
+                name="DRAM Die 2",
+                thickness_um=30.0,
+                thermal_conductivity=100.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.TSV_LAYER_3: LayerProperties(
+                name="TSV Layer 3",
+                thickness_um=5.0,
+                thermal_conductivity=50.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.DRAM_DIE_3: LayerProperties(
+                name="DRAM Die 3",
+                thickness_um=30.0,
+                thermal_conductivity=100.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.TSV_LAYER_4: LayerProperties(
+                name="TSV Layer 4",
+                thickness_um=5.0,
+                thermal_conductivity=50.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.DRAM_DIE_4: LayerProperties(
+                name="DRAM Die 4",
+                thickness_um=30.0,
+                thermal_conductivity=100.0,
+                area_mm2=100.0,
+            ),
+            ThermalLayer.PACKAGE_BASE: LayerProperties(
+                name="Package Base",
+                thickness_um=200.0,
+                thermal_conductivity=20.0,  # Substrate
+                area_mm2=144.0,
+            ),
+        }
+
+        for layer, props in layer_configs.items():
+            self.layer_properties[layer] = props
+            self.layers[layer] = LayerTemperature(
+                layer=layer,
+                temperature_c=self.ambient_temp_c,
+                thermal_resistance=self._calculate_layer_resistance(layer, props),
+            )
+
+    def _calculate_layer_resistance(self, layer: ThermalLayer, props: LayerProperties) -> float:
+        """Calculate thermal resistance for a layer"""
+        # R = thickness / (conductivity * area)
+        thickness_m = props.thickness_um * 1e-6
+        area_m2 = props.area_mm2 * 1e-6
+        return thickness_m / (props.thermal_conductivity * area_m2)
+
+    def _initialize_default_probes(self):
+        """Initialize default virtual probe placement"""
+        # Place probes at key locations
+        probe_configs = [
+            # Logic base die - center and corners
+            (ThermalLayer.LOGIC_BASE_DIE, 0.5, 0.5, "LBD_center"),
+            (ThermalLayer.LOGIC_BASE_DIE, 0.1, 0.1, "LBD_corner_1"),
+            (ThermalLayer.LOGIC_BASE_DIE, 0.9, 0.9, "LBD_corner_2"),
+            # DRAM die hotspots
+            (ThermalLayer.DRAM_DIE_1, 0.5, 0.5, "DRAM1_center"),
+            (ThermalLayer.DRAM_DIE_2, 0.5, 0.5, "DRAM2_center"),
+            (ThermalLayer.DRAM_DIE_3, 0.5, 0.5, "DRAM3_center"),
+            (ThermalLayer.DRAM_DIE_4, 0.5, 0.5, "DRAM4_center"),
+            # TSV thermal monitoring
+            (ThermalLayer.TSV_LAYER_1, 0.5, 0.5, "TSV1_center"),
+            (ThermalLayer.TSV_LAYER_2, 0.5, 0.5, "TSV2_center"),
+        ]
+
+        for i, (layer, x, y, name) in enumerate(probe_configs):
+            self.probes.append(VirtualProbe(
+                probe_id=i,
+                name=name,
+                layer=layer,
+                position_x=x,
+                position_y=y,
+                warning_threshold_c=self.warning_threshold_c,
+                throttle_threshold_c=self.throttle_threshold_c,
+                critical_threshold_c=self.critical_threshold_c,
+            ))
+
+    def add_virtual_probe(
+        self,
+        name: str,
+        layer: ThermalLayer,
+        position_x: float,
+        position_y: float,
+        warning_threshold_c: float = 85.0,
+        throttle_threshold_c: float = 95.0,
+    ) -> VirtualProbe:
+        """Add a virtual probe for monitoring
 
         Args:
-            power_mw: Instantaneous power in mW
-            dt_s: Time delta in seconds
-            params: Thermal parameters
+            name: Probe name
+            layer: Layer to monitor
+            position_x: Normalized X position (0-1)
+            position_y: Normalized Y position (0-1)
+            warning_threshold_c: Warning threshold
+            throttle_threshold_c: Throttle threshold
+
+        Returns:
+            Created VirtualProbe
         """
-        current_time = time.time()
-        if self.last_update_time_s > 0:
-            dt_s = current_time - self.last_update_time_s
-        self.last_update_time_s = current_time
+        probe = VirtualProbe(
+            probe_id=len(self.probes),
+            name=name,
+            layer=layer,
+            position_x=position_x,
+            position_y=position_y,
+            warning_threshold_c=warning_threshold_c,
+            throttle_threshold_c=throttle_threshold_c,
+        )
+        self.probes.append(probe)
+        return probe
 
-        # Simple RC thermal model:
-        # dT/dt = (P * theta - T) / tau
-        # Solution: T(t) = T_initial * exp(-t/tau) + P * theta * (1 - exp(-t/tau))
+    def update_layer_power(
+        self,
+        layer: ThermalLayer,
+        power_mw: float,
+        activity_factor: Optional[ActivityFactor] = None,
+    ):
+        """Update power dissipation for a layer
 
-        # Junction temperature from power
-        delta_t_junction = power_mw * params.theta_jc / 1000.0  # Convert mW to W
+        Args:
+            layer: Layer to update
+            power_mw: Power in mW
+            activity_factor: Optional activity factor for scaling
+        """
+        if layer not in self.layers:
+            return
 
-        # Apply thermal time constant (using average of fast and medium)
-        tau = (params.tau_fast + params.tau_medium) / 2
+        layer_state = self.layers[layer]
 
-        # Exponential moving average for temperature
-        alpha = 1.0 - math.exp(-dt_s / tau)
-
-        # Update junction temperature
-        self.junction_temp_c = (self.junction_temp_c * (1 - alpha) +
-                                (params.ambient_temp_c + delta_t_junction * 1000) * alpha)
-
-        # Local hot-spot is typically higher
-        self.local_temp_c = self.junction_temp_c + (power_mw * 0.05)  # 0.05 C/mW local rise
-
-        # Case temperature follows junction with delay
-        self.case_temp_c = (self.case_temp_c * 0.9 +
-                           (self.junction_temp_c - 3.0) * 0.1)  # Lag behind junction
-
-        # Update thermal state
-        self._update_thermal_state(params)
-
-        # Keep history bounded
-        if len(self.temp_history) > 1000:
-            self.temp_history = self.temp_history[-500:]
-        self.temp_history.append((current_time, self.junction_temp_c))
-
-        if len(self.power_history) > 1000:
-            self.power_history = self.power_history[-500:]
-        self.power_history.append((current_time, power_mw))
-
-    def _update_thermal_state(self, params: ThermalParameters):
-        """Update thermal state based on temperature"""
-        if self.junction_temp_c >= params.emergency_threshold_c:
-            self.state = ThermalState.EMERGENCY
-        elif self.junction_temp_c >= params.critical_threshold_c:
-            self.state = ThermalState.CRITICAL
-        elif self.junction_temp_c >= params.warning_threshold_c:
-            self.state = ThermalState.WARNING
-        elif self.junction_temp_c >= params.get_safe_temperature():
-            self.state = ThermalState.ELEVATED
+        # Apply activity factor if provided
+        if activity_factor is not None:
+            effective_power = power_mw * activity_factor.effective_activity
         else:
-            self.state = ThermalState.NORMAL
+            effective_power = power_mw
 
-    def get_thermal_rate(self) -> float:
-        """Calculate temperature change rate (C/s)
+        layer_state.power_dissipation_mw = effective_power
 
-        Returns:
-            Temperature change rate
-        """
-        if len(self.temp_history) < 2:
-            return 0.0
-
-        # Look at last few samples
-        recent = self.temp_history[-min(10, len(self.temp_history)):]
-        if len(recent) < 2:
-            return 0.0
-
-        t1, temp1 = recent[0]
-        t2, temp2 = recent[-1]
-        dt = t2 - t1
-
-        if dt <= 0:
-            return 0.0
-
-        return (temp2 - temp1) / dt
-
-    def get_average_power(self, window_s: float = 1.0) -> float:
-        """Get average power over time window
+    def update_channel_activity(
+        self,
+        channel_id: int,
+        read_activity: float = 0.0,
+        write_activity: float = 0.0,
+        refresh_activity: float = 0.0,
+    ):
+        """Update activity factors for a channel
 
         Args:
-            window_s: Time window in seconds
+            channel_id: Channel index
+            read_activity: Read activity (0-1)
+            write_activity: Write activity (0-1)
+            refresh_activity: Refresh activity (0-1)
+        """
+        # Calculate idle fraction
+        total = read_activity + write_activity + refresh_activity
+        idle_fraction = max(0.0, 1.0 - total)
+
+        self.activity_factors[channel_id] = ActivityFactor(
+            read_activity=read_activity,
+            write_activity=write_activity,
+            refresh_activity=refresh_activity,
+            idle_fraction=idle_fraction,
+        )
+
+    def simulate_step(self, time_ns: int, dt_ns: float = 1000.0):
+        """Simulate one thermal step
+
+        Args:
+            time_ns: Current simulation time (ns)
+            dt_ns: Time step (ns)
+        """
+        self.current_time_ns = time_ns
+
+        # Update each layer
+        for layer, layer_state in self.layers.items():
+            self._update_layer_temperature(layer, layer_state, dt_ns)
+
+        # Update virtual probes
+        self._update_probes(time_ns)
+
+        # Detect hotspots
+        self._detect_hotspots(time_ns)
+
+    def _update_layer_temperature(
+        self,
+        layer: ThermalLayer,
+        layer_state: LayerTemperature,
+        dt_ns: float,
+    ):
+        """Update temperature for a single layer using RC model
+
+        Args:
+            layer: Layer type
+            layer_state: Current layer state
+            dt_ns: Time step in ns
+        """
+        # Calculate temperature change
+        # dT/dt = P * R / C (simplified)
+        power_w = layer_state.power_dissipation_mw / 1000.0
+        delta_t = power_w * layer_state.thermal_resistance
+
+        # Apply thermal time constant (exponential settling)
+        tau_ns = 1000.0  # 1 us thermal time constant
+        dt_s = dt_ns * 1e-9
+        alpha = 1.0 - math.exp(-dt_s / (tau_ns * 1e-9))
+
+        # Update temperature
+        layer_state.previous_temp_c = layer_state.temperature_c
+        steady_state = self.ambient_temp_c + delta_t * 1000  # Convert to C
+        layer_state.temperature_c = (
+            layer_state.temperature_c * (1 - alpha) +
+            steady_state * alpha
+        )
+
+        # Update rate of change
+        dt_s_total = dt_s if layer_state.last_update_ns == 0 else (
+            (self.current_time_ns - layer_state.last_update_ns) * 1e-9
+        )
+        if dt_s_total > 0:
+            layer_state.rate_of_change = (
+                (layer_state.temperature_c - layer_state.previous_temp_c) / dt_s_total
+            )
+
+        layer_state.last_update_ns = self.current_time_ns
+
+        # Update peak temperature
+        if layer_state.temperature_c > self.peak_temperature_c:
+            self.peak_temperature_c = layer_state.temperature_c
+
+    def _update_probes(self, time_ns: int):
+        """Update all virtual probes
+
+        Args:
+            time_ns: Current simulation time
+        """
+        for probe in self.probes:
+            if time_ns % probe.sampling_interval_ns == 0:
+                # Get temperature from the layer
+                layer_temp = self.layers.get(probe.layer)
+                if layer_temp:
+                    # Add spatial variation based on position
+                    spatial_variation = (
+                        2.0 * math.sin(probe.position_x * math.pi) *
+                        math.sin(probe.position_y * math.pi)
+                    )
+                    measured_temp = layer_temp.temperature_c + spatial_variation
+
+                    probe.measurements.append((time_ns, measured_temp))
+                    probe.measurement_count += 1
+
+                    # Keep bounded history
+                    if len(probe.measurements) > 1000:
+                        probe.measurements = probe.measurements[-500:]
+
+    def _detect_hotspots(self, time_ns: int):
+        """Detect hotspots across all layers and probes
+
+        Args:
+            time_ns: Current simulation time
+        """
+        # Check layer hotspots
+        for layer, layer_state in self.layers.items():
+            severity = self._get_severity(layer_state.temperature_c)
+            if severity != HotspotSeverity.NONE:
+                report = HotspotReport(
+                    timestamp_ns=time_ns,
+                    detected=True,
+                    severity=severity,
+                    temperature_c=layer_state.temperature_c,
+                    threshold_c=self._get_threshold_for_severity(severity),
+                    layer=layer,
+                )
+                self.hotspots.append(report)
+                self.hotspot_detection_count += 1
+
+        # Check probe hotspots
+        for probe in self.probes:
+            if probe.measurements:
+                last_time, last_temp = probe.measurements[-1]
+                severity = probe.get_severity(last_temp)
+                if severity != HotspotSeverity.NONE:
+                    report = HotspotReport(
+                        timestamp_ns=last_time,
+                        detected=True,
+                        severity=severity,
+                        temperature_c=last_temp,
+                        threshold_c=probe.warning_threshold_c if severity == HotspotSeverity.WARNING
+                                    else probe.throttle_threshold_c if severity == HotspotSeverity.THROTTLE
+                                    else probe.critical_threshold_c,
+                        layer=probe.layer,
+                        probe_id=probe.probe_id,
+                        location_x=probe.position_x,
+                        location_y=probe.position_y,
+                    )
+                    self.hotspots.append(report)
+                    self.hotspot_detection_count += 1
+
+        # Keep bounded history
+        if len(self.hotspots) > self.max_hotspots:
+            self.hotspots = self.hotspots[-self.max_hotspots // 2:]
+
+    def _get_severity(self, temperature_c: float) -> HotspotSeverity:
+        """Determine hotspot severity for temperature"""
+        if temperature_c >= self.emergency_threshold_c:
+            return HotspotSeverity.EMERGENCY
+        elif temperature_c >= self.critical_threshold_c:
+            return HotspotSeverity.CRITICAL
+        elif temperature_c >= self.throttle_threshold_c:
+            return HotspotSeverity.THROTTLE
+        elif temperature_c >= self.warning_threshold_c:
+            return HotspotSeverity.WARNING
+        return HotspotSeverity.NONE
+
+    def _get_threshold_for_severity(self, severity: HotspotSeverity) -> float:
+        """Get threshold temperature for severity level"""
+        thresholds = {
+            HotspotSeverity.WARNING: self.warning_threshold_c,
+            HotspotSeverity.THROTTLE: self.throttle_threshold_c,
+            HotspotSeverity.CRITICAL: self.critical_threshold_c,
+            HotspotSeverity.EMERGENCY: self.emergency_threshold_c,
+        }
+        return thresholds.get(severity, self.warning_threshold_c)
+
+    def get_layer_temperature(self, layer: ThermalLayer) -> float:
+        """Get temperature for a specific layer
+
+        Args:
+            layer: Layer to query
 
         Returns:
-            Average power in mW
+            Temperature in Celsius
         """
-        if not self.power_history:
-            return 0.0
+        layer_state = self.layers.get(layer)
+        if layer_state:
+            return layer_state.temperature_c
+        return self.ambient_temp_c
 
-        current_time = time.time()
-        cutoff_time = current_time - window_s
+    def get_max_temperature(self) -> Tuple[ThermalLayer, float]:
+        """Get maximum temperature across all layers
 
-        # Filter samples within window
-        samples = [(t, p) for t, p in self.power_history if t >= cutoff_time]
-        if not samples:
-            return 0.0
+        Returns:
+            (layer, temperature)
+        """
+        max_temp = self.ambient_temp_c
+        max_layer = ThermalLayer.LOGIC_BASE_DIE
 
-        return sum(p for _, p in samples) / len(samples)
+        for layer, state in self.layers.items():
+            if state.temperature_c > max_temp:
+                max_temp = state.temperature_c
+                max_layer = layer
 
-    def get_steady_state_temp(self, power_mw: float, params: ThermalParameters) -> float:
-        """Calculate steady-state temperature for given power
+        return max_layer, max_temp
+
+    def get_probe_temperature(self, probe_id: int) -> Optional[float]:
+        """Get latest temperature reading from a probe
+
+        Args:
+            probe_id: Probe identifier
+
+        Returns:
+            Temperature or None if not found
+        """
+        probe = self.probes[probe_id] if probe_id < len(self.probes) else None
+        if probe and probe.measurements:
+            return probe.measurements[-1][1]
+        return None
+
+    def get_probe_readings(
+        self,
+        probe_id: int,
+        num_samples: int = 10
+    ) -> List[Tuple[int, float]]:
+        """Get recent probe readings
+
+        Args:
+            probe_id: Probe identifier
+            num_samples: Number of samples to return
+
+        Returns:
+            List of (time_ns, temperature) tuples
+        """
+        probe = self.probes[probe_id] if probe_id < len(self.probes) else None
+        if probe:
+            return probe.measurements[-num_samples:]
+        return []
+
+    def get_hotspot_reports(self, count: int = 10) -> List[HotspotReport]:
+        """Get recent hotspot reports
+
+        Args:
+            count: Number of reports to return
+
+        Returns:
+            List of HotspotReport
+        """
+        return self.hotspots[-count:]
+
+    def get_active_hotspots(self) -> List[HotspotReport]:
+        """Get currently active hotspots (most recent per layer/probe)
+
+        Returns:
+            List of active HotspotReport
+        """
+        active = {}
+        for report in reversed(self.hotspots):
+            key = (report.layer, report.probe_id)
+            if key not in active:
+                active[key] = report
+
+        return list(active.values())
+
+    def calculate_tsv_thermal_drop(
+        self,
+        power_mw: float,
+        tsv_count: int = None
+    ) -> float:
+        """Calculate thermal drop across TSV network
 
         Args:
             power_mw: Power in mW
-            params: Thermal parameters
+            tsv_count: Number of TSVs (uses config default if None)
 
         Returns:
-            Steady-state junction temperature in Celsius
+            Temperature drop in Celsius
         """
+        if tsv_count is None:
+            tsv_count = self.tsv_config.tsv_count
+
+        effective_r = self.tsv_config.get_effective_resistance(tsv_count)
         power_w = power_mw / 1000.0
-        delta_t = power_w * params.theta_jc
-        return params.ambient_temp_c + delta_t * 1000
+        return power_w * effective_r
 
-
-@dataclass
-class ThermalEventRecord:
-    """Record of a thermal event"""
-    event_type: ThermalEvent
-    channel_id: int
-    timestamp: float
-    temperature_c: float
-    threshold_c: float
-    description: str
-
-
-@dataclass
-class ThermalEmergencyAction:
-    """Action to take during thermal emergency"""
-    action_type: str           # "throttle", "power_down", "refresh_reduce"
-    duration_cycles: int       # How long to apply action
-    description: str
-
-
-@dataclass
-class ThermalModel:
-    """HBM Thermal Model
-
-    Models thermal behavior of HBM stack with:
-    - Per-channel thermal tracking
-    - Thermal coupling between channels
-    - Thermal time constants (transient response)
-    - Junction temperature estimation
-    - Emergency handling
-    - Power-temperature conversion
-    """
-    num_channels: int = 32
-    params: ThermalParameters = field(default_factory=ThermalParameters)
-
-    # Per-channel thermal state
-    channels: List[ChannelThermalState] = field(default_factory=list)
-
-    # Thermal events
-    events: List[ThermalEventRecord] = field(default_factory=list)
-    max_events: int = 1000
-
-    # Emergency state
-    emergency_active: bool = False
-    emergency_channels: List[int] = field(default_factory=list)
-
-    # Coupling model
-    enable_coupling: bool = True
-
-    # Time tracking
-    current_time_s: float = 0.0
-
-    def __post_init__(self):
-        """Initialize channel thermal states"""
-        if not self.channels:
-            self.channels = [
-                ChannelThermalState(channel_id=i)
-                for i in range(self.num_channels)
-            ]
-
-    def update_channel_power(
-        self,
-        channel_id: int,
-        power_mw: float,
-        dt_s: float = 0.001
-    ):
-        """Update thermal state for a channel based on power
-
-        Args:
-            channel_id: Channel index (0-31)
-            power_mw: Instantaneous power in mW
-            dt_s: Time step in seconds (default 1ms)
-        """
-        if 0 <= channel_id < self.num_channels:
-            self.channels[channel_id].update_temperature(power_mw, dt_s, self.params)
-
-            # Update thermal coupling
-            if self.enable_coupling:
-                self._update_thermal_coupling(channel_id, power_mw, dt_s)
-
-    def _update_thermal_coupling(
-        self,
-        channel_id: int,
-        source_power_mw: float,
-        dt_s: float
-    ):
-        """Update neighboring channels due to thermal coupling
-
-        Args:
-            channel_id: Source channel
-            source_power_mw: Power of source channel
-            dt_s: Time step
-        """
-        # Get adjacent channels
-        neighbors = self._get_neighbor_channels(channel_id)
-
-        for neighbor_id in neighbors:
-            if 0 <= neighbor_id < self.num_channels:
-                neighbor = self.channels[neighbor_id]
-
-                # Calculate coupled temperature rise
-                coupled_temp_rise = (source_power_mw * self.params.theta_cc / 1000.0)
-
-                # Apply coupling factor (temperature diff drives heat flow)
-                temp_diff = self.channels[channel_id].junction_temp_c - neighbor.junction_temp_c
-                if temp_diff > 0:
-                    coupling_factor = temp_diff * 0.01  # Small coupling contribution
-                    neighbor.junction_temp_c += coupling_factor * dt_s / self.params.tau_fast
-
-                    # Update neighbor average
-                    neighbor.neighbor_avg_temp_c = (
-                        sum(self.channels[n].junction_temp_c for n in neighbors) / len(neighbors)
-                    )
-
-    def _get_neighbor_channels(self, channel_id: int) -> List[int]:
-        """Get thermally coupled neighbor channels
-
-        Args:
-            channel_id: Source channel
+    def get_thermal_summary(self) -> Dict:
+        """Get comprehensive thermal summary
 
         Returns:
-            List of neighbor channel IDs
+            Dictionary with thermal state
         """
-        neighbors = []
-
-        # Adjacent channels in same stack
-        if channel_id > 0:
-            neighbors.append(channel_id - 1)
-        if channel_id < self.num_channels - 1:
-            neighbors.append(channel_id + 1)
-
-        # Channels in same bank group (for HBM3/4 architecture)
-        # This is a simplified model
-        bank_group_size = 8
-        bg_id = channel_id % bank_group_size
-
-        # Add same position in adjacent bank groups
-        if bg_id > 0:
-            neighbors.append(channel_id - 1)
-        if bg_id < bank_group_size - 1:
-            neighbors.append(channel_id + 1)
-
-        return list(set(neighbors))  # Remove duplicates
-
-    def update_all_channels_power(
-        self,
-        power_per_channel_mw: List[float],
-        dt_s: float = 0.001
-    ):
-        """Update all channels with power values
-
-        Args:
-            power_per_channel_mw: List of power values per channel
-            dt_s: Time step
-        """
-        for i, power in enumerate(power_per_channel_mw):
-            if i < self.num_channels:
-                self.update_channel_power(i, power, dt_s)
-
-    def get_channel_temperature(self, channel_id: int) -> float:
-        """Get junction temperature for a channel
-
-        Args:
-            channel_id: Channel index
-
-        Returns:
-            Junction temperature in Celsius
-        """
-        if 0 <= channel_id < self.num_channels:
-            return self.channels[channel_id].junction_temp_c
-        return self.params.ambient_temp_c
-
-    def get_all_temperatures(self) -> List[float]:
-        """Get temperatures for all channels
-
-        Returns:
-            List of junction temperatures
-        """
-        return [ch.junction_temp_c for ch in self.channels]
-
-    def get_average_temperature(self) -> float:
-        """Get average temperature across all channels
-
-        Returns:
-            Average junction temperature
-        """
-        if not self.channels:
-            return self.params.ambient_temp_c
-        return sum(ch.junction_temp_c for ch in self.channels) / len(self.channels)
-
-    def get_max_temperature(self) -> Tuple[int, float]:
-        """Get channel with maximum temperature
-
-        Returns:
-            (channel_id, temperature)
-        """
-        if not self.channels:
-            return (-1, self.params.ambient_temp_c)
-
-        max_ch = max(self.channels, key=lambda ch: ch.junction_temp_c)
-        return (max_ch.channel_id, max_ch.junction_temp_c)
-
-    def get_min_temperature(self) -> Tuple[int, float]:
-        """Get channel with minimum temperature
-
-        Returns:
-            (channel_id, temperature)
-        """
-        if not self.channels:
-            return (-1, self.params.ambient_temp_c)
-
-        min_ch = min(self.channels, key=lambda ch: ch.junction_temp_c)
-        return (min_ch.channel_id, min_ch.junction_temp_c)
-
-    def get_temperature_gradient(self) -> float:
-        """Get temperature gradient across channels
-
-        Returns:
-            Max - Min temperature difference
-        """
-        if not self.channels:
-            return 0.0
-
-        temps = [ch.junction_temp_c for ch in self.channels]
-        return max(temps) - min(temps)
-
-    def check_thermal_state(self, channel_id: int) -> ThermalState:
-        """Check thermal state for a channel
-
-        Args:
-            channel_id: Channel index
-
-        Returns:
-            Thermal state
-        """
-        if 0 <= channel_id < self.num_channels:
-            return self.channels[channel_id].state
-        return ThermalState.NORMAL
-
-    def get_emergency_actions(self) -> List[ThermalEmergencyAction]:
-        """Get recommended emergency actions based on thermal state
-
-        Returns:
-            List of recommended actions
-        """
-        actions = []
-
-        # Check all channels
-        for ch in self.channels:
-            if ch.state == ThermalState.EMERGENCY:
-                actions.append(ThermalEmergencyAction(
-                    action_type="throttle",
-                    duration_cycles=1000,
-                    description=f"Throttle channel {ch.channel_id} during thermal emergency"
-                ))
-            elif ch.state == ThermalState.CRITICAL:
-                actions.append(ThermalEmergencyAction(
-                    action_type="power_down",
-                    duration_cycles=500,
-                    description=f"Reduce power on channel {ch.channel_id} in critical state"
-                ))
-            elif ch.state == ThermalState.WARNING:
-                actions.append(ThermalEmergencyAction(
-                    action_type="refresh_reduce",
-                    duration_cycles=200,
-                    description=f"Reduce refresh rate on channel {ch.channel_id} in warning"
-                ))
-
-        return actions
-
-    def record_event(
-        self,
-        event_type: ThermalEvent,
-        channel_id: int,
-        temperature_c: float,
-        threshold_c: float,
-        description: str = ""
-    ):
-        """Record a thermal event
-
-        Args:
-            event_type: Type of event
-            channel_id: Channel where event occurred
-            temperature_c: Temperature at event
-            threshold_c: Threshold that was exceeded
-            description: Event description
-        """
-        event = ThermalEventRecord(
-            event_type=event_type,
-            channel_id=channel_id,
-            timestamp=time.time(),
-            temperature_c=temperature_c,
-            threshold_c=threshold_c,
-            description=description
-        )
-
-        self.events.append(event)
-
-        # Keep history bounded
-        if len(self.events) > self.max_events:
-            self.events = self.events[-self.max_events // 2:]
-
-    def get_recent_events(self, count: int = 10) -> List[ThermalEventRecord]:
-        """Get recent thermal events
-
-        Args:
-            count: Number of events to return
-
-        Returns:
-            List of recent events
-        """
-        return self.events[-count:]
-
-    def get_events_by_type(self, event_type: ThermalEvent) -> List[ThermalEventRecord]:
-        """Get events of a specific type
-
-        Args:
-            event_type: Event type to filter
-
-        Returns:
-            List of matching events
-        """
-        return [e for e in self.events if e.event_type == event_type]
-
-    def estimate_power_from_temperature(
-        self,
-        channel_id: int,
-        ambient_temp_c: float = None
-    ) -> float:
-        """Estimate power from measured temperature
-
-        Args:
-            channel_id: Channel index
-            ambient_temp_c: Ambient temperature (uses default if None)
-
-        Returns:
-            Estimated power in mW
-        """
-        if 0 > channel_id or channel_id >= self.num_channels:
-            return 0.0
-
-        if ambient_temp_c is None:
-            ambient_temp_c = self.params.ambient_temp_c
-
-        ch = self.channels[channel_id]
-        temp_rise_c = ch.junction_temp_c - ambient_temp_c
-
-        # P = delta_T / theta_jc (but convert to mW)
-        power_w = temp_rise_c / self.params.theta_jc
-        return power_w * 1000.0
-
-    def get_thermal_resistance_network(
-        self,
-        channel_id: int
-    ) -> Dict[str, float]:
-        """Get thermal resistance network for a channel
-
-        Args:
-            channel_id: Channel index
-
-        Returns:
-            Dict of resistance paths
-        """
-        if 0 > channel_id or channel_id >= self.num_channels:
-            return {}
-
-        ch = self.channels[channel_id]
-
         return {
-            "junction_to_case": self.params.theta_jc,
-            "junction_to_ambient": self.params.theta_ja,
-            "channel_to_channel": self.params.theta_cc,
-            "neighbor_avg_temp_c": ch.neighbor_avg_temp_c,
-            "case_to_ambient": self.params.theta_ja - self.params.theta_jc,
+            "time_ns": self.current_time_ns,
+            "ambient_temp_c": self.ambient_temp_c,
+            "peak_temp_c": self.peak_temperature_c,
+            "max_layer": self.get_max_temperature()[0].value,
+            "max_temp_c": self.get_max_temperature()[1],
+            "warning_threshold_c": self.warning_threshold_c,
+            "throttle_threshold_c": self.throttle_threshold_c,
+            "critical_threshold_c": self.critical_threshold_c,
+            "hotspot_count": self.hotspot_detection_count,
+            "probe_count": len(self.probes),
+            "layers": {
+                layer.value: {
+                    "temp_c": state.temperature_c,
+                    "power_mw": state.power_dissipation_mw,
+                    "rate_cps": state.rate_of_change,
+                }
+                for layer, state in self.layers.items()
+            },
+            "active_hotspots": [
+                {
+                    "layer": h.layer.value,
+                    "severity": h.severity.value,
+                    "temp_c": h.temperature_c,
+                }
+                for h in self.get_active_hotspots()
+            ],
         }
-
-    def simulate_temperature_response(
-        self,
-        initial_temp_c: float,
-        power_mw: float,
-        duration_s: float,
-        num_steps: int = 100
-    ) -> List[Tuple[float, float]]:
-        """Simulate temperature response to step power change
-
-        Args:
-            initial_temp_c: Initial temperature
-            power_mw: Step power change in mW
-            duration_s: Simulation duration in seconds
-            num_steps: Number of simulation steps
-
-        Returns:
-            List of (time, temperature) tuples
-        """
-        results = []
-
-        dt = duration_s / num_steps
-        tau = (self.params.tau_fast + self.params.tau_medium + self.params.tau_slow) / 3
-        power_w = power_mw / 1000.0
-
-        temp = initial_temp_c
-        ambient = self.params.ambient_temp_c
-        theta = self.params.theta_jc
-
-        for step in range(num_steps + 1):
-            t = step * dt
-
-            # Analytical solution for RC thermal model
-            # T(t) = T_ambient + (T_initial - T_ambient) * exp(-t/tau) + P * theta * (1 - exp(-t/tau))
-            exp_factor = math.exp(-t / tau)
-            steady_state_delta = power_w * theta * 1000  # Convert to C
-
-            temp = ambient + (initial_temp_c - ambient) * exp_factor + steady_state_delta * (1 - exp_factor)
-
-            results.append((t, temp))
-
-        return results
-
-    def get_temperature_stats(self) -> Dict[str, float]:
-        """Get temperature statistics
-
-        Returns:
-            Dict with temperature statistics
-        """
-        if not self.channels:
-            return {
-                "avg_temp_c": self.params.ambient_temp_c,
-                "max_temp_c": self.params.ambient_temp_c,
-                "min_temp_c": self.params.ambient_temp_c,
-                "gradient_c": 0.0,
-            }
-
-        temps = [ch.junction_temp_c for ch in self.channels]
-
-        return {
-            "avg_temp_c": sum(temps) / len(temps),
-            "max_temp_c": max(temps),
-            "min_temp_c": min(temps),
-            "gradient_c": max(temps) - min(temps),
-        }
-
-    def get_safe_power_budget(self, channel_id: int) -> float:
-        """Calculate safe power budget for a channel
-
-        Args:
-            channel_id: Channel index
-
-        Returns:
-            Safe power in mW to stay below warning threshold
-        """
-        if 0 > channel_id or channel_id >= self.num_channels:
-            return 0.0
-
-        safe_temp = self.params.get_safe_temperature()
-        current_temp = self.channels[channel_id].junction_temp_c
-
-        temp_margin = safe_temp - current_temp
-        if temp_margin <= 0:
-            return 0.0
-
-        # P = delta_T / theta_jc
-        power_w = temp_margin / self.params.theta_jc
-        return power_w * 1000.0
 
     def reset(self):
         """Reset thermal model state"""
-        for ch in self.channels:
-            ch.junction_temp_c = self.params.ambient_temp_c
-            ch.local_temp_c = self.params.ambient_temp_c
-            ch.case_temp_c = self.params.ambient_temp_c - 3.0
-            ch.state = ThermalState.NORMAL
-            ch.temp_history = []
-            ch.power_history = []
+        self.current_time_ns = 0
+        self.peak_temperature_c = self.ambient_temp_c
+        self.hotspot_detection_count = 0
+        self.hotspots = []
 
-        self.events = []
-        self.emergency_active = False
-        self.emergency_channels = []
-        self.current_time_s = 0.0
+        # Reset layers
+        for layer_state in self.layers.values():
+            layer_state.temperature_c = self.ambient_temp_c
+            layer_state.previous_temp_c = self.ambient_temp_c
+            layer_state.rate_of_change = 0.0
+            layer_state.power_dissipation_mw = 0.0
+            layer_state.last_update_ns = 0
 
-    def __repr__(self) -> str:
-        avg_temp = self.get_average_temperature()
-        max_id, max_temp = self.get_max_temperature()
-        return (f"ThermalModel(channels={self.num_channels}, "
-                f"avg_temp={avg_temp:.1f}C, max_temp={max_temp:.1f}C @ ch{max_id})")
+        # Reset probes
+        for probe in self.probes:
+            probe.measurements = []
+            probe.measurement_count = 0
 
 
 # Factory functions
 
-def create_thermal_model(
-    num_channels: int = 32,
+def create_layered_thermal_model(
     ambient_temp_c: float = 45.0,
-    hbm_version: str = "hbm3"
-) -> ThermalModel:
-    """Create thermal model for HBM version
+    num_channels: int = 32,
+) -> LayeredThermalModel:
+    """Create layered thermal model for HBM4
 
     Args:
-        num_channels: Number of channels
         ambient_temp_c: Ambient temperature
-        hbm_version: "hbm3" or "hbm4"
+        num_channels: Number of HBM channels
 
     Returns:
-        Configured ThermalModel
+        Configured LayeredThermalModel
     """
-    params = ThermalParameters()
-    params.ambient_temp_c = ambient_temp_c
-
-    if hbm_version.lower() == "hbm4":
-        params.theta_jc = params.theta_jc_hbm4
-        params.max_junction_temp_c = params.max_junction_temp_hbm4_c
-
-    return ThermalModel(
-        num_channels=num_channels,
-        params=params,
-    )
-
-
-def create_thermal_model_with_power_estimator(
-    power_estimator,
-    ambient_temp_c: float = 45.0
-) -> Tuple[ThermalModel, List[float]]:
-    """Create thermal model with initial power from estimator
-
-    Args:
-        power_estimator: HBM4PowerEstimator instance
-        ambient_temp_c: Ambient temperature
-
-    Returns:
-        (ThermalModel, initial_power_list)
-    """
-    model = create_thermal_model(
-        num_channels=power_estimator.num_channels,
+    return LayeredThermalModel(
         ambient_temp_c=ambient_temp_c,
+        num_channels=num_channels,
     )
 
-    # Get initial power per channel
-    initial_powers = [
-        power_estimator.get_channel_power_mw(i)
-        for i in range(power_estimator.num_channels)
-    ]
 
-    return model, initial_powers
+def create_hbm4_thermal_model(
+    warning_threshold_c: float = 85.0,
+    throttle_threshold_c: float = 95.0,
+) -> LayeredThermalModel:
+    """Create thermal model with HBM4 specification thresholds
 
+    Args:
+        warning_threshold_c: Warning threshold (default 85C)
+        throttle_threshold_c: Throttle threshold (default 95C)
 
-# Default thermal model
-DEFAULT_THERMAL_MODEL = create_thermal_model()
+    Returns:
+        LayeredThermalModel with HBM4 thresholds
+    """
+    model = create_layered_thermal_model()
+    model.warning_threshold_c = warning_threshold_c
+    model.throttle_threshold_c = throttle_threshold_c
+
+    # Update probe thresholds
+    for probe in model.probes:
+        probe.warning_threshold_c = warning_threshold_c
+        probe.throttle_threshold_c = throttle_threshold_c
+
+    return model
