@@ -2,17 +2,20 @@
 HBM4 Channel Model - Enhanced Version with Full State Tracking
 
 Implements 32 independent channels, each with 2 pseudo-channels and 8 bank groups.
-Enhanced with comprehensive bank state tracking and timing validation.
+Enhanced with comprehensive bank state tracking, performance statistics, and
+optimized bank group scheduling.
 
 Key features:
 - 32 independent memory channels
 - 2 pseudo-channels per channel (64 total)
 - 8 bank groups per pseudo-channel (2 banks per group)
 - Independent bank state machines per pseudo-channel with CLOSED/OPEN/ACTIVATING/PRECHARGING
-- Bank group-aware command scheduling
+- Bank group-aware command scheduling with FAW tracking
 - State transition timing validation
 - Integration with HBM4 refresh scheduler
 - Command scheduling and timing
+- Comprehensive performance statistics (bandwidth, latency, hit rates)
+- Enhanced channel independence with isolated timing domains
 
 Key HBM4 Timing Parameters:
 - tRCD: 12 cycles (Activate to Read/Write)
@@ -39,7 +42,9 @@ Reference:
 from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple, Any
+from collections import defaultdict
 import logging
+import time as time_module
 
 from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade, HBM4_SPEED_GRADES
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade
@@ -51,6 +56,521 @@ from model.dram.hbm4_bank_state_machine import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Performance Statistics Classes
+# =============================================================================
+
+@dataclass
+class ChannelPerformanceStats:
+    """Performance statistics for a single HBM4 channel
+
+    Tracks bandwidth, latency, hit rates, and command statistics.
+    """
+    # Command counts
+    act_count: int = 0
+    read_count: int = 0
+    write_count: int = 0
+    precharge_count: int = 0
+    refresh_count: int = 0
+
+    # Data transferred (in bytes)
+    read_bytes: int = 0
+    write_bytes: int = 0
+
+    # Latency tracking
+    total_read_latency: int = 0
+    total_write_latency: int = 0
+    read_count_latency: int = 0
+    write_count_latency: int = 0
+
+    # Row hit/miss tracking
+    row_hits: int = 0
+    row_misses: int = 0
+    row_conflicts: int = 0
+
+    # Bank utilization
+    active_bank_cycles: int = 0
+    idle_bank_cycles: int = 0
+
+    # Timing violations
+    timing_violations: int = 0
+
+    # Cycle tracking
+    start_cycle: int = 0
+    current_cycle: int = 0
+
+    def record_act(self, bank_group: int):
+        """Record an activation"""
+        self.act_count += 1
+
+    def record_read(self, bytes_transferred: int, latency: int, is_hit: bool):
+        """Record a read operation"""
+        self.read_count += 1
+        self.read_bytes += bytes_transferred
+        self.total_read_latency += latency
+        self.read_count_latency += 1
+        if is_hit:
+            self.row_hits += 1
+        else:
+            self.row_misses += 1
+
+    def record_write(self, bytes_transferred: int, latency: int, is_hit: bool):
+        """Record a write operation"""
+        self.write_count += 1
+        self.write_bytes += bytes_transferred
+        self.total_write_latency += latency
+        self.write_count_latency += 1
+        if is_hit:
+            self.row_hits += 1
+        else:
+            self.row_misses += 1
+
+    def record_row_conflict(self):
+        """Record a row conflict (same bank, different row)"""
+        self.row_conflicts += 1
+
+    def record_timing_violation(self):
+        """Record a timing violation"""
+        self.timing_violations += 1
+
+    def update_bank_utilization(self, active_banks: int, total_banks: int):
+        """Update bank utilization tracking"""
+        self.active_bank_cycles += active_banks
+        # idle_banks = total_banks - active_banks
+
+    @property
+    def average_read_latency(self) -> float:
+        """Average read latency in cycles"""
+        if self.read_count_latency == 0:
+            return 0.0
+        return self.total_read_latency / self.read_count_latency
+
+    @property
+    def average_write_latency(self) -> float:
+        """Average write latency in cycles"""
+        if self.write_count_latency == 0:
+            return 0.0
+        return self.total_write_latency / self.write_count_latency
+
+    @property
+    def row_hit_rate(self) -> float:
+        """Row hit rate as percentage"""
+        total = self.row_hits + self.row_misses
+        if total == 0:
+            return 0.0
+        return (self.row_hits / total) * 100.0
+
+    @property
+    def total_cycles(self) -> int:
+        """Total simulation cycles"""
+        return max(1, self.current_cycle - self.start_cycle)
+
+    def get_bandwidth_gbs(self) -> Tuple[float, float]:
+        """Get read and write bandwidth in GB/s
+
+        Returns:
+            (read_bandwidth, write_bandwidth) in GB/s
+        """
+        cycles = self.total_cycles
+        if cycles == 0:
+            return 0.0, 0.0
+
+        # Bandwidth = bytes / time
+        # time = cycles * tCK
+        read_bw = (self.read_bytes / cycles) if cycles > 0 else 0.0
+        write_bw = (self.write_bytes / cycles) if cycles > 0 else 0.0
+        return read_bw, write_bw
+
+    def get_summary(self) -> Dict:
+        """Get performance summary"""
+        read_bw, write_bw = self.get_bandwidth_gbs()
+        total_bw = read_bw + write_bw
+
+        return {
+            'act_count': self.act_count,
+            'read_count': self.read_count,
+            'write_count': self.write_count,
+            'read_bytes': self.read_bytes,
+            'write_bytes': self.write_bytes,
+            'average_read_latency': self.average_read_latency,
+            'average_write_latency': self.average_write_latency,
+            'row_hit_rate': self.row_hit_rate,
+            'row_hits': self.row_hits,
+            'row_misses': self.row_misses,
+            'row_conflicts': self.row_conflicts,
+            'timing_violations': self.timing_violations,
+            'read_bandwidth_gbs': read_bw,
+            'write_bandwidth_gbs': write_bw,
+            'total_bandwidth_gbs': total_bw,
+        }
+
+    def reset(self, start_cycle: int = 0):
+        """Reset all statistics"""
+        self.act_count = 0
+        self.read_count = 0
+        self.write_count = 0
+        self.precharge_count = 0
+        self.refresh_count = 0
+        self.read_bytes = 0
+        self.write_bytes = 0
+        self.total_read_latency = 0
+        self.total_write_latency = 0
+        self.read_count_latency = 0
+        self.write_count_latency = 0
+        self.row_hits = 0
+        self.row_misses = 0
+        self.row_conflicts = 0
+        self.active_bank_cycles = 0
+        self.idle_bank_cycles = 0
+        self.timing_violations = 0
+        self.start_cycle = start_cycle
+        self.current_cycle = start_cycle
+
+
+@dataclass
+class PseudoChannelStats:
+    """Performance statistics for a single pseudo-channel"""
+    channel_id: int
+    pseudo_channel_id: int
+
+    # Command counts
+    act_count: int = 0
+    read_count: int = 0
+    write_count: int = 0
+
+    # Bank group usage
+    bg_act_counts: List[int] = field(default_factory=lambda: [0] * 8)
+
+    # Active cycles
+    active_cycles: int = 0
+    total_cycles: int = 0
+
+    def record_act(self, bank_group: int):
+        """Record activation for a bank group"""
+        self.act_count += 1
+        if 0 <= bank_group < 8:
+            self.bg_act_counts[bank_group] += 1
+
+    def record_read(self):
+        self.read_count += 1
+
+    def record_write(self):
+        self.write_count += 1
+
+    def get_bg_distribution(self) -> Dict[int, float]:
+        """Get bank group activation distribution"""
+        if self.act_count == 0:
+            return {i: 0.0 for i in range(8)}
+        return {
+            bg: (count / self.act_count) * 100.0
+            for bg, count in enumerate(self.bg_act_counts)
+        }
+
+    def get_utilization(self) -> float:
+        """Get channel utilization percentage"""
+        if self.total_cycles == 0:
+            return 0.0
+        return (self.active_cycles / self.total_cycles) * 100.0
+
+    def reset(self):
+        """Reset statistics"""
+        self.act_count = 0
+        self.read_count = 0
+        self.write_count = 0
+        self.bg_act_counts = [0] * 8
+        self.active_cycles = 0
+        self.total_cycles = 0
+
+
+# =============================================================================
+# Enhanced Bank Group Scheduler with Independent Tracking
+# =============================================================================
+
+class EnhancedBankGroupScheduler:
+    """Enhanced bank group-aware command scheduler with independent timing domains
+
+    Provides per-pseudo-channel timing isolation and comprehensive scheduling
+    with FAW (Four-Activate Window) tracking and turnaround optimization.
+    """
+
+    def __init__(self, timing: HBM4Timing):
+        self.timing = timing
+
+        # Per-pseudo-channel timing tracking
+        # Format: (pch_id) -> {'last_act_cycle': int, 'last_col_cycle': int,
+        #                      'last_act_bg': int, 'last_col_bg': int,
+        #                      'last_col_is_write': bool}
+        self._pch_state: Dict[int, Dict] = defaultdict(lambda: {
+            'last_act_cycle': -1,
+            'last_col_cycle': -1,
+            'last_act_bg': -1,
+            'last_col_bg': -1,
+            'last_col_is_write': False,
+        })
+
+        # Per-pseudo-channel FAW window tracking
+        self._faw_windows: Dict[int, List[int]] = defaultdict(list)
+
+        # Per-pseudo-channel command queues for scheduling
+        self._pending_commands: Dict[int, List[Tuple]] = defaultdict(list)
+
+    def can_issue_act(self, pseudo_channel: int, bank_group: int,
+                     current_cycle: int) -> bool:
+        """Check if ACT can be issued respecting all timing constraints
+
+        Checks:
+        - FAW window (max 4 activations in nFAW window)
+        - tRRDS for same bank group
+        - tRRDL for different bank group
+        - tRC for same bank (handled at bank level)
+
+        Args:
+            pseudo_channel: Pseudo-channel index (0 or 1)
+            bank_group: Bank group index (0-7)
+            current_cycle: Current simulation cycle
+
+        Returns:
+            True if ACT can be issued
+        """
+        pch_state = self._pch_state[pseudo_channel]
+        faw_window = self._faw_windows[pseudo_channel]
+
+        # Check FAW window - remove expired entries
+        faw_window[:] = [t for t in faw_window
+                        if current_cycle - t < self.timing.nFAW]
+
+        # Check FAW limit (max 4 activations in window)
+        if len(faw_window) >= 4:
+            return False
+
+        # Check bank group timing
+        last_act_cycle = pch_state['last_act_cycle']
+        last_act_bg = pch_state['last_act_bg']
+
+        if last_act_cycle >= 0:
+            elapsed = current_cycle - last_act_cycle
+
+            if last_act_bg == bank_group:
+                # Same BG: requires tRRDS
+                if elapsed < self.timing.nRRDS:
+                    return False
+            else:
+                # Different BG: requires tRRDL
+                if elapsed < self.timing.nRRDL:
+                    return False
+
+        return True
+
+    def record_act(self, pseudo_channel: int, bank_group: int, current_cycle: int):
+        """Record an ACT command and update timing state
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            bank_group: Bank group index
+            current_cycle: Current simulation cycle
+        """
+        pch_state = self._pch_state[pseudo_channel]
+        faw_window = self._faw_windows[pseudo_channel]
+
+        pch_state['last_act_cycle'] = current_cycle
+        pch_state['last_act_bg'] = bank_group
+        faw_window.append(current_cycle)
+
+    def can_issue_col(self, pseudo_channel: int, bank_group: int,
+                     current_cycle: int, is_write: bool = False) -> bool:
+        """Check if column command (RD/WR) can be issued
+
+        Checks:
+        - nCCDS/nCCDL for CAS-to-CAS delay
+        - nRTW for read-to-write turnaround
+        - nWTRS/nWTRL for write-to-read turnaround
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            bank_group: Bank group index
+            current_cycle: Current simulation cycle
+            is_write: True if write, False if read
+
+        Returns:
+            True if column command can be issued
+        """
+        pch_state = self._pch_state[pseudo_channel]
+        last_col_cycle = pch_state['last_col_cycle']
+        last_col_bg = pch_state['last_col_bg']
+        last_col_is_write = pch_state['last_col_is_write']
+
+        if last_col_cycle < 0:
+            return True
+
+        elapsed = current_cycle - last_col_cycle
+
+        # Same BG or different BG?
+        same_bg = (last_col_bg == bank_group)
+
+        if same_bg:
+            if is_write != last_col_is_write:
+                # Direction change on same BG: need RTW or WTRS
+                turnaround = self.timing.nWTRS if is_write else self.timing.nRTW
+                if elapsed < turnaround:
+                    return False
+            else:
+                # Same BG, same direction: nCCDS
+                if elapsed < self.timing.nCCDS:
+                    return False
+        else:
+            # Different BG
+            if is_write != last_col_is_write:
+                # Direction change: need WTRL or RTW
+                turnaround = self.timing.nWTRL if is_write else self.timing.nRTW
+                if elapsed < turnaround:
+                    return False
+            else:
+                # Different BG, same direction: nCCDL
+                if elapsed < self.timing.nCCDL:
+                    return False
+
+        return True
+
+    def record_col(self, pseudo_channel: int, bank_group: int,
+                   current_cycle: int, is_write: bool = False):
+        """Record a column command
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            bank_group: Bank group index
+            current_cycle: Current simulation cycle
+            is_write: True if write, False if read
+        """
+        pch_state = self._pch_state[pseudo_channel]
+        pch_state['last_col_cycle'] = current_cycle
+        pch_state['last_col_bg'] = bank_group
+        pch_state['last_col_is_write'] = is_write
+
+    def can_issue_ref(self, pseudo_channel: int, current_cycle: int) -> bool:
+        """Check if REFRESH can be issued
+
+        All banks must be closed for REFab.
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            current_cycle: Current simulation cycle
+
+        Returns:
+            True if REFRESH can be issued
+        """
+        pch_state = self._pch_state[pseudo_channel]
+
+        # Check if there's a minimum gap since last command
+        last_cycle = max(pch_state['last_act_cycle'],
+                        pch_state['last_col_cycle'])
+        if last_cycle >= 0:
+            # REFab requires all banks to be idle
+            # This is handled at the channel level
+            pass
+
+        return True
+
+    def get_available_bank_groups(self, pseudo_channel: int,
+                                  current_cycle: int) -> List[int]:
+        """Get list of bank groups that can accept ACT
+
+        Useful for scheduling algorithms to find available BGs.
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            current_cycle: Current simulation cycle
+
+        Returns:
+            List of bank group indices that can accept ACT
+        """
+        available = []
+        for bg in range(8):
+            if self.can_issue_act(pseudo_channel, bg, current_cycle):
+                available.append(bg)
+        return available
+
+    def get_next_available_cycle(self, pseudo_channel: int, bank_group: int,
+                                 current_cycle: int) -> int:
+        """Get the next cycle when ACT can be issued to a bank group
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            bank_group: Bank group index
+            current_cycle: Current simulation cycle
+
+        Returns:
+            Next available cycle
+        """
+        pch_state = self._pch_state[pseudo_channel]
+        faw_window = self._faw_windows[pseudo_channel]
+
+        # Start with current cycle
+        next_cycle = current_cycle
+
+        # Check FAW
+        faw_window[:] = [t for t in faw_window
+                        if current_cycle - t < self.timing.nFAW]
+
+        if len(faw_window) >= 4:
+            # Need to wait for oldest entry to expire
+            oldest = min(faw_window)
+            next_cycle = max(next_cycle, oldest + self.timing.nFAW)
+
+        # Check bank group timing
+        last_act_cycle = pch_state['last_act_cycle']
+        last_act_bg = pch_state['last_act_bg']
+
+        if last_act_cycle >= 0:
+            if last_act_bg == bank_group:
+                next_cycle = max(next_cycle, last_act_cycle + self.timing.nRRDS)
+            else:
+                next_cycle = max(next_cycle, last_act_cycle + self.timing.nRRDL)
+
+        return next_cycle
+
+    def reset(self, pseudo_channel: Optional[int] = None):
+        """Reset scheduler state
+
+        Args:
+            pseudo_channel: If specified, reset only this pseudo-channel.
+                          Otherwise reset all.
+        """
+        if pseudo_channel is not None:
+            if pseudo_channel in self._pch_state:
+                del self._pch_state[pseudo_channel]
+            if pseudo_channel in self._faw_windows:
+                del self._faw_windows[pseudo_channel]
+            if pseudo_channel in self._pending_commands:
+                del self._pending_commands[pseudo_channel]
+        else:
+            self._pch_state.clear()
+            self._faw_windows.clear()
+            self._pending_commands.clear()
+
+    def get_scheduler_state(self, pseudo_channel: int) -> Dict:
+        """Get current scheduler state for debugging
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+
+        Returns:
+            Dictionary with scheduler state
+        """
+        pch_state = self._pch_state[pseudo_channel]
+        faw_window = self._faw_windows[pseudo_channel]
+
+        return {
+            'pseudo_channel': pseudo_channel,
+            'last_act_cycle': pch_state['last_act_cycle'],
+            'last_act_bg': pch_state['last_act_bg'],
+            'last_col_cycle': pch_state['last_col_cycle'],
+            'last_col_bg': pch_state['last_col_bg'],
+            'last_col_is_write': pch_state['last_col_is_write'],
+            'faw_window_size': len(faw_window),
+            'faw_window_cycles': faw_window.copy(),
+        }
 
 
 # =============================================================================
@@ -750,6 +1270,13 @@ class HBM4Channel:
     Each channel has 2 pseudo-channels (64 total pseudo-channels).
     Each pseudo-channel has 8 bank groups (2 banks per group).
 
+    Features:
+    - Full channel independence with isolated timing domains
+    - Comprehensive performance statistics
+    - Enhanced bank group scheduling with FAW tracking
+    - Timing violation detection
+    - Per-pseudo-channel statistics
+
     Reference: Ramulator 2.0 HBM3 channel node
     """
 
@@ -811,7 +1338,7 @@ class HBM4Channel:
         self.current_cycle = 0
         self.use_enhanced_banks = use_enhanced_banks
 
-        # Create 2 pseudo-channels per channel
+        # Create 2 pseudo-channels per channel with independent state
         self.pseudo_channels = [
             PseudoChannel(channel_id, pch_id, spec, timing, use_enhanced_banks)
             for pch_id in range(spec.pseudo_channels_per_channel)
@@ -820,11 +1347,43 @@ class HBM4Channel:
         # Channel-level state
         self.state = HBM4ChannelState.IDLE
 
-        # Bank group-aware command scheduling
+        # Enhanced bank group-aware command scheduling (per pseudo-channel)
+        self._schedulers = {
+            0: EnhancedBankGroupScheduler(timing),
+            1: EnhancedBankGroupScheduler(timing)
+        }
+
+        # Legacy scheduler for backward compatibility
         self._bg_scheduler = BankGroupScheduler(timing)
 
         # Timing violations
         self.timing_violations: List[TimingViolation] = []
+
+        # Performance statistics
+        self.stats = ChannelPerformanceStats()
+
+        # Pseudo-channel specific statistics
+        self._pc_stats = {
+            0: PseudoChannelStats(channel_id, 0),
+            1: PseudoChannelStats(channel_id, 1)
+        }
+
+        # Independent timing domains - each pseudo-channel has its own timing state
+        self._timing_domains = {
+            0: {'last_act_cycle': -1, 'last_col_cycle': -1},
+            1: {'last_act_cycle': -1, 'last_col_cycle': -1}
+        }
+
+    def get_scheduler(self, pseudo_channel: int) -> EnhancedBankGroupScheduler:
+        """Get the scheduler for a specific pseudo-channel
+
+        Args:
+            pseudo_channel: Pseudo-channel index (0 or 1)
+
+        Returns:
+            EnhancedBankGroupScheduler for the pseudo-channel
+        """
+        return self._schedulers.get(pseudo_channel, self._bg_scheduler)
 
     def set_time(self, current_cycle: int) -> None:
         """Set current simulation cycle and propagate to pseudo-channels
@@ -886,7 +1445,7 @@ class HBM4Channel:
 
     def issue_command(self, cmd: str, pseudo_channel: int,
                      bank: int, row: int, col: int = 0) -> bool:
-        """Issue a command to this channel
+        """Issue a command to this channel with performance tracking
 
         Args:
             cmd: Command name ('ACT', 'PRE', 'RD', 'WR', etc.)
@@ -905,75 +1464,146 @@ class HBM4Channel:
             return False
 
         pc = self.pseudo_channels[pseudo_channel]
+        scheduler = self._schedulers[pseudo_channel]
+        pc_stats = self._pc_stats[pseudo_channel]
+        bank_group = bank // self.banks_per_bank_group
 
         if cmd == 'ACT':
+            # Check if command can be issued with enhanced scheduler
+            if not scheduler.can_issue_act(pseudo_channel, bank_group, self.current_cycle):
+                return False
+
             result = pc.activate_row(row, bank_id=bank)
             if result:
                 self.state = HBM4ChannelState.ACTIVE
+                # Record statistics
+                self.stats.record_act(bank_group)
+                pc_stats.record_act(bank_group)
+                scheduler.record_act(pseudo_channel, bank_group, self.current_cycle)
             return result
 
         elif cmd == 'PRE':
             # Precharge specific bank
             result = pc.precharge_bank(bank)
             if result:
+                self.stats.precharge_count += 1
                 self.state = HBM4ChannelState.IDLE
             return result
 
         elif cmd == 'PREA':
             pc.precharge_all()
+            self.stats.precharge_count += self.spec.banks_per_pseudo_channel
             self.state = HBM4ChannelState.IDLE
             return True
 
         elif cmd in ['RD', 'RDA']:
+            # Check scheduler for column commands
+            is_write = False
+            if not scheduler.can_issue_col(pseudo_channel, bank_group,
+                                          self.current_cycle, is_write):
+                return False
+
             # Check if row is open in the specified bank
             bank_obj = pc.banks[bank]
+            row_hit = False
+
             if hasattr(bank_obj.bank, 'state'):
                 from model.dram.bank_state_machine import BankStateEnum
                 if bank_obj.bank.state == BankStateEnum.IDLE:
                     # Need to activate first
                     if not pc.activate_row(row, bank_id=bank):
                         return False
-                elif bank_obj.bank.open_row != row:
+                    self.stats.row_misses += 1
+                elif bank_obj.bank.open_row == row:
+                    row_hit = True
+                    self.stats.row_hits += 1
+                else:
                     # Different row open - need to precharge and activate
                     pc.precharge_bank(bank)
                     if not pc.activate_row(row, bank_id=bank):
                         return False
+                    self.stats.row_conflicts += 1
+                    self.stats.row_misses += 1
             else:
                 # Enhanced bank state machine
                 if bank_obj.get_state().name == 'CLOSED':
                     if not pc.activate_row(row, bank_id=bank):
                         return False
-                elif bank_obj.get_open_row() != row:
+                    self.stats.row_misses += 1
+                elif bank_obj.get_open_row() == row:
+                    row_hit = True
+                    self.stats.row_hits += 1
+                else:
                     pc.precharge_bank(bank)
                     if not pc.activate_row(row, bank_id=bank):
                         return False
+                    self.stats.row_conflicts += 1
+                    self.stats.row_misses += 1
+
             pc.state = PseudoChannelState.READING
+
+            # Record statistics
+            bytes_per_read = self.spec.io_width // self.spec.channels // 8  # bytes per read
+            latency = self.timing.nCL + self.timing.nBL
+            self.stats.record_read(bytes_per_read, latency, row_hit)
+            pc_stats.record_read()
+            scheduler.record_col(pseudo_channel, bank_group, self.current_cycle, is_write)
+
             return True
 
         elif cmd in ['WR', 'WRA']:
+            # Check scheduler for column commands
+            is_write = True
+            if not scheduler.can_issue_col(pseudo_channel, bank_group,
+                                          self.current_cycle, is_write):
+                return False
+
             # Check if row is open in the specified bank
             bank_obj = pc.banks[bank]
+            row_hit = False
+
             if hasattr(bank_obj.bank, 'state'):
                 from model.dram.bank_state_machine import BankStateEnum
                 if bank_obj.bank.state == BankStateEnum.IDLE:
                     # Need to activate first
                     if not pc.activate_row(row, bank_id=bank):
                         return False
-                elif bank_obj.bank.open_row != row:
+                    self.stats.row_misses += 1
+                elif bank_obj.bank.open_row == row:
+                    row_hit = True
+                    self.stats.row_hits += 1
+                else:
                     # Different row open - need to precharge and activate
                     pc.precharge_bank(bank)
                     if not pc.activate_row(row, bank_id=bank):
                         return False
+                    self.stats.row_conflicts += 1
+                    self.stats.row_misses += 1
             else:
                 # Enhanced bank state machine
                 if bank_obj.get_state().name == 'CLOSED':
                     if not pc.activate_row(row, bank_id=bank):
                         return False
-                elif bank_obj.get_open_row() != row:
+                    self.stats.row_misses += 1
+                elif bank_obj.get_open_row() == row:
+                    row_hit = True
+                    self.stats.row_hits += 1
+                else:
                     pc.precharge_bank(bank)
                     if not pc.activate_row(row, bank_id=bank):
                         return False
+                    self.stats.row_conflicts += 1
+                    self.stats.row_misses += 1
+
             pc.state = PseudoChannelState.WRITING
+
+            # Record statistics
+            bytes_per_write = self.spec.io_width // self.spec.channels // 8
+            latency = self.timing.nCWL + self.timing.nBL
+            self.stats.record_write(bytes_per_write, latency, row_hit)
+            pc_stats.record_write()
+            scheduler.record_col(pseudo_channel, bank_group, self.current_cycle, is_write)
+
             return True
 
         elif cmd == 'REFab':
@@ -981,6 +1611,7 @@ class HBM4Channel:
             result = pc.refresh()
             if result:
                 self.state = HBM4ChannelState.REFRESHING
+                self.stats.refresh_count += 1
             return result
 
         elif cmd == 'REFsb':
@@ -988,11 +1619,14 @@ class HBM4Channel:
             result = pc.refresh(bank_id=bank)
             if result:
                 self.state = HBM4ChannelState.REFRESHING
+                self.stats.refresh_count += 1
             return result
 
         elif cmd in ['RFMab', 'RFMsb']:
             # Row flash memory refresh - similar to REF but may have different timing
             result = pc.refresh() if cmd == 'RFMab' else pc.refresh(bank_id=bank)
+            if result:
+                self.stats.refresh_count += 1
             return result
 
         return False
@@ -1072,14 +1706,38 @@ class HBM4Channel:
         return False
 
     def tick(self):
-        """Advance channel time by one cycle"""
+        """Advance channel time by one cycle and update statistics"""
         self.current_cycle += 1
 
+        # Update statistics
+        self.stats.current_cycle = self.current_cycle
+
         # Update all pseudo-channels - sync time properly
-        for pc in self.pseudo_channels:
+        for pc_id, pc in enumerate(self.pseudo_channels):
             # Pass the new cycle to pseudo-channel tick
             # PseudoChannel.tick will propagate to enhanced_banks via set_time
             pc.tick(self.current_cycle)
+
+            # Update pseudo-channel stats
+            pc_stats = self._pc_stats[pc_id]
+            pc_stats.total_cycles += 1
+
+            # Count active banks
+            active_banks = 0
+            for bank in pc.banks:
+                if hasattr(bank.bank, 'state'):
+                    from model.dram.bank_state_machine import BankStateEnum
+                    if bank.bank.state == BankStateEnum.ACTIVE:
+                        active_banks += 1
+                else:
+                    if bank.get_state().name == 'OPEN':
+                        active_banks += 1
+
+            if active_banks > 0:
+                pc_stats.active_cycles += 1
+
+            # Update channel-level bank utilization
+            self.stats.update_bank_utilization(active_banks, len(pc.banks))
 
             # Complete refresh operations - check per-bank
             if pc.state == PseudoChannelState.REFRESHING:
@@ -1103,11 +1761,12 @@ class HBM4Channel:
                 pc.state = PseudoChannelState.ACTIVE
 
     def reset(self):
-        """Reset channel to initial state"""
+        """Reset channel to initial state and reset statistics"""
         self.current_cycle = 0
         self.state = HBM4ChannelState.IDLE
+
         # Reset all pseudo-channels
-        for pc in self.pseudo_channels:
+        for pc_id, pc in enumerate(self.pseudo_channels):
             pc.state = PseudoChannelState.IDLE
             pc.current_cycle = 0
             # Reset all banks
@@ -1124,6 +1783,21 @@ class HBM4Channel:
             # Reset bank groups
             for bg in pc.bank_groups:
                 bg.last_act_cycle = -1
+
+        # Reset schedulers
+        for scheduler in self._schedulers.values():
+            scheduler.reset()
+
+        # Reset statistics
+        self.stats.reset(self.current_cycle)
+        for pc_stats in self._pc_stats.values():
+            pc_stats.reset()
+
+        # Reset timing domains
+        self._timing_domains = {
+            0: {'last_act_cycle': -1, 'last_col_cycle': -1},
+            1: {'last_act_cycle': -1, 'last_col_cycle': -1}
+        }
 
     def get_bank(self, pseudo_channel: int, bank: int):
         """Get a specific bank state machine
@@ -1225,10 +1899,10 @@ class HBM4Channel:
         return self.timing_violations.copy()
 
     def get_state_summary(self) -> dict:
-        """Get channel state summary
+        """Get channel state summary with performance statistics
 
         Returns:
-            Dictionary with state information
+            Dictionary with state information and performance metrics
         """
         from model.dram.bank_state_machine import BankStateEnum
 
@@ -1263,13 +1937,58 @@ class HBM4Channel:
                                                    and pc.banks[idx].get_state().name == 'OPEN'))
                         }
                         for bg in pc.bank_groups
-                    ]
+                    ],
+                    'stats': self._pc_stats[pc.pseudo_channel_id].get_bg_distribution()
                 }
                 for pc in self.pseudo_channels
             ],
             'current_cycle': self.current_cycle,
-            'timing_violations': len(self.timing_violations)
+            'timing_violations': len(self.timing_violations),
+            'performance': self.stats.get_summary()
         }
+
+    def get_performance_stats(self) -> ChannelPerformanceStats:
+        """Get performance statistics for this channel
+
+        Returns:
+            ChannelPerformanceStats object with current statistics
+        """
+        return self.stats
+
+    def get_scheduler_state(self, pseudo_channel: int) -> Dict:
+        """Get scheduler state for a pseudo-channel
+
+        Args:
+            pseudo_channel: Pseudo-channel index (0 or 1)
+
+        Returns:
+            Dictionary with scheduler state
+        """
+        if pseudo_channel in self._schedulers:
+            return self._schedulers[pseudo_channel].get_scheduler_state(pseudo_channel)
+        return {}
+
+    def get_timing_domain_state(self, pseudo_channel: int) -> Dict:
+        """Get timing domain state for a pseudo-channel
+
+        Args:
+            pseudo_channel: Pseudo-channel index (0 or 1)
+
+        Returns:
+            Dictionary with timing domain state
+        """
+        return self._timing_domains.get(pseudo_channel, {})
+
+    def set_time(self, current_cycle: int) -> None:
+        """Set current simulation cycle and propagate to pseudo-channels
+
+        Args:
+            current_cycle: Current simulation cycle
+        """
+        self.current_cycle = current_cycle
+        self.stats.current_cycle = current_cycle
+        for pc in self.pseudo_channels:
+            pc.set_time(current_cycle)
 
 
 class BankGroupScheduler:

@@ -54,29 +54,204 @@ class DFICommand(Enum):
 
     These are the standard DFI command codes used for
     communication between controller and PHY.
+
+    Command Encoding (4-bit):
+    [3:0] - Command type
     """
+    # Memory Access Commands
     ACT = 0b0000     # Activate
-    PRE = 0b0001     # Precharge
-    PREA = 0b0010    # Precharge all
-    RD = 0b0011      # Read
-    WR = 0b0100      # Write
+    PRE = 0b0001     # Precharge bank
+    PREA = 0b0010    # Precharge all banks
+    RD = 0b0011      # Read without auto-precharge
+    WR = 0b0100      # Write without auto-precharge
     RDA = 0b0101     # Read with auto-precharge
     WRA = 0b0110     # Write with auto-precharge
+
+    # Refresh Commands
     REFab = 0b0111   # All-bank refresh
     REFsb = 0b1000   # Per-bank refresh
     RFMab = 0b1001   # All-bank row flash memory refresh
     RFMsb = 0b1010   # Per-bank row flash memory refresh
+
+    # Mode Register Access (DFI 5.0)
+    MRS = 0b1011     # Mode Register Set
+    MRR = 0b1100     # Mode Register Read
+
+    # Power Management Commands (DFI 5.0)
+    SREF = 0b1101    # Self-Refresh Entry
+    SREFEX = 0b1110  # Self-Refresh Exit
+    PD = 0b1111      # Power-Down Entry
+    PDEX = 0b10000   # Power-Down Exit (extended encoding)
+    DPD = 0b10001    # Deep Power-Down
+    DPDEX = 0b10010  # Deep Power-Down Exit
+
+    # Training Commands (DFI 5.0)
+    WRLVL = 0b10011   # Write Leveling
+    RDLVL = 0b10100   # Read DQS Gate Training
+    RDDQSDQ = 0b10101 # Read Data Bit Eye Training
+    WRDQSDQ = 0b10110 # Write Data Bit Eye Training
+    MRLVL = 0b10111   # MPR Read Leveling
+
+    # Initialization Commands
+    ZQCL = 0b11000    # ZQ Calibration Long
+    ZQCS = 0b11001   # ZQ Calibration Short
+    ZQOP = 0b11010   # ZQ Operation
+
+    # Test/Debug Commands
+    NOP = 0b00000    # No Operation
+    DESELECT = 0b11111  # Deselect
+
+    def is_read(self) -> bool:
+        """Check if command is a read operation"""
+        return self in {DFICommand.RD, DFICommand.RDA, DFICommand.MRR,
+                        DFICommand.RDLVL, DFICommand.RDDQSDQ, DFICommand.MRLVL}
+
+    def is_write(self) -> bool:
+        """Check if command is a write operation"""
+        return self in {DFICommand.WR, DFICommand.WRA, DFICommand.WRLVL,
+                        DFICommand.WRDQSDQ}
+
+    def is_activate(self) -> bool:
+        """Check if command is an activate operation"""
+        return self == DFICommand.ACT
+
+    def is_precharge(self) -> bool:
+        """Check if command is a precharge operation"""
+        return self in {DFICommand.PRE, DFICommand.PREA}
+
+    def is_refresh(self) -> bool:
+        """Check if command is a refresh operation"""
+        return self in {DFICommand.REFab, DFICommand.REFsb,
+                        DFICommand.RFMab, DFICommand.RFMsb}
+
+    def is_power_down(self) -> bool:
+        """Check if command is power management related"""
+        return self in {DFICommand.SREF, DFICommand.SREFEX,
+                        DFICommand.PD, DFICommand.PDEX,
+                        DFICommand.DPD, DFICommand.DPDEX}
+
+    def is_training(self) -> bool:
+        """Check if command is a training sequence"""
+        return self in {DFICommand.WRLVL, DFICommand.RDLVL,
+                        DFICommand.RDDQSDQ, DFICommand.WRDQSDQ,
+                        DFICommand.MRLVL}
+
+    def requires_bank(self) -> bool:
+        """Check if command requires bank address"""
+        return self in {DFICommand.ACT, DFICommand.PRE, DFICommand.RD,
+                        DFICommand.WR, DFICommand.RDA, DFICommand.WRA,
+                        DFICommand.REFsb, DFICommand.RFMsb}
+
+    def requires_row(self) -> bool:
+        """Check if command requires row address"""
+        return self in {DFICommand.ACT}
+
+    def requires_col(self) -> bool:
+        """Check if command requires column address"""
+        return self in {DFICommand.RD, DFICommand.WR, DFICommand.RDA, DFICommand.WRA}
+
+    def requires_mr(self) -> bool:
+        """Check if command requires mode register address"""
+        return self in {DFICommand.MRS, DFICommand.MRR}
+
+    @classmethod
+    def from_string(cls, cmd_str: str) -> 'DFICommand':
+        """Convert string to DFICommand
+
+        Args:
+            cmd_str: Command string ('ACT', 'PRE', 'RD', etc.)
+
+        Returns:
+            Corresponding DFICommand enum
+
+        Raises:
+            ValueError: If command string is invalid
+        """
+        cmd_map = {
+            'ACT': cls.ACT, 'PRE': cls.PRE, 'PREA': cls.PREA,
+            'RD': cls.RD, 'WR': cls.WR, 'RDA': cls.RDA, 'WRA': cls.WRA,
+            'REFab': cls.REFab, 'REFsb': cls.REFsb,
+            'RFMab': cls.RFMab, 'RFMsb': cls.RFMsb,
+            'MRS': cls.MRS, 'MRR': cls.MRR,
+            'SREF': cls.SREF, 'SREFEX': cls.SREFEX,
+            'PD': cls.PD, 'PDEX': cls.PDEX, 'DPD': cls.DPD, 'DPDEX': cls.DPDEX,
+            'WRLVL': cls.WRLVL, 'RDLVL': cls.RDLVL,
+            'RDDQSDQ': cls.RDDQSDQ, 'WRDQSDQ': cls.WRDQSDQ, 'MRLVL': cls.MRLVL,
+            'ZQCL': cls.ZQCL, 'ZQCS': cls.ZQCS, 'ZQOP': cls.ZQOP,
+            'NOP': cls.NOP, 'DESELECT': cls.DESELECT,
+        }
+        result = cmd_map.get(cmd_str.upper())
+        if result is None:
+            raise ValueError(f"Invalid command: {cmd_str}")
+        return result
 
 
 class DFILowPowerState(Enum):
     """DFI 5.0/5.1 low-power states
 
     Standard DFI low power state machine states as per DFI spec.
+
+    State Hierarchy:
+    - LP_IDLE: Normal operation, all clocks active
+    - LP_CTRL: Controller in low-power, PHY still training-capable
+    - LP_DATA: Data path in low-power (no data transfers)
+    - LP_SELF_REFRESH: DRAM self-refresh mode
+    - LP_POWER_DOWN: DRAM power-down mode
+    - LP_DEEP_PD: Deep power-down (CKE low)
+    - LP_FREQ_CHANGE: Frequency change in progress
     """
-    LP_IDLE = 0          # Normal operation
-    LP_CTRL = 1          # Controller in low-power (PHY still active)
-    LP_DATA = 2          # Data path in low-power
-    LP_FREQ_CHANGE = 3   # Frequency change in progress
+    LP_IDLE = 0           # Normal operation, all clocks active
+    LP_CTRL = 1           # Controller in low-power (PHY still active)
+    LP_DATA = 2           # Data path in low-power
+    LP_SELF_REFRESH = 3   # DRAM self-refresh (CKE low)
+    LP_POWER_DOWN = 4     # DRAM power-down (CKE low)
+    LP_DEEP_PD = 5        # Deep power-down mode
+    LP_FREQ_CHANGE = 6    # Frequency change in progress
+
+    def is_active(self) -> bool:
+        """Check if state allows normal operation"""
+        return self == DFILowPowerState.LP_IDLE
+
+    def allows_commands(self) -> bool:
+        """Check if DRAM commands can be issued in this state"""
+        return self in {DFILowPowerState.LP_IDLE}
+
+    def allows_data(self) -> bool:
+        """Check if data transfers are allowed in this state"""
+        return self in {DFILowPowerState.LP_IDLE, DFILowPowerState.LP_CTRL}
+
+    def is_power_down(self) -> bool:
+        """Check if DRAM is in power-down mode"""
+        return self in {DFILowPowerState.LP_POWER_DOWN,
+                        DFILowPowerState.LP_DEEP_PD}
+
+    def requires_cke(self) -> bool:
+        """Check if CKE signal management is required"""
+        return self in {DFILowPowerState.LP_SELF_REFRESH,
+                        DFILowPowerState.LP_POWER_DOWN}
+
+    def get_exit_latency_cycles(self, timing: 'DFITimingParameters') -> int:
+        """Get expected exit latency in cycles
+
+        Args:
+            timing: DFI timing parameters
+
+        Returns:
+            Exit latency in cycles
+        """
+        latency_map = {
+            DFILowPowerState.LP_CTRL: timing.tLP_CTRL_EXIT,
+            DFILowPowerState.LP_DATA: timing.tLP_DATA_EXIT,
+            DFILowPowerState.LP_SELF_REFRESH: timing.tLP_SREF_EXIT,
+            DFILowPowerState.LP_POWER_DOWN: timing.tLP_PD_EXIT,
+            DFILowPowerState.LP_DEEP_PD: timing.tLP_DPD_EXIT,
+        }
+        return latency_map.get(self, 0)
+
+
+class DFILPTimeoutError(Exception):
+    """Exception raised for low-power state timeout"""
+    pass
 
 
 class DFIStateTransitionError(Exception):
@@ -124,15 +299,27 @@ class DFITimingParameters:
     # Frequency change timing (DFI 5.0)
     tFC_LATENCY: int = 8     # Frequency change latency (cycles)
     tFC_EXIT: int = 4        # Exit frequency change (cycles)
+    tFC_PLL_LOCK: int = 4    # PLL re-lock time (cycles)
 
     # Low power entry/exit timing (DFI 5.0)
     tLP_CTRL_ENTER: int = 2  # LP_CTRL entry latency (cycles)
     tLP_CTRL_EXIT: int = 2   # LP_CTRL exit latency (cycles)
     tLP_DATA_ENTER: int = 4  # LP_DATA entry latency (cycles)
-    tLP_DATA_EXIT: int = 4   # LP_DATA exit latency (cycles)
+    tLP_DATA_EXIT: int = 4    # LP_DATA exit latency (cycles)
+
+    # Self-refresh timing (DFI 5.0)
+    tLP_SREF_ENTER: int = 4   # Self-refresh entry latency
+    tLP_SREF_EXIT: int = 8    # Self-refresh exit latency (includes CK restart)
+
+    # Power-down timing
+    tLP_PD_ENTER: int = 2     # Power-down entry latency
+    tLP_PD_EXIT: int = 3      # Power-down exit latency
+    tLP_DPD_ENTER: int = 4    # Deep power-down entry latency
+    tLP_DPD_EXIT: int = 100   # Deep power-down exit (dramatic, ~100 cycles)
 
     # Control update timing (DFI 5.0)
     tCTRLUPD_LATENCY: int = 4  # Control update acknowledgment latency
+    tCTRLUPD_INTERVAL: int = 2560  # Maximum interval between updates
 
     # Training timing
     tTRAINING: int = 1000    # Training duration (cycles)
@@ -140,6 +327,19 @@ class DFITimingParameters:
     # Power management timing (DFI 5.0)
     tPWR_UP: int = 2        # Power-up latency
     tPWR_DOWN: int = 2       # Power-down latency
+
+    # PHY control timing
+    tPHY_CTRL_UPDATE: int = 10  # PHY control register update time
+    tPHY_CALIBRATION: int = 500  # Calibration sequence time
+
+    # Command timing
+    tCMD_DELAY: int = 1      # Command pipeline delay
+    tDATA_DELAY: int = 1     # Data path delay
+
+    # Frequency change entry/exit latencies
+    tFC_ENTER: int = 2       # Frequency change entry latency
+    tFC_ENTER_MAX: int = 4   # Maximum frequency change entry latency
+    tFC_EXIT_MAX: int = 8    # Maximum frequency change exit latency
 
     @property
     def write_latency_cycles(self) -> int:
@@ -172,6 +372,41 @@ class DFITimingParameters:
             Read latency in picoseconds
         """
         return self.tPHY_rdLat * tCK_ps
+
+    def get_freq_change_total_latency(self) -> int:
+        """Get total frequency change latency
+
+        Returns:
+            Total cycles for complete frequency change
+        """
+        return self.tFC_ENTER + self.tFC_LATENCY + self.tFC_EXIT + self.tFC_PLL_LOCK
+
+    def validate(self) -> List[str]:
+        """Validate timing parameters
+
+        Returns:
+            List of validation errors (empty if valid)
+        """
+        errors = []
+
+        if self.tPHY_wrlAT <= 0:
+            errors.append("tPHY_wrlAT must be positive")
+        if self.tPHY_wrlAT > self.tPHY_wrlAT_max:
+            errors.append("tPHY_wrlAT exceeds maximum")
+
+        if self.tPHY_rdLat <= 0:
+            errors.append("tPHY_rdLat must be positive")
+        if self.tPHY_rdLat > self.tPHY_rdLat_max:
+            errors.append("tPHY_rdLat exceeds maximum")
+
+        if self.tFC_LATENCY <= 0:
+            errors.append("tFC_LATENCY must be positive")
+        if self.tLP_CTRL_ENTER <= 0:
+            errors.append("tLP_CTRL_ENTER must be positive")
+        if self.tLP_DATA_ENTER <= 0:
+            errors.append("tLP_DATA_ENTER must be positive")
+
+        return errors
 
 
 @dataclass
@@ -432,18 +667,97 @@ class DFI5RequestQueue:
         }
 
 
+class TrainingPhase(Enum):
+    """PHY training phases (DFI 5.0)
+
+    Standard training phases for initialization and calibration.
+    """
+    IDLE = 0
+    DRAM_RESET = 1
+    DRAM_INIT = 2
+    WRITE_LEVELING = 3
+    READ_GATE_TRAINING = 4
+    READ_DQ_TRAINING = 5
+    WRITE_DQ_TRAINING = 6
+    WRITE_LEVELING_ADJUST = 7
+    VREF_CALIBRATION = 8
+    READ_IMAIN_TRAINING = 9
+    WRITE_IMAIN_TRAINING = 10
+    MEMORY_READY = 11
+    COMPLETE = 12
+
+
+class PHYConfigurationError(Exception):
+    """Exception raised for PHY configuration errors"""
+    pass
+
+
+class TrainingError(Exception):
+    """Exception raised for training failures"""
+    pass
+
+
 class DFIPhyIF:
     """DFI PHY Interface
 
     Implements the DFI PHY Independent Mode features
     for initialization, training, and calibration.
+
+    DFI 5.0 COMPLIANT FEATURES:
+    - PHY control signals (phy_clock_enable, phy_reset)
+    - Calibration status tracking
+    - Training sequence management
+    - Mode register access
+    - PLL/DLL configuration
+    - Impedance calibration control
     """
 
     def __init__(self):
+        # Basic PHY control
         self.phy_clock_enable = True
         self.phy_reset = False
         self.phy_independent_mode = True
         self.calibration_data: Dict[str, Any] = {}
+
+        # Advanced PHY configuration (DFI 5.0)
+        self._pll_config = {
+            'frequency_mhz': 800,
+            'divider': 1,
+            'multiplier': 1,
+            'locked': True,
+        }
+        self._dll_config = {
+            'enabled': True,
+            'delay_elements': 64,
+            'locked': True,
+        }
+        self._vref_config = {
+            'dram_vref': 50,  # percentage
+            'phy_vref': 50,
+        }
+        self._impedance_config = {
+            'write_impedance': 40,  # Ohms
+            'read_impedance': 40,
+            'calibration_done': False,
+        }
+
+        # Training state
+        self._training_phase = TrainingPhase.IDLE
+        self._training_results: Dict[str, Dict[str, Any]] = {}
+        self._calibration_results: Dict[str, Any] = {}
+
+        # Mode register cache
+        self._mr: Dict[int, int] = {}
+
+        # PHY status
+        self._status = {
+            'init_complete': False,
+            'training_complete': False,
+            'calibration_complete': False,
+            'pll_locked': True,
+            'dll_locked': True,
+            'zq_calibrated': False,
+        }
 
     def set_phy_clock_enable(self, enable: bool):
         """Set PHY clock enable signal
@@ -461,13 +775,25 @@ class DFIPhyIF:
         """
         self.phy_reset = reset
 
+    def get_phy_clock_enable(self) -> bool:
+        """Get current PHY clock enable state"""
+        return self.phy_clock_enable
+
+    def get_phy_reset(self) -> bool:
+        """Get current PHY reset state"""
+        return self.phy_reset
+
     def get_calibration_status(self) -> Dict[str, Any]:
         """Get calibration status
 
         Returns:
             Dictionary with calibration status for each lane
         """
-        return self.calibration_data
+        return {
+            'calibration_data': self.calibration_data,
+            'calibration_results': self._calibration_results,
+            'calibration_complete': self._status['calibration_complete'],
+        }
 
     def supports_freq_change(self) -> bool:
         """Check if PHY supports frequency change protocol
@@ -484,6 +810,252 @@ class DFIPhyIF:
             Latency in cycles
         """
         return 8  # Default DFI 5.0 latency
+
+    # === PHY Configuration Methods ===
+
+    def configure_pll(self, frequency_mhz: int, divider: int = 1,
+                      multiplier: int = 1) -> bool:
+        """Configure PLL parameters
+
+        Args:
+            frequency_mhz: Target frequency in MHz
+            divider: PLL divider ratio
+            multiplier: PLL multiplier ratio
+
+        Returns:
+            True if configuration accepted
+        """
+        self._pll_config['frequency_mhz'] = frequency_mhz
+        self._pll_config['divider'] = divider
+        self._pll_config['multiplier'] = multiplier
+        self._pll_config['locked'] = False  # Requires re-lock
+        return True
+
+    def get_pll_config(self) -> Dict[str, Any]:
+        """Get PLL configuration
+
+        Returns:
+            Current PLL settings
+        """
+        return dict(self._pll_config)
+
+    def set_pll_locked(self, locked: bool):
+        """Set PLL lock status
+
+        Args:
+            locked: True if PLL is locked
+        """
+        self._pll_config['locked'] = locked
+        self._status['pll_locked'] = locked
+
+    def is_pll_locked(self) -> bool:
+        """Check if PLL is locked"""
+        return self._pll_config['locked']
+
+    def configure_dll(self, enabled: bool = True, delay_elements: int = 64):
+        """Configure DLL parameters
+
+        Args:
+            enabled: Enable DLL
+            delay_elements: Number of delay elements
+        """
+        self._dll_config['enabled'] = enabled
+        self._dll_config['delay_elements'] = delay_elements
+
+    def get_dll_config(self) -> Dict[str, Any]:
+        """Get DLL configuration
+
+        Returns:
+            Current DLL settings
+        """
+        return dict(self._dll_config)
+
+    def set_dll_locked(self, locked: bool):
+        """Set DLL lock status
+
+        Args:
+            locked: True if DLL is locked
+        """
+        self._dll_config['locked'] = locked
+        self._status['dll_locked'] = locked
+
+    def is_dll_locked(self) -> bool:
+        """Check if DLL is locked"""
+        return self._dll_config['locked']
+
+    def configure_vref(self, dram_vref: int = 50, phy_vref: int = 50):
+        """Configure VREF settings
+
+        Args:
+            dram_vref: DRAM VREF as percentage (typically 40-60)
+            phy_vref: PHY VREF as percentage (typically 40-60)
+        """
+        self._vref_config['dram_vref'] = max(0, min(100, dram_vref))
+        self._vref_config['phy_vref'] = max(0, min(100, phy_vref))
+
+    def get_vref_config(self) -> Dict[str, int]:
+        """Get VREF configuration
+
+        Returns:
+            Current VREF settings
+        """
+        return dict(self._vref_config)
+
+    def configure_impedance(self, write_ohm: int = 40, read_ohm: int = 40):
+        """Configure driver impedance
+
+        Args:
+            write_ohm: Write driver impedance in Ohms
+            read_ohm: Read driver impedance in Ohms
+        """
+        self._impedance_config['write_impedance'] = write_ohm
+        self._impedance_config['read_impedance'] = read_ohm
+
+    def get_impedance_config(self) -> Dict[str, int]:
+        """Get impedance configuration
+
+        Returns:
+            Current impedance settings
+        """
+        return dict(self._impedance_config)
+
+    # === Mode Register Access ===
+
+    def set_mode_register(self, address: int, value: int):
+        """Set mode register value
+
+        Args:
+            address: MR address (0-31)
+            value: MR value
+        """
+        self._mr[address] = value & 0xFF
+
+    def get_mode_register(self, address: int) -> int:
+        """Get mode register value
+
+        Args:
+            address: MR address (0-31)
+
+        Returns:
+            MR value, 0 if not set
+        """
+        return self._mr.get(address, 0)
+
+    def get_all_mode_registers(self) -> Dict[int, int]:
+        """Get all mode register values
+
+        Returns:
+            Dictionary of MR address to value
+        """
+        return dict(self._mr)
+
+    # === Training Sequence Management ===
+
+    def set_training_phase(self, phase: TrainingPhase):
+        """Set current training phase
+
+        Args:
+            phase: New training phase
+        """
+        self._training_phase = phase
+
+    def get_training_phase(self) -> TrainingPhase:
+        """Get current training phase
+
+        Returns:
+            Current training phase
+        """
+        return self._training_phase
+
+    def record_training_result(self, phase: TrainingPhase,
+                                result: Dict[str, Any]):
+        """Record training result for a phase
+
+        Args:
+            phase: Training phase
+            result: Training result data
+        """
+        self._training_results[phase.name] = result
+
+    def get_training_results(self) -> Dict[str, Dict[str, Any]]:
+        """Get all training results
+
+        Returns:
+            Dictionary of phase name to result
+        """
+        return dict(self._training_results)
+
+    def is_training_complete(self) -> bool:
+        """Check if all training is complete
+
+        Returns:
+            True if training is complete
+        """
+        return self._training_phase == TrainingPhase.COMPLETE
+
+    # === Calibration Control ===
+
+    def start_calibration(self):
+        """Start PHY calibration sequence"""
+        self._status['calibration_complete'] = False
+
+    def complete_calibration(self):
+        """Mark calibration as complete"""
+        self._status['calibration_complete'] = True
+        self._impedance_config['calibration_done'] = True
+
+    def is_calibrated(self) -> bool:
+        """Check if PHY is calibrated"""
+        return self._status['zq_calibrated'] and self._impedance_config['calibration_done']
+
+    def set_zq_calibrated(self, calibrated: bool):
+        """Set ZQ calibration status"""
+        self._status['zq_calibrated'] = calibrated
+
+    # === Initialization ===
+
+    def start_initialization(self):
+        """Start PHY initialization sequence"""
+        self._training_phase = TrainingPhase.DRAM_RESET
+        self._status['init_complete'] = False
+        self._status['training_complete'] = False
+
+    def complete_initialization(self):
+        """Mark initialization as complete"""
+        self._training_phase = TrainingPhase.MEMORY_READY
+        self._status['init_complete'] = True
+
+    def is_initialized(self) -> bool:
+        """Check if PHY is initialized"""
+        return self._status['init_complete']
+
+    # === Status ===
+
+    def get_status(self) -> Dict[str, bool]:
+        """Get comprehensive PHY status
+
+        Returns:
+            Dictionary of status flags
+        """
+        return dict(self._status)
+
+    def get_phy_info(self) -> Dict[str, Any]:
+        """Get PHY information
+
+        Returns:
+            PHY configuration and status information
+        """
+        return {
+            'independent_mode': self.phy_independent_mode,
+            'clock_enable': self.phy_clock_enable,
+            'reset': self.phy_reset,
+            'pll': self._pll_config,
+            'dll': self._dll_config,
+            'vref': self._vref_config,
+            'impedance': self._impedance_config,
+            'status': self._status,
+            'training_phase': self._training_phase.name,
+        }
 
 
 class DFI5Interface:
@@ -512,13 +1084,48 @@ class DFI5Interface:
 
     VERSION = "5.0"
 
-    # Valid state transitions for low-power states
+    # Valid state transitions for low-power states (DFI 5.0)
+    # Maps current state to list of valid next states
     VALID_LP_TRANSITIONS = {
-        DFILowPowerState.LP_IDLE: [DFILowPowerState.LP_CTRL, DFILowPowerState.LP_DATA,
-                                    DFILowPowerState.LP_FREQ_CHANGE],
-        DFILowPowerState.LP_CTRL: [DFILowPowerState.LP_IDLE, DFILowPowerState.LP_DATA],
-        DFILowPowerState.LP_DATA: [DFILowPowerState.LP_IDLE, DFILowPowerState.LP_CTRL],
-        DFILowPowerState.LP_FREQ_CHANGE: [DFILowPowerState.LP_IDLE],
+        DFILowPowerState.LP_IDLE: [
+            DFILowPowerState.LP_CTRL,
+            DFILowPowerState.LP_DATA,
+            DFILowPowerState.LP_SELF_REFRESH,
+            DFILowPowerState.LP_POWER_DOWN,
+            DFILowPowerState.LP_DEEP_PD,
+            DFILowPowerState.LP_FREQ_CHANGE,
+        ],
+        DFILowPowerState.LP_CTRL: [
+            DFILowPowerState.LP_IDLE,
+            DFILowPowerState.LP_DATA,
+        ],
+        DFILowPowerState.LP_DATA: [
+            DFILowPowerState.LP_IDLE,
+            DFILowPowerState.LP_CTRL,
+        ],
+        DFILowPowerState.LP_SELF_REFRESH: [
+            DFILowPowerState.LP_IDLE,
+        ],
+        DFILowPowerState.LP_POWER_DOWN: [
+            DFILowPowerState.LP_IDLE,
+        ],
+        DFILowPowerState.LP_DEEP_PD: [
+            DFILowPowerState.LP_IDLE,
+        ],
+        DFILowPowerState.LP_FREQ_CHANGE: [
+            DFILowPowerState.LP_IDLE,
+        ],
+    }
+
+    # Timeout thresholds (in cycles) for each LP state
+    LP_TIMEOUT_CYCLES = {
+        DFILowPowerState.LP_IDLE: 0,  # No timeout
+        DFILowPowerState.LP_CTRL: 10000,
+        DFILowPowerState.LP_DATA: 10000,
+        DFILowPowerState.LP_SELF_REFRESH: 100000,
+        DFILowPowerState.LP_POWER_DOWN: 50000,
+        DFILowPowerState.LP_DEEP_PD: 200000,
+        DFILowPowerState.LP_FREQ_CHANGE: 5000,
     }
 
     def __init__(self, config=None, timing_params: Optional[DFITimingParameters] = None,
@@ -539,6 +1146,7 @@ class DFI5Interface:
 
         # State tracking
         self.lp_state = DFILowPowerState.LP_IDLE
+        self.lp_state_history: List[Tuple[int, DFILowPowerState]] = []  # (cycle, state)
         self.frequency_mhz = 800  # 800 MT/s for 8 GT/s DDR
         self.target_frequency_mhz = 800
         self.training_complete = False
@@ -548,16 +1156,23 @@ class DFI5Interface:
         self._fc_state = DFI5FreqChangeState.FC_IDLE
         self._fc_latency_counter = 0
         self._fc_request_pending = False
+        self._fc_initiated_by_controller = False
+
+        # PLL/DLL tracking for frequency change
+        self._pll_lock_required = True
+        self._dll_lock_required = True
 
         # === DFI 5.0 Control Update Signals ===
         self._ctrlupd_req = False
         self._ctrlupd_ack = False
         self._ctrlupd_latency_counter = 0
+        self._ctrlupd_pending = False
 
         # === DFI 5.0 Frequency Change Handshake Signals ===
         self._freq_change_en = False
         self._freq_change_ack = False
         self._freq_change_ack_pending = False
+        self._freq_change_data_valid = False
 
         # === DFI 5.0 Power Management Signals ===
         self._pwr_up_done = False
@@ -571,6 +1186,14 @@ class DFI5Interface:
         self._lp_wakeup = False
         self._lp_entry_counter = 0
         self._lp_exit_counter = 0
+        self._lp_timeout_counter = 0
+        self._lp_auto_entry_enabled = True
+        self._lp_idle_counter = 0
+        self._lp_auto_entry_threshold = 100  # Cycles idle before auto LP
+
+        # === CKE Management (DFI 5.0) ===
+        self._cke = True  # Clock Enable
+        self._cke_override = False
 
         # PHY interface
         self.phy = DFIPhyIF()
@@ -589,9 +1212,13 @@ class DFI5Interface:
             "commands_completed": 0,
             "freq_changes": 0,
             "lp_transitions": 0,
+            "lp_entries": 0,
+            "lp_exits": 0,
+            "lp_timeouts": 0,
             "errors": 0,
             "ctrl_updates": 0,
             "power_cycles": 0,
+            "cke_changes": 0,
         }
 
         # Cycle counter for timestamp tracking
@@ -608,11 +1235,20 @@ class DFI5Interface:
         Call this once per cycle to update internal state machines
         and track timing.
         """
+        prev_lp_state = self.lp_state
         self._cycle += 1
+
+        # Track LP state changes
+        if prev_lp_state != self.lp_state:
+            self.lp_state_history.append((self._cycle, self.lp_state))
+            self._stats["lp_transitions"] += 1
+
         self._update_freq_change_state()
         self._update_ctrlupd_state()
         self._update_power_state()
         self._update_lp_state()
+        self._update_lp_timeout()
+        self._check_auto_lp_entry()
 
     # === DFI 5.0 Control Update Handshake ===
 
@@ -950,6 +1586,7 @@ class DFI5Interface:
         """Update low power state machine
 
         Handles lp_req/ack and lp_wakeup signal timing.
+        Supports all DFI 5.0 low power states.
         """
         if self._lp_req and not self._lp_ack:
             self._lp_entry_counter += 1
@@ -957,9 +1594,23 @@ class DFI5Interface:
             if self.lp_state == DFILowPowerState.LP_CTRL:
                 if self._lp_entry_counter >= self.timing.tLP_CTRL_ENTER:
                     self._lp_ack = True
+                    self._stats["lp_entries"] += 1
             elif self.lp_state == DFILowPowerState.LP_DATA:
                 if self._lp_entry_counter >= self.timing.tLP_DATA_ENTER:
                     self._lp_ack = True
+                    self._stats["lp_entries"] += 1
+            elif self.lp_state == DFILowPowerState.LP_SELF_REFRESH:
+                if self._lp_entry_counter >= self.timing.tLP_SREF_ENTER:
+                    self._lp_ack = True
+                    self._stats["lp_entries"] += 1
+                    self._cke = False  # Lower CKE for self-refresh
+                    self._stats["cke_changes"] += 1
+            elif self.lp_state == DFILowPowerState.LP_POWER_DOWN:
+                if self._lp_entry_counter >= self.timing.tLP_PD_ENTER:
+                    self._lp_ack = True
+                    self._stats["lp_entries"] += 1
+                    self._cke = False
+                    self._stats["cke_changes"] += 1
 
         if self._lp_wakeup:
             self._lp_exit_counter += 1
@@ -970,12 +1621,184 @@ class DFI5Interface:
                     self._lp_req = False
                     self._lp_ack = False
                     self._lp_wakeup = False
+                    self._stats["lp_exits"] += 1
             elif self.lp_state == DFILowPowerState.LP_DATA:
                 if self._lp_exit_counter >= self.timing.tLP_DATA_EXIT:
                     self.lp_state = DFILowPowerState.LP_IDLE
                     self._lp_req = False
                     self._lp_ack = False
                     self._lp_wakeup = False
+                    self._stats["lp_exits"] += 1
+            elif self.lp_state == DFILowPowerState.LP_SELF_REFRESH:
+                if self._lp_exit_counter >= self.timing.tLP_SREF_EXIT:
+                    self.lp_state = DFILowPowerState.LP_IDLE
+                    self._lp_req = False
+                    self._lp_ack = False
+                    self._lp_wakeup = False
+                    self._cke = True
+                    self._stats["cke_changes"] += 1
+                    self._stats["lp_exits"] += 1
+            elif self.lp_state == DFILowPowerState.LP_POWER_DOWN:
+                if self._lp_exit_counter >= self.timing.tLP_PD_EXIT:
+                    self.lp_state = DFILowPowerState.LP_IDLE
+                    self._lp_req = False
+                    self._lp_ack = False
+                    self._lp_wakeup = False
+                    self._cke = True
+                    self._stats["cke_changes"] += 1
+                    self._stats["lp_exits"] += 1
+
+    def _update_lp_timeout(self):
+        """Update low power timeout tracking
+
+        Tracks time spent in each LP state and triggers timeout
+        handling if thresholds are exceeded.
+        """
+        if self.lp_state == DFILowPowerState.LP_IDLE:
+            self._lp_timeout_counter = 0
+            self._lp_idle_counter += 1
+            return
+
+        self._lp_idle_counter = 0
+        self._lp_timeout_counter += 1
+
+        timeout_threshold = self.LP_TIMEOUT_CYCLES.get(self.lp_state, 0)
+        if timeout_threshold > 0 and self._lp_timeout_counter >= timeout_threshold:
+            self._record_error("lp_timeout",
+                             f"Timeout in LP state {self.lp_state.name} "
+                             f"(threshold: {timeout_threshold} cycles)",
+                             self._cycle)
+            self._stats["lp_timeouts"] += 1
+
+            # Attempt to exit to IDLE
+            try:
+                self._force_exit_low_power()
+            except Exception as e:
+                self._record_error("lp_timeout_recovery",
+                                 f"Failed to recover from timeout: {str(e)}",
+                                 self._cycle)
+
+    def _check_auto_lp_entry(self):
+        """Check if auto low-power entry should be triggered
+
+        Automatically enters low-power state after idle threshold
+        is reached.
+        """
+        if not self._lp_auto_entry_enabled:
+            return
+
+        if (self.lp_state == DFILowPowerState.LP_IDLE and
+            self._lp_idle_counter >= self._lp_auto_entry_threshold and
+            not self._request_queue.is_empty()):
+            # Stay in IDLE if there are pending requests
+            return
+
+        if (self.lp_state == DFILowPowerState.LP_IDLE and
+            self._lp_idle_counter >= self._lp_auto_entry_threshold):
+            # Auto-enter LP_CTRL after idle threshold
+            self.enter_low_power_state(DFILowPowerState.LP_CTRL)
+
+    def _force_exit_low_power(self):
+        """Force exit from low power state
+
+        Used for timeout recovery and emergency exits.
+        """
+        self._lp_req = False
+        self._lp_ack = False
+        self._lp_wakeup = True
+        self._lp_exit_counter = 0
+        self._lp_timeout_counter = 0
+        self._cke = True
+        self._stats["cke_changes"] += 1
+
+    def enter_low_power_state(self, state: DFILowPowerState) -> bool:
+        """Enter a specific low power state
+
+        Args:
+            state: Target low power state
+
+        Returns:
+            True if entry was initiated
+
+        Raises:
+            DFIStateTransitionError: If transition is not allowed
+        """
+        if not self._is_valid_lp_transition(state):
+            raise DFIStateTransitionError(
+                f"Invalid LP transition from {self.lp_state.name} to {state.name}"
+            )
+
+        self.lp_state = state
+        self._lp_req = True
+        self._lp_entry_counter = 0
+        self._lp_exit_counter = 0
+        self._lp_timeout_counter = 0
+        self._stats["lp_transitions"] += 1
+        return True
+
+    def exit_low_power_state(self) -> bool:
+        """Exit from low power state
+
+        Returns:
+            True if exit was initiated
+        """
+        if self.lp_state == DFILowPowerState.LP_IDLE:
+            return True  # Already in IDLE
+
+        self._lp_wakeup = True
+        self._lp_exit_counter = 0
+        return True
+
+    @property
+    def cke(self) -> bool:
+        """Get Clock Enable signal state"""
+        return self._cke
+
+    def set_cke(self, enable: bool):
+        """Set Clock Enable signal
+
+        Args:
+            enable: True to enable clocks (CKE high)
+        """
+        if self._cke != enable:
+            self._cke = enable
+            self._stats["cke_changes"] += 1
+
+    def set_cke_override(self, override: bool):
+        """Set CKE override mode
+
+        Args:
+            override: True to bypass automatic CKE management
+        """
+        self._cke_override = override
+
+    def get_lp_statistics(self) -> Dict[str, Any]:
+        """Get low power state statistics
+
+        Returns:
+            Dictionary with LP statistics
+        """
+        return {
+            'current_state': self.lp_state.name,
+            'time_in_state': self._lp_timeout_counter,
+            'idle_counter': self._lp_idle_counter,
+            'timeout_threshold': self.LP_TIMEOUT_CYCLES.get(self.lp_state, 0),
+            'entries': self._stats['lp_entries'],
+            'exits': self._stats['lp_exits'],
+            'timeouts': self._stats['lp_timeouts'],
+            'transitions': self._stats['lp_transitions'],
+            'cke_changes': self._stats['cke_changes'],
+            'auto_entry_enabled': self._lp_auto_entry_enabled,
+            'auto_entry_threshold': self._lp_auto_entry_threshold,
+        }
+
+    def get_lp_state_history(self) -> List[Tuple[int, str]]:
+        """Get LP state transition history
+
+        Returns:
+            List of (cycle, state_name) tuples
+        """
+        return [(cycle, state.name) for cycle, state in self.lp_state_history]
 
     @property
     def lp_req(self) -> bool:
@@ -1005,18 +1828,24 @@ class DFI5Interface:
             return True  # No change is always valid
         return new_state in self.VALID_LP_TRANSITIONS.get(self.lp_state, [])
 
-    def encode_command(self, cmd: str, addr_vec: Dict[str, int],
-                      priority: int = 0) -> DFIRequest:
+    def encode_command(self, cmd: str, addr_vec: Optional[Dict[str, int]] = None,
+                      priority: int = 0, **kwargs) -> DFIRequest:
         """Encode a command into DFI request format
 
         Args:
             cmd: Command name string ('ACT', 'PRE', 'RD', etc.)
             addr_vec: Dictionary with address components
             priority: Request priority (higher = more urgent)
+            **kwargs: Additional command parameters
 
         Returns:
             DFIRequest object
+
+        Raises:
+            ValueError: If command is invalid or parameters are missing
         """
+        addr_vec = addr_vec or {}
+
         # Map string command to DFI command
         cmd_map = {
             'ACT': DFICommand.ACT,
@@ -1030,22 +1859,120 @@ class DFI5Interface:
             'REFsb': DFICommand.REFsb,
             'RFMab': DFICommand.RFMab,
             'RFMsb': DFICommand.RFMsb,
+            'MRS': DFICommand.MRS,
+            'MRR': DFICommand.MRR,
+            'SREF': DFICommand.SREF,
+            'SREFEX': DFICommand.SREFEX,
+            'PD': DFICommand.PD,
+            'PDEX': DFICommand.PDEX,
+            'DPD': DFICommand.DPD,
+            'DPDEX': DFICommand.DPDEX,
+            'WRLVL': DFICommand.WRLVL,
+            'RDLVL': DFICommand.RDLVL,
+            'RDDQSDQ': DFICommand.RDDQSDQ,
+            'WRDQSDQ': DFICommand.WRDQSDQ,
+            'MRLVL': DFICommand.MRLVL,
+            'ZQCL': DFICommand.ZQCL,
+            'ZQCS': DFICommand.ZQCS,
+            'ZQOP': DFICommand.ZQOP,
+            'NOP': DFICommand.NOP,
+            'DESELECT': DFICommand.DESELECT,
         }
 
-        dfi_cmd = cmd_map.get(cmd, DFICommand.ACT)
+        dfi_cmd = cmd_map.get(cmd.upper())
+        if dfi_cmd is None:
+            raise ValueError(f"Invalid command: {cmd}")
+
+        # Validate command requirements
+        self._validate_command_params(dfi_cmd, addr_vec)
 
         return DFIRequest(
             command=dfi_cmd,
-            address=addr_vec.get('row', addr_vec.get('address', 0)),
+            address=addr_vec.get('row', addr_vec.get('address', addr_vec.get('mr_addr', 0))),
             bank=addr_vec.get('bank', 0),
             pseudo_channel=addr_vec.get('pseudo_channel', 0),
             channel=addr_vec.get('channel', 0),
-            wrdata_en=(cmd in ['WR', 'WRA']),
-            rddata_en=(cmd in ['RD', 'RDA']),
+            wrdata_en=dfi_cmd.is_write(),
+            rddata_en=dfi_cmd.is_read(),
             chip=addr_vec.get('chip', 0),
             priority=priority,
-            timestamp=self._cycle
+            timestamp=self._cycle,
+            error=None,
         )
+
+    def _validate_command_params(self, cmd: DFICommand, addr_vec: Dict[str, int]):
+        """Validate command parameters
+
+        Args:
+            cmd: DFI command
+            addr_vec: Address vector
+
+        Raises:
+            ValueError: If parameters are invalid for the command
+        """
+        if cmd.requires_row() and 'row' not in addr_vec and 'address' not in addr_vec:
+            raise ValueError(f"Command {cmd.name} requires row address")
+
+        if cmd.requires_bank() and 'bank' not in addr_vec:
+            raise ValueError(f"Command {cmd.name} requires bank address")
+
+        if cmd.requires_mr():
+            if 'mr_addr' not in addr_vec and 'address' not in addr_vec:
+                raise ValueError(f"Command {cmd.name} requires mode register address")
+
+    def encode_batch_commands(self, commands: List[Tuple[str, Dict[str, int]]],
+                             default_priority: int = 0) -> List[DFIRequest]:
+        """Encode multiple commands into DFI requests
+
+        Args:
+            commands: List of (command_name, addr_vec) tuples
+            default_priority: Default priority for commands
+
+        Returns:
+            List of DFIRequest objects
+        """
+        requests = []
+        for i, (cmd, addr_vec) in enumerate(commands):
+            priority = addr_vec.get('priority', default_priority)
+            try:
+                request = self.encode_command(cmd, addr_vec, priority)
+                requests.append(request)
+            except (ValueError, DFIStateTransitionError) as e:
+                self._record_error("command_encoding", str(e), self._cycle)
+        return requests
+
+    def get_command_info(self, cmd: DFICommand) -> Dict[str, Any]:
+        """Get information about a command
+
+        Args:
+            cmd: DFI command
+
+        Returns:
+            Dictionary with command attributes
+        """
+        return {
+            'name': cmd.name,
+            'value': cmd.value,
+            'is_read': cmd.is_read(),
+            'is_write': cmd.is_write(),
+            'is_activate': cmd.is_activate(),
+            'is_precharge': cmd.is_precharge(),
+            'is_refresh': cmd.is_refresh(),
+            'is_power_down': cmd.is_power_down(),
+            'is_training': cmd.is_training(),
+            'requires_bank': cmd.requires_bank(),
+            'requires_row': cmd.requires_row(),
+            'requires_col': cmd.requires_col(),
+            'requires_mr': cmd.requires_mr(),
+        }
+
+    def get_supported_commands(self) -> List[Dict[str, Any]]:
+        """Get list of all supported commands with attributes
+
+        Returns:
+            List of command info dictionaries
+        """
+        return [self.get_command_info(cmd) for cmd in DFICommand]
 
     def set_low_power_state(self, state: DFILowPowerState,
                            enforce_timing: bool = True) -> bool:

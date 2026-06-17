@@ -15,6 +15,7 @@ HBM4 Enhancements:
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Union, Tuple
 from enum import Enum
@@ -28,6 +29,16 @@ from model.controller.controller import HBMController
 from model.controller.request import HBMRequest
 from model.dram.dram_model import DRAMModel
 from model.dram.timing import get_timing_for_hbm_version
+
+# RTL Co-simulation interface
+from sim.rtl_interface import (
+    RTLInterface,
+    CoSimConfig,
+    CoSimStats,
+    ResultComparator,
+    create_rtl_interface,
+    TransactionType,
+)
 
 # HBM4 imports for new features
 try:
@@ -120,6 +131,20 @@ class UnifiedSimulatorStats:
     dfi_commands_sent: int = 0
     dfi_commands_completed: int = 0
 
+    # RTL Co-simulation statistics
+    rtl_transactions: int = 0
+    rtl_matched: int = 0
+    rtl_mismatched: int = 0
+    rtl_max_latency_diff: int = 0
+    rtl_avg_latency_diff: float = 0.0
+
+    @property
+    def rtl_match_rate(self) -> float:
+        total = self.rtl_matched + self.rtl_mismatched
+        if total == 0:
+            return 0.0
+        return self.rtl_matched / total
+
     @property
     def avg_latency(self) -> float:
         if self.completed_requests == 0:
@@ -200,6 +225,16 @@ class UnifiedSimulatorStats:
                 'dfi_commands_sent': self.dfi_commands_sent,
                 'dfi_commands_completed': self.dfi_commands_completed,
                 'channel_stats': self.channel_stats,
+            },
+            # RTL Co-simulation features
+            'rtl_cosim': {
+                'enabled': self.rtl_transactions > 0 or self.rtl_matched > 0,
+                'transactions': self.rtl_transactions,
+                'matched': self.rtl_matched,
+                'mismatched': self.rtl_mismatched,
+                'match_rate': self.rtl_match_rate,
+                'max_latency_diff': self.rtl_max_latency_diff,
+                'avg_latency_diff': self.rtl_avg_latency_diff,
             }
         }
 
@@ -281,6 +316,11 @@ class UnifiedSimulator:
 
         # 统计 (必须先于 HBM4 组件初始化)
         self.stats = UnifiedSimulatorStats()
+
+        # ========== RTL Co-simulation Interface ==========
+        self.rtl_interface: Optional[RTLInterface] = None
+        self.result_comparator: Optional[ResultComparator] = None
+        self.cosim_enabled = False
 
         # ========== HBM4 Components ==========
         if self.enable_hbm4:
@@ -457,7 +497,143 @@ class UnifiedSimulator:
                         )
                         self.stats.pam3_symbols_encoded += len(symbols)
 
+        # ========== RTL Co-simulation ==========
+        if self.cosim_enabled and self.rtl_interface:
+            # Advance RTL interface cycle
+            self.rtl_interface.tick()
+
+            # Record Python model results for comparison
+            if response:
+                # Get channel/bank from address for the transaction
+                addr = response.addr if hasattr(response, 'addr') else 0
+                channel = (addr >> 12) & 0x1F  # Extract channel from address
+                tid = self.rtl_interface.inject_read_transaction(
+                    address=addr,
+                    channel=channel,
+                    cycle=self.current_cycle - latency_cycles
+                )
+                self.rtl_interface.record_python_result(
+                    tid=tid,
+                    latency_cycles=latency_cycles,
+                    data=response.data if hasattr(response, 'data') else None
+                )
+
         return response
+
+    def enable_rtl_cosimulation(
+        self,
+        enable_rtl: bool = True,
+        compare_results: bool = True,
+        trace_enabled: bool = False
+    ):
+        """启用RTL协同仿真
+
+        Args:
+            enable_rtl: 是否启用RTL仿真 (False时仅使用Python模型跟踪)
+            compare_results: 是否对比Python和RTL结果
+            trace_enabled: 是否启用事务追踪
+        """
+        cosim_config = CoSimConfig(
+            enable_rtl=enable_rtl,
+            trace_enabled=trace_enabled,
+            compare_results=compare_results,
+        )
+        self.rtl_interface = RTLInterface(cosim_config)
+        self.result_comparator = ResultComparator(tolerance_cycles=5)
+        self.cosim_enabled = True
+
+        # Set up mismatch callback
+        def on_mismatch(diff_info):
+            self.stats.rtl_mismatched += 1
+            logger.warning(f"RTL mismatch: {diff_info}")
+
+        self.rtl_interface.on_mismatch = on_mismatch
+
+        logger.info(f"RTL cosimulation enabled (rtl={enable_rtl}, compare={compare_results})")
+
+    def disable_rtl_cosimulation(self):
+        """禁用RTL协同仿真"""
+        if self.rtl_interface:
+            self.rtl_interface.stop_rtl_simulation()
+        self.rtl_interface = None
+        self.result_comparator = None
+        self.cosim_enabled = False
+        logger.info("RTL cosimulation disabled")
+
+    def inject_rtl_transaction(
+        self,
+        transaction_type: str,
+        address: int,
+        data: Optional[int] = None,
+        channel: int = 0
+    ) -> int:
+        """注入事务到RTL
+
+        Args:
+            transaction_type: 事务类型 (read/write/activate/precharge/refresh)
+            address: 地址
+            data: 写数据
+            channel: 通道ID
+
+        Returns:
+            事务ID
+        """
+        if not self.cosim_enabled or not self.rtl_interface:
+            logger.warning("RTL cosimulation not enabled")
+            return -1
+
+        if transaction_type.lower() == 'read':
+            return self.rtl_interface.inject_read_transaction(
+                address=address,
+                channel=channel
+            )
+        elif transaction_type.lower() == 'write':
+            return self.rtl_interface.inject_write_transaction(
+                address=address,
+                data=data or 0,
+                channel=channel
+            )
+        else:
+            return self.rtl_interface.inject_command_transaction(
+                command=transaction_type,
+                address=address,
+                channel=channel
+            )
+
+    def get_rtl_stats(self) -> Optional[Dict[str, Any]]:
+        """获取RTL协同仿真统计"""
+        if not self.cosim_enabled or not self.rtl_interface:
+            return None
+
+        stats = self.rtl_interface.get_stats()
+        self.stats.rtl_transactions = stats.total_transactions
+        self.stats.rtl_matched = stats.matched_results
+        self.stats.rtl_mismatched = stats.mismatched_results
+        self.stats.rtl_max_latency_diff = stats.max_latency_diff
+        self.stats.rtl_avg_latency_diff = stats.avg_latency_diff
+
+        return stats.to_dict()
+
+    def export_rtl_trace(self, path: str):
+        """导出RTL事务跟踪
+
+        Args:
+            path: 输出文件路径
+        """
+        if self.rtl_interface:
+            self.rtl_interface.export_trace(path)
+
+    def get_cosim_summary(self) -> Dict[str, Any]:
+        """获取协同仿真摘要"""
+        if not self.cosim_enabled:
+            return {'enabled': False}
+
+        return {
+            'enabled': True,
+            'rtl_interface': self.rtl_interface.get_summary() if self.rtl_interface else None,
+            'python_stats': self.stats.to_dict(),
+            'match_rate': self.stats.rtl_match_rate,
+        }
 
     def run(self) -> UnifiedSimulatorStats:
         """运行完整仿真"""

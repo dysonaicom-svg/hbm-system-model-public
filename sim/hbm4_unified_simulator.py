@@ -22,7 +22,6 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-
 # Import HBM4 modules
 from model.dram import (
     HBM4LogicBaseDie,
@@ -42,6 +41,14 @@ from model.dram import (
     BankStateMachine,
     Channel,
     ChannelArray,
+)
+
+# RTL Co-simulation interface
+from sim.rtl_interface import (
+    RTLInterface,
+    CoSimConfig,
+    ResultComparator,
+    create_rtl_interface,
 )
 
 
@@ -180,6 +187,12 @@ class HBM4UnifiedSimulator:
 
         # Channel array
         self.channels = ChannelArray(num_channels=self.config.num_channels)
+
+        # ========== RTL Co-simulation ==========
+        self.rtl_interface: Optional[RTLInterface] = None
+        self.result_comparator: Optional[ResultComparator] = None
+        self.cosim_enabled = False
+        self._current_cycle = 0
 
         # 初始化通道统计
         for ch in range(self.config.num_channels):
