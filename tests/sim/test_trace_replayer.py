@@ -22,6 +22,8 @@ LD 0xC0
 ST 0x100
 LD 0x140
 """
+        # Total: 6 LD/ST commands (comment is skipped)
+        # 4 LD (read) + 2 ST (write)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.trace', delete=False) as f:
             f.write(content)
             f.flush()
@@ -32,8 +34,8 @@ LD 0x140
         replayer = TraceReplayer(ld_st_trace, TraceFormat.RAMULATOR_LD_ST)
         count = replayer.load()
 
-        assert count == 5  # 5 valid requests (comments are skipped)
-        assert replayer.read_count == 3  # 3 LD
+        assert count == 6  # 6 valid LD/ST commands (comment is skipped)
+        assert replayer.read_count == 4  # 4 LD
         assert replayer.write_count == 2  # 2 ST
 
     def test_addresses_parsed_correctly(self, ld_st_trace):
@@ -59,7 +61,7 @@ LD 0x140
     def test_load_trace_convenience_function(self, ld_st_trace):
         """Test convenience function"""
         replayer = load_trace(ld_st_trace)
-        assert replayer.total_requests == 5
+        assert replayer.total_requests == 6  # 6 LD/ST commands
 
     def test_request_id_assignment(self, ld_st_trace):
         """Test that request IDs are assigned correctly"""
@@ -67,11 +69,13 @@ LD 0x140
         replayer.load()
 
         requests = list(replayer.requests())
-        # Request IDs should be 0, 1, 2, 4, 5 (skipping comment line)
+        # Request IDs are assigned from line numbers (0-indexed)
+        # Line 3 is comment, so no request_id=3
         # Line numbers: 0=LD, 1=ST, 2=LD, 3=comment, 4=LD, 5=ST, 6=LD
         assert requests[0].request_id == 0
         assert requests[1].request_id == 1
         assert requests[2].request_id == 2
+        assert requests[3].request_id == 4  # Line 3 is skipped (comment)
 
 
 class TestTraceReplayerRW:
