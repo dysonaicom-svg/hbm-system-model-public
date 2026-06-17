@@ -174,8 +174,8 @@ class TestAddressMapping:
         """
         decoder = AddressDecoder(hbm3_config)
 
-        # Test addresses near boundary
-        max_addr = 0xFFFF_FFFF_FFFF
+        # Test addresses near boundary (8-byte aligned)
+        max_addr = 0xFFFF_FFFF_FFF8
 
         decoded = decoder.decode(max_addr)
         assert decoded is not None
@@ -236,15 +236,27 @@ class TestAddressMapping:
     def test_channel_distribution(self, hbm3_config):
         """Test channel distribution of random addresses
 
-        Addresses should distribute across all channels.
+        Addresses should distribute across all channels when using a wide address range.
+        Note: RBC mapping has channel at high bits [45:43], requiring 8TB space to span all channels.
         """
         decoder = AddressDecoder(hbm3_config)
 
-        # Generate random addresses
+        # Generate random addresses (8-byte aligned) spanning all channels
+        # RBC mapping places channel at bits [45:43], so we need 8 * 8TB = 64TB range
+        # For practical testing, we use addresses that cross the channel boundary
         import random
         random.seed(42)
 
-        addresses = [random.randint(0, 0xFFFF_FFFF) for _ in range(1000)]
+        # Use addresses across a wide range that spans multiple channels
+        # Each channel occupies 8TB (2^43 bytes)
+        base = 0
+        addresses = []
+        for i in range(1000):
+            # Distribute across channels by varying high bits
+            channel_offset = (i % 8) * (1 << 43)
+            # Add some variation within each channel
+            offset = random.randint(0, (1 << 43) - 1) & ~0x7
+            addresses.append(base + channel_offset + offset)
 
         decoded = [decoder.decode(addr) for addr in addresses]
 
@@ -454,11 +466,11 @@ class TestHBM4AddressMapping:
 
         decoder = AddressDecoder(config)
 
-        # Test addresses across 32 channels
+        # Test addresses across 32 channels (8-byte aligned)
         import random
         random.seed(42)
 
-        addresses = [random.randint(0, 0xFFFF_FFFF_FFFF) for _ in range(100)]
+        addresses = [random.randint(0, 0xFFFF_FFFF_FFF8) & ~0x7 for _ in range(100)]
 
         decoded = [decoder.decode(addr) for addr in addresses]
 
@@ -483,8 +495,8 @@ class TestHBM4AddressMapping:
         """
         decoder = AddressDecoder(hbm4_config)
 
-        # Test large addresses
-        for addr in [0x1_0000_0000_0000, 0x2_0000_0000_0000, 0xFFFF_FFFF_FFFF]:
+        # Test large addresses (8-byte aligned)
+        for addr in [0x1_0000_0000_0000, 0x2_0000_0000_0000, 0xFFFF_FFFF_FFF8]:
             decoded = decoder.decode(addr)
 
             assert decoded is not None

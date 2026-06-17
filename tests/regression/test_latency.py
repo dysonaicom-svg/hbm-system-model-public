@@ -5,7 +5,7 @@ Latency Regression Tests
 """
 
 import pytest
-from tests.regression.conftest import LATENCY_THRESHOLDS
+from tests.regression.constants import LATENCY_THRESHOLDS
 
 
 class TestLatencyRegression:

@@ -15,7 +15,7 @@ from typing import Dict, Any
 
 from sim.simulator import HBMSimulator, SimulationConfig, SimulationStats, TrafficPattern
 from model.controller.config import HBMConfig, HBM3_DEFAULT
-from tests.regression.conftest import (
+from tests.regression.constants import (
     LATENCY_THRESHOLDS,
     ROW_HIT_THRESHOLDS,
 )

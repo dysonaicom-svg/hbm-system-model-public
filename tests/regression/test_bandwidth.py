@@ -5,7 +5,7 @@ Bandwidth Regression Tests
 """
 
 import pytest
-from tests.regression.conftest import BANDWIDTH_THRESHOLDS
+from tests.regression.constants import BANDWIDTH_THRESHOLDS
 
 
 class TestBandwidthRegression:

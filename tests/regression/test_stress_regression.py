@@ -18,7 +18,7 @@ from sim.simulator import HBMSimulator, SimulationConfig, SimulationStats, Traff
 from model.controller.config import HBMConfig, HBM3_DEFAULT
 from model.controller.queue import QueueManager, ReadQueue, WriteQueue
 from model.controller.exceptions import QueueOverflowError
-from tests.regression.conftest import LATENCY_THRESHOLDS
+from tests.regression.constants import LATENCY_THRESHOLDS
 
 
 class TestHighLoadStress:
