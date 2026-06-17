@@ -37,6 +37,7 @@ from model.controller.command_sequencer import (
     DRAMCommand,
 )
 from model.controller.command_pipeline import CommandPipeline
+from model.controller.scheduler import BankState
 from model.dram.bank_state_machine import BankStateEnum
 from model.multi_channel import (
     ChannelSelector,

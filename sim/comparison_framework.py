@@ -424,7 +424,8 @@ class ComparisonFramework:
     def _run_python_simulation(self, replayer: TraceReplayer) -> ComparisonMetrics:
         """Run Python simulation with trace replayer
 
-        Uses the trace replayer to feed requests into the HBMSimulator.
+        Uses the trace replayer to feed requests into the HBMSimulator
+        with proper cycle-by-cycle timing.
 
         Args:
             replayer: TraceReplayer with loaded requests
@@ -436,7 +437,7 @@ class ComparisonFramework:
         # Use HBM3 default config matching Ramulator2 settings
         config = SimulationConfig(
             simulation_time_us=1000.0,  # Enough time to process all requests
-            request_rate=1.0,  # Submit all requests as fast as possible
+            request_rate=0.0,  # Disable traffic generator (using trace only)
             read_ratio=0.7,
             max_requests_per_cycle=8,  # Allow parallel channel access
             hbm_config=HBM3_DEFAULT,
@@ -445,20 +446,55 @@ class ComparisonFramework:
 
         sim = HBMSimulator(config)
 
-        # Submit all requests from trace
-        for req in replayer.requests():
-            sim.controller.submit_request(
-                HBMRequest(
-                    addr=req.addr,
-                    length=64,
-                    is_read=req.is_read
-                )
-            )
+        # Collect all trace requests with their timing
+        trace_requests = list(replayer.requests())
+        total_trace_requests = len(trace_requests)
+
+        # Track request submission with cycle-by-cycle timing
+        request_index = 0
+        submitted_requests = []
+        pending_responses = {}  # request_id -> submission_cycle
 
         # Run simulation until all requests complete or max cycles reached
         while sim.current_cycle < sim.max_cycles:
+            # Submit one request per cycle (or use trace timestamp if available)
+            if request_index < total_trace_requests:
+                trace_req = trace_requests[request_index]
+                # Check if we should submit this request based on trace timestamp
+                # If no timestamp, submit one per cycle
+                submit_this_cycle = True
+                if trace_req.timestamp is not None:
+                    # Submit based on trace timestamp (cycles)
+                    submit_this_cycle = (sim.current_cycle >= trace_req.timestamp)
+
+                if submit_this_cycle:
+                    hbm_req = HBMRequest(
+                        addr=trace_req.addr,
+                        length=64,
+                        is_read=trace_req.is_read
+                    )
+                    hbm_req.request_id = trace_req.request_id
+                    if sim.controller.submit_request(hbm_req):
+                        sim.stats.total_requests += 1
+                        if hbm_req.is_read:
+                            sim.stats.read_requests += 1
+                        else:
+                            sim.stats.write_requests += 1
+                        submitted_requests.append(hbm_req)
+                        pending_responses[hbm_req.request_id] = sim.current_cycle
+
+                        # Update per-channel stats
+                        ch_id = hbm_req.channel_id
+                        if ch_id in sim.stats.per_channel_stats:
+                            sim.stats.per_channel_stats[ch_id].total_requests += 1
+
+                        request_index += 1
+
+            # Step the simulator for one cycle
             sim.step()
-            if sim.stats.completed_requests >= replayer.total_requests:
+
+            # Check if all requests are completed
+            if sim.stats.completed_requests >= total_trace_requests:
                 break
 
         # Extract metrics from simulation stats
