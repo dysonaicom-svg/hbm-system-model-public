@@ -576,6 +576,38 @@ class HBMComprehensiveBenchmark:
             },
         )
 
+    def run_suite(
+        self,
+        patterns: List[TrafficPattern],
+        rates: List[float],
+        time_us: float = 100.0,
+        seed: Optional[int] = 42,
+        read_ratio: float = 0.7,
+    ) -> List[BenchmarkResult]:
+        """Run benchmark suite for specified patterns and rates
+
+        Args:
+            patterns: List of traffic patterns to test
+            rates: List of request rates (0-1)
+            time_us: Simulation time per test
+            seed: Random seed for reproducibility
+            read_ratio: Read ratio (0-1)
+
+        Returns:
+            List of benchmark results
+        """
+        for pattern in patterns:
+            for rate in rates:
+                result = self.run_single(
+                    pattern=pattern,
+                    request_rate=rate,
+                    time_us=time_us,
+                    seed=seed,
+                    read_ratio=read_ratio,
+                )
+                self.results.append(result)
+        return self.results
+
     def run_comprehensive_suite(self, time_us: float = 100.0, seed: int = 42) -> List[BenchmarkResult]:
         """Run comprehensive benchmark suite covering all patterns
 

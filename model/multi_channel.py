@@ -763,25 +763,51 @@ class ChannelSelector:
     def _addr_based_channel(self, addr: int) -> int:
         """Direct address-based channel selection
 
-        For HBM3 with 8 channels (46-bit address space):
-        - Addr[45:43] = Channel (3-bit, 8 channels)
+        This method properly handles both HBM3 and HBM4 channel addressing:
 
-        For HBM4 with 32 channels (46-bit address space):
-        - Addr[45:41] = Channel (5-bit, 32 channels)
+        HBM3 (8 channels):
+        - Addr[45:43] = Channel (3-bit, 8 channels per stack)
+
+        HBM4 (32 channels):
+        - Addr[47:46] = Stack ID (2-bit, up to 4 stacks)
+        - Addr[45:41] = Channel (5-bit, 32 channels per stack)
+        - Total channels = stacks * channels_per_stack
+
+        For multi-stack HBM4, this extracts:
+        - Stack from bits [47:46]
+        - Channel from bits [45:41]
+        - Combines into global channel ID: stack * 32 + channel
 
         This matches the JEDEC HBM3/HBM4 address mapping spec.
-        Uses 46-bit address space (bits 0-45).
         """
-        # Calculate channel bit position based on number of channels
-        # HBM3: 8 channels = 3 bits, channel at bits [45:43], LSB at 43
-        # HBM4: 32 channels = 5 bits, channel at bits [45:41], LSB at 41
-        # Formula: channel_start_bit = 46 - channel_bits_needed
-        channel_bits_needed = (self.num_channels - 1).bit_length()  # 3 for 8ch, 5 for 32ch
-        channel_start_bit = 46 - channel_bits_needed
+        # Calculate bit positions based on channel count
+        # HBM3: 8 channels = 3 bits, channel at bits [45:43]
+        # HBM4: 32 channels = 5 bits, channel at bits [45:41]
+        # HBM4 with stacks: Stack at [47:46], Channel at [45:41]
+        channel_bits_needed = (self.num_channels - 1).bit_length()
 
-        # Extract channel bits
-        channel_bits = (addr >> channel_start_bit) & (self.num_channels - 1)
-        return int(channel_bits)
+        if self.num_channels > 8 and channel_bits_needed <= 5:
+            # HBM4-style addressing: Stack[47:46] + Channel[45:41]
+            # Extract stack from bits [47:46]
+            stack_bits = (addr >> 46) & 0x3  # 2 bits for stack
+
+            # Extract channel from bits [45:41]
+            channel_in_stack = (addr >> 41) & 0x1F  # 5 bits for channel
+
+            # Combine: global_channel = stack * 32 + channel
+            # For 128 channels (4 stacks * 32 channels): global = stack * 32 + channel
+            channels_per_stack = 32
+            global_channel = (stack_bits * channels_per_stack) + channel_in_stack
+
+            return global_channel % self.num_channels
+        else:
+            # HBM3-style addressing: Channel at bits [45:43]
+            # Formula: channel_start_bit = 46 - channel_bits_needed
+            channel_start_bit = 46 - channel_bits_needed
+
+            # Extract channel bits
+            channel_bits = (addr >> channel_start_bit) & (self.num_channels - 1)
+            return int(channel_bits)
 
     def record_request(self, channel_id: int):
         """Record that a request was sent to a channel

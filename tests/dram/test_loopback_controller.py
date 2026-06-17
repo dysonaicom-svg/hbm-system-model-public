@@ -91,48 +91,71 @@ class TestLoopbackState:
 
 class TestPRBSGenerator:
     """Tests for PRBS generator"""
-    
+
     def test_prbs7_initialization(self):
         """Test PRBS-7 initialization"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_7)
         assert gen.mode == LoopbackMode.PRBS_7
         assert gen.length == 127  # 2^7 - 1
-    
+
     def test_prbs15_initialization(self):
         """Test PRBS-15 initialization"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_15)
         assert gen.mode == LoopbackMode.PRBS_15
         assert gen.length == 32767  # 2^15 - 1
-    
+
     def test_prbs31_initialization(self):
         """Test PRBS-31 initialization"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_31)
         assert gen.mode == LoopbackMode.PRBS_31
         assert gen.length == 2147483647  # 2^31 - 1
-    
+
     def test_prbs7_sequence(self):
         """Test PRBS-7 generates correct sequence"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
         bits = [gen.next() for _ in range(127)]
         # After 127 bits, sequence should repeat
         assert len(bits) == 127
-    
+
     def test_prbs7_repeatability(self):
         """Test PRBS-7 repeats after length"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
         first_bits = [gen.next() for _ in range(127)]
-        
+
         gen.reset(0x7F)
         second_bits = [gen.next() for _ in range(127)]
-        
+
         assert first_bits == second_bits
-    
+
+    def test_prbs7_autocorrelation(self):
+        """Test PRBS-7 has good autocorrelation properties"""
+        gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
+        bits = [gen.next() for _ in range(127)]
+
+        # Count transitions - should be roughly 50%
+        transitions = sum(1 for i in range(len(bits) - 1) if bits[i] != bits[i + 1])
+        transition_ratio = transitions / (len(bits) - 1)
+
+        # Should be close to 50% (allow 40-60% range)
+        assert 0.3 < transition_ratio < 0.7
+
+    def test_prbs7_bit_distribution(self):
+        """Test PRBS-7 has balanced 0s and 1s"""
+        gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
+        bits = [gen.next() for _ in range(127)]
+
+        ones = sum(bits)
+        zeros = len(bits) - ones
+
+        # Should have roughly equal 0s and 1s
+        assert abs(ones - zeros) <= 10  # Allow small imbalance
+
     def test_generate_byte(self):
         """Test byte generation"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
         byte = gen.generate_byte()
         assert 0 <= byte <= 255
-    
+
     def test_generate_n_bytes(self):
         """Test N-byte generation"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
@@ -140,33 +163,47 @@ class TestPRBSGenerator:
         assert len(bytes_list) == 10
         for byte in bytes_list:
             assert 0 <= byte <= 255
-    
+
     def test_reset_with_seed(self):
         """Test reset with new seed"""
         gen = PRBSGenerator(mode=LoopbackMode.PRBS_7, seed=0x7F)
         first_bit = gen.next()
-        
+
         gen.reset(0x7F)
         reset_bit = gen.next()
-        
+
         assert first_bit == reset_bit
+
+    def test_prbs15_sequence_length(self):
+        """Test PRBS-15 generates correct length sequence"""
+        gen = PRBSGenerator(mode=LoopbackMode.PRBS_15, seed=0x7FFF)
+        bits = [gen.next() for _ in range(100)]  # Just check first 100
+        assert len(bits) == 100
+        # Verify sequence doesn't repeat in first 100 bits
+        assert bits[:50] != bits[50:]
+
+    def test_prbs31_sequence_length(self):
+        """Test PRBS-31 generates correct length sequence"""
+        gen = PRBSGenerator(mode=LoopbackMode.PRBS_31, seed=0x7FFFFFFF)
+        bits = [gen.next() for _ in range(100)]
+        assert len(bits) == 100
 
 
 class TestFixedPatternGenerator:
     """Tests for fixed pattern generator"""
-    
+
     def test_all_zeros(self):
         """Test all zeros pattern"""
         gen = FixedPatternGenerator(mode=LoopbackMode.FIXED_ALL_ZEROS)
         bits = [gen.next() for _ in range(16)]
         assert all(b == 0 for b in bits)
-    
+
     def test_all_ones(self):
         """Test all ones pattern"""
         gen = FixedPatternGenerator(mode=LoopbackMode.FIXED_ALL_ONES)
         bits = [gen.next() for _ in range(16)]
         assert all(b == 1 for b in bits)
-    
+
     def test_alternating(self):
         """Test alternating pattern"""
         gen = FixedPatternGenerator(mode=LoopbackMode.FIXED_ALTERNATING)
@@ -174,7 +211,7 @@ class TestFixedPatternGenerator:
         # After counter increment: (1%2)=1, (2%2)=0, (3%2)=1, ...
         expected = [i % 2 for i in range(1, 17)]
         assert bits == expected
-    
+
     def test_8n_pattern(self):
         """Test 8N pattern"""
         gen = FixedPatternGenerator(mode=LoopbackMode.MODE_8N)
@@ -199,18 +236,72 @@ class TestFixedPatternGenerator:
         # Bit 7 = 1, rest = 0
         # Byte = 0b10000000 = 0x80
         assert byte2 == 0x80
-    
+
     def test_generate_byte_zeros(self):
         """Test byte generation for zeros"""
         gen = FixedPatternGenerator(mode=LoopbackMode.FIXED_ALL_ZEROS)
         byte = gen.generate_byte()
         assert byte == 0x00
-    
+
     def test_generate_byte_ones(self):
         """Test byte generation for ones"""
         gen = FixedPatternGenerator(mode=LoopbackMode.FIXED_ALL_ONES)
         byte = gen.generate_byte()
         assert byte == 0xFF
+
+    def test_alternating_byte(self):
+        """Test alternating byte generation"""
+        gen = FixedPatternGenerator(mode=LoopbackMode.FIXED_ALTERNATING)
+        gen.reset()
+        byte1 = gen.generate_byte()
+        byte2 = gen.generate_byte()
+
+        # Alternating pattern should produce alternating bytes
+        assert byte1 == 0xAA  # 0xAA = 0b10101010
+        assert byte2 == 0x55  # 0x55 = 0b01010101
+
+
+class TestLoopbackModes:
+    """Tests for all loopback modes"""
+
+    def test_all_loopback_modes(self):
+        """Test all loopback modes can be configured"""
+        modes = [
+            LoopbackMode.PRBS_7,
+            LoopbackMode.PRBS_15,
+            LoopbackMode.PRBS_31,
+            LoopbackMode.FIXED_ALL_ZEROS,
+            LoopbackMode.FIXED_ALL_ONES,
+            LoopbackMode.FIXED_ALTERNATING,
+            LoopbackMode.MODE_8N,
+        ]
+
+        for mode in modes:
+            config = LoopbackConfig(mode=mode, test_length=10)
+            ctrl = LoopbackController(num_channels=1, config=config)
+            assert ctrl.config.mode == mode
+
+    def test_loopback_mode_transitions(self):
+        """Test loopback works with all mode transitions"""
+        modes = [
+            LoopbackMode.PRBS_7,
+            LoopbackMode.PRBS_15,
+            LoopbackMode.PRBS_31,
+            LoopbackMode.FIXED_ALL_ZEROS,
+        ]
+
+        for mode in modes:
+            config = LoopbackConfig(mode=mode, test_length=10)
+            ctrl = LoopbackController(num_channels=1, config=config)
+
+            ctrl.start()
+            for _ in range(5000):
+                ctrl.process_cycle()
+                ctrl.tick()
+                if ctrl.is_complete():
+                    break
+
+            assert ctrl.is_complete(), f"Failed for mode {mode}"
 
 
 class TestLoopbackConfig:

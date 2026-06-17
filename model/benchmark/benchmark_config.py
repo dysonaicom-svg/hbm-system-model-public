@@ -186,21 +186,29 @@ class BenchmarkConfig:
     run_latency: bool = True
     run_scheduler: bool = True
     run_comparison: bool = True
-    
+    run_enhanced: bool = False  # Enable enhanced benchmarks (multi-channel, mixed traffic, etc.)
+
     # Individual configurations
     bandwidth: BandwidthConfig = field(default_factory=BandwidthConfig)
     latency: LatencyConfig = field(default_factory=LatencyConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     comparison: ComparisonConfig = field(default_factory=ComparisonConfig)
-    
+
+    # Enhanced benchmark specific config
+    enhanced_requests_per_channel: int = 100
+    enhanced_mixed_requests: int = 1000
+    enhanced_bg_requests: int = 500
+    enhanced_refresh_duration_ns: float = 1_000_000
+    enhanced_qos_requests: int = 500
+
     # Output configuration
     verbose: bool = True
     output_file: Optional[str] = None
     generate_plots: bool = False
-    
+
     # Random seed for reproducibility
     random_seed: int = 42
-    
+
     # HBM specification override (optional)
     hbm4_data_rate: Optional[float] = None
     hbm4_io_width: Optional[int] = None

@@ -53,9 +53,9 @@ class TestBankState:
         bank = BankState(bank_id=0)
         bank.activate(row_id=100, current_time=10.0)
         bank.precharge(current_time=20.0)
-        
+
         assert not bank.is_open
-        assert bank.open_row == -1
+        assert bank.last_row == 100  # last_row preserved for row-hit detection
         assert bank.last_command == 'PRE'
 
 

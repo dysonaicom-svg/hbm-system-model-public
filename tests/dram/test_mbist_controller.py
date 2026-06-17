@@ -196,6 +196,51 @@ class TestMarchAlgorithmExecution:
         assert result is not None
         assert result.algorithm == MBISTAlgorithm.MARCH_L
 
+    def test_march_u_execution(self):
+        """March-U algorithm must execute"""
+        controller = MBISTController()
+
+        config = MBISTConfig(
+            algorithm=MBISTAlgorithm.MARCH_U,
+            start_address=0,
+            end_address=15,
+        )
+
+        result = controller.run_test(config)
+
+        assert result is not None
+        assert result.algorithm == MBISTAlgorithm.MARCH_U
+
+    def test_march_minus_execution(self):
+        """March-Minus algorithm must execute"""
+        controller = MBISTController()
+
+        config = MBISTConfig(
+            algorithm=MBISTAlgorithm.MARCH_MINUS,
+            start_address=0,
+            end_address=15,
+        )
+
+        result = controller.run_test(config)
+
+        assert result is not None
+        assert result.algorithm == MBISTAlgorithm.MARCH_MINUS
+
+    def test_march_plus_execution(self):
+        """March-Plus algorithm must execute"""
+        controller = MBISTController()
+
+        config = MBISTConfig(
+            algorithm=MBISTAlgorithm.MARCH_PLUS,
+            start_address=0,
+            end_address=15,
+        )
+
+        result = controller.run_test(config)
+
+        assert result is not None
+        assert result.algorithm == MBISTAlgorithm.MARCH_PLUS
+
     def test_tick_based_execution(self):
         """Tick-based execution must work"""
         controller = MBISTController()
@@ -230,6 +275,38 @@ class TestMarchAlgorithmExecution:
 
         # With very small address range, should complete before timeout
         assert result is not None
+
+    def test_march_pattern_definitions(self):
+        """Test all March patterns are correctly defined"""
+        controller = MBISTController()
+
+        # March-C: w0, r0, w1, r1, w0, r0
+        march_c = controller.MARCH_PATTERNS[MBISTAlgorithm.MARCH_C]
+        assert len(march_c) == 6
+        assert march_c[0].operation == "w0"
+        assert march_c[1].operation == "r0"
+        assert march_c[2].operation == "w1"
+        assert march_c[3].operation == "r1"
+        assert march_c[4].operation == "w0"
+        assert march_c[5].operation == "r0"
+
+        # March-L: w0, r0, w1, r1, w0, r0
+        march_l = controller.MARCH_PATTERNS[MBISTAlgorithm.MARCH_L]
+        assert len(march_l) == 6
+
+        # March-U: longer pattern
+        march_u = controller.MARCH_PATTERNS[MBISTAlgorithm.MARCH_U]
+        assert len(march_u) == 8
+
+    def test_march_address_order(self):
+        """Test March patterns with both address orders"""
+        controller = MBISTController()
+
+        patterns = controller.MARCH_PATTERNS[MBISTAlgorithm.MARCH_C]
+
+        # Check that patterns can have different address orders
+        for pattern in patterns:
+            assert pattern.address_order in ["up", "down"]
 
 
 class TestWalkingOnesZeros:

@@ -339,6 +339,10 @@ class TestHBM416GbpsIntegration:
         for _ in range(ch.timing.nCWL + 4):
             ch.tick()
 
+        # Advance cycles for tRAS minimum (28 cycles for enhanced timing)
+        for _ in range(30):
+            ch.tick()
+
         # Precharge
         result = ch.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
         assert result, "PRE should succeed"

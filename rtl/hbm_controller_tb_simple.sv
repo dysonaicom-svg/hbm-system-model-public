@@ -1,17 +1,14 @@
 // =============================================================================
-// HBM Controller Testbench - Single-process for --no-timing
+// HBM Controller Testbench - For --no-timing mode
+// Clock is driven externally from main.cpp
 // =============================================================================
 
 `timescale 1ns/1ps
 `include "hbm_types.svh"
 
-module hbm_controller_tb_simple;
-
-    // Clock - driven by main file in no-timing mode
-    /* verilator lint_off STMTDLY */
-    reg clk = 0;
-    always #0.5 clk = ~clk;
-    /* verilator lint_on STMTDLY */
+module hbm_controller_tb_simple(
+    input clk  // Clock driven by main.cpp in no-timing mode
+);
 
     // Reset
     reg rst_n = 0;

@@ -300,59 +300,53 @@ class TrafficGenerator:
         self.hot_row = 0
         self._random = random.Random(config.seed)
 
+    def _compute_valid_address_range(self) -> int:
+        """Compute address range that fits within HBM channel addressing
+
+        Returns min of configured address_range and valid HBM address space
+        to prevent addresses from exceeding channel capacity.
+        """
+        hbm_cfg = self.config.hbm_config
+        total_channels = hbm_cfg.stack_count * hbm_cfg.channels_per_stack
+
+        # Calculate minimum bits needed for channel addressing
+        # Channel bits must be able to select any valid channel
+        channel_bits = max(1, (total_channels - 1).bit_length())
+
+        # Compute how many bits we need based on dynamic address mapping
+        # This matches the _get_default_mapping in address_decoder.py
+        stack_bits = max(0, (hbm_cfg.stack_count - 1).bit_length())
+        pc_bits = max(1, (hbm_cfg.pseudo_channels_per_channel - 1).bit_length())
+        bg_bits = max(1, (hbm_cfg.bank_groups_per_channel - 1).bit_length())
+        total_banks = hbm_cfg.banks_per_pseudo_channel * hbm_cfg.pseudo_channels_per_channel
+        bank_bits = max(1, (total_banks - 1).bit_length())
+
+        # Row bits (18) + col bits (13) + offset bits (3) + all address fields
+        # offset(3) + col(13) + row(18) + bank + bg + pc + channel + stack
+        min_bits = 3 + 13 + 18 + bank_bits + bg_bits + pc_bits + channel_bits + stack_bits
+
+        # Compute max address that fits in min_bits
+        max_valid_addr = 1 << min_bits
+
+        # Return the smaller of configured range and valid range
+        return min(self.config.address_range, max_valid_addr)
+
     def generate(self) -> List[HBMRequest]:
         """Generate request batch (legacy single-request mode)
 
         For higher throughput, use generate_burst() instead.
         """
-        requests = []
-
         # Determine if request should be generated based on request rate
         if self._random.random() > self.config.request_rate:
-            return requests
+            return []
 
-        # Generate address based on pattern
-        if self.config.traffic_pattern == TrafficPattern.RANDOM:
-            addr = self._random.randint(0, self.config.address_range - 1)
-        elif self.config.traffic_pattern == TrafficPattern.SEQUENTIAL:
-            addr = self.current_addr
-            self.current_addr = (self.current_addr + self.config.burst_size) % self.config.address_range
-        elif self.config.traffic_pattern == TrafficPattern.STRIDE:
-            addr = self.current_addr
-            self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
-        elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
-            # 80% access hot spot with row locality (same bank+row)
-            if self._random.random() < 0.8:
-                # Stay in hot row 70% of time, change row 30%
-                if self._random.random() < 0.7:
-                    # Same row, different column
-                    addr = self.current_addr + 64
-                    if addr > self.config.address_range // 10:
-                        addr = self.current_addr - 64 if self.current_addr > 64 else 64
-                else:
-                    # New row in hot bank
-                    self.hot_row = (self.hot_row + 1) % 256
-                    self.hot_bank = self._random.randint(0, 3)
-                # Use hot spot base + row*stride + column
-                hot_base = self.config.address_range // 100  # Small hot region
-                addr = hot_base + (self.hot_row << 12) + (self.hot_bank << 20)
-                addr = min(addr, self.config.address_range - 64)
-                self.current_addr = addr
-            else:
-                # Cold access - random
-                addr = self._random.randint(0, self.config.address_range - 1)
-        else:  # ADDR_SCATTER
-            addr = self._random.randint(0, self.config.address_range - 1)
+        # Compute actual address range based on HBM config
+        # This ensures addresses stay within valid channel space
+        actual_range = self._compute_valid_address_range()
 
-        # Align address
-        addr = addr & ~0x3F  # 64-byte alignment
-
-        # Generate read or write request
-        is_read = self._random.random() < self.config.read_ratio
-        req = HBMRequest(addr=addr, length=self.config.burst_size, is_read=is_read)
-        requests.append(req)
-
-        return requests
+        # Delegate to _generate_single_request with pre-computed range
+        req = self._generate_single_request(actual_range)
+        return [req] if req else []
 
     def generate_burst(self) -> List[HBMRequest]:
         """Generate burst of requests based on request rate
@@ -369,30 +363,40 @@ class TrafficGenerator:
         requests = []
         max_requests = self.config.max_requests_per_cycle
 
+        # Compute actual range once for all requests in burst
+        actual_range = self._compute_valid_address_range()
+
         for _ in range(max_requests):
             # Each slot generates a request with probability request_rate
             if self._random.random() < self.config.request_rate:
-                req = self._generate_single_request()
+                req = self._generate_single_request(actual_range)
                 if req:
                     requests.append(req)
 
         return requests
 
-    def _generate_single_request(self) -> Optional[HBMRequest]:
+    def _generate_single_request(self, actual_range: Optional[int] = None) -> Optional[HBMRequest]:
         """Generate a single request with proper addressing
+
+        Args:
+            actual_range: Pre-computed valid address range (optional, will compute if not provided)
 
         Returns:
             HBMRequest or None if generation fails
         """
+        # Compute actual range if not provided
+        if actual_range is None:
+            actual_range = self._compute_valid_address_range()
+
         # Generate address based on pattern
         if self.config.traffic_pattern == TrafficPattern.RANDOM:
-            addr = self._random.randint(0, self.config.address_range - 1)
+            addr = self._random.randint(0, actual_range - 1)
         elif self.config.traffic_pattern == TrafficPattern.SEQUENTIAL:
             addr = self.current_addr
-            self.current_addr = (self.current_addr + self.config.burst_size) % self.config.address_range
+            self.current_addr = (self.current_addr + self.config.burst_size) % actual_range
         elif self.config.traffic_pattern == TrafficPattern.STRIDE:
             addr = self.current_addr
-            self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
+            self.current_addr = (self.current_addr + self.config.stride_value) % actual_range
         elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
             # 80% access hot spot with row locality (same bank+row)
             if self._random.random() < 0.8:
@@ -400,22 +404,22 @@ class TrafficGenerator:
                 if self._random.random() < 0.7:
                     # Same row, different column
                     addr = self.current_addr + 64
-                    if addr > self.config.address_range // 10:
+                    if addr > actual_range // 10:
                         addr = self.current_addr - 64 if self.current_addr > 64 else 64
                 else:
                     # New row in hot bank
                     self.hot_row = (self.hot_row + 1) % 256
                     self.hot_bank = self._random.randint(0, 3)
                 # Use hot spot base + row*stride + column
-                hot_base = self.config.address_range // 100  # Small hot region
+                hot_base = actual_range // 100  # Small hot region
                 addr = hot_base + (self.hot_row << 12) + (self.hot_bank << 20)
-                addr = min(addr, self.config.address_range - 64)
+                addr = min(addr, actual_range - 64)
                 self.current_addr = addr
             else:
                 # Cold access - random
-                addr = self._random.randint(0, self.config.address_range - 1)
+                addr = self._random.randint(0, actual_range - 1)
         else:  # ADDR_SCATTER
-            addr = self._random.randint(0, self.config.address_range - 1)
+            addr = self._random.randint(0, actual_range - 1)
 
         # Align address
         addr = addr & ~0x3F  # 64-byte alignment
@@ -529,10 +533,16 @@ class HBMSimulator:
         self.pipeline = CommandPipeline()
 
         # Create multi-channel support components
-        # Use ADAPTIVE strategy for best load balancing across channels
+        # Use address-based routing for sequential patterns to preserve row locality
+        # Use ADAPTIVE for other patterns where load balancing is more important
+        if sim_config.traffic_pattern == TrafficPattern.SEQUENTIAL:
+            # Use address-based routing to preserve row locality
+            channel_strategy = ChannelSelector.ADDR_BASED
+        else:
+            channel_strategy = ChannelSelector.ADAPTIVE
         self.channel_selector = ChannelSelector(
             num_channels=num_channels,
-            strategy=ChannelSelector.ADAPTIVE
+            strategy=channel_strategy
         )
 
         # Create adaptive load balancer and link to controller
@@ -797,8 +807,20 @@ class HBMSimulator:
             )
             responses.append(response)
 
-            # Update bank state
+            # Update bank state in simulator
             self._update_bank_state(sequence.request, sequence.is_row_hit)
+
+            # Update controller's bank state (for correct row hit detection on subsequent requests)
+            # This is critical for row hit rate tracking
+            ctrl_bank_key = (sequence.request.channel_id, sequence.request.pseudo_channel_id, sequence.request.bank_id)
+            if ctrl_bank_key not in self.controller.bank_states:
+                self.controller.bank_states[ctrl_bank_key] = BankState(
+                    bank_id=sequence.request.bank_id
+                )
+            ctrl_bank = self.controller.bank_states[ctrl_bank_key]
+            ctrl_bank.is_open = True
+            ctrl_bank.open_row = sequence.request.row_id
+            ctrl_bank.last_row = sequence.request.row_id
 
             # Update stats
             stats.completed_requests += 1
@@ -944,12 +966,11 @@ class HBMSimulator:
         else:
             self.stats.idle_cycles += 1
 
-        # 8. Update DRAM stats
+        # Note: row_hits/row_misses are tracked in _process_pending_sequences() based on
+        # the sequencer's sequence.is_row_hit. Don't overwrite with DRAM stats.
         dram_stats = self.dram.stats
-        self.stats.row_hits = dram_stats.row_hits
-        self.stats.row_misses = dram_stats.row_misses
-        self.stats.row_conflicts = dram_stats.row_conflicts
-        self.stats.refresh_count = dram_stats.total_refreshes
+        self.stats.row_conflicts = getattr(dram_stats, 'row_conflicts', 0)
+        self.stats.refresh_count = getattr(dram_stats, 'total_refreshes', 0)
 
         return None
 
@@ -1128,6 +1149,9 @@ class HBMSimulator:
 
         self.stats.total_cycles = self.current_cycle
 
+        # Note: row_hits/row_misses are tracked in _process_pending_sequences() based on
+        # the sequencer's sequence.is_row_hit. Don't overwrite with DRAM stats.
+
         # Copy queue monitoring stats
         self.stats.peak_queue_depth = self._queue_peak_depth
         self.stats.reject_count = self._queue_reject_count
@@ -1176,9 +1200,8 @@ class HBMSimulator:
     def get_stats(self) -> SimulationStats:
         """Get statistics"""
         self.stats.total_cycles = self.current_cycle
-        self.stats.row_hits = self.dram.stats.row_hits
-        self.stats.row_misses = self.dram.stats.row_misses
-        self.stats.row_conflicts = self.dram.stats.row_conflicts
+        # Note: row_hits/row_misses are tracked in _process_pending_sequences() based on
+        # the sequencer's sequence.is_row_hit. Don't overwrite with DRAM stats.
         return self.stats
 
     def get_pool_stats(self) -> Dict[str, int]:

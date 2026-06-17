@@ -475,6 +475,9 @@ class TestPseudoChannelTiming:
         pc.set_time(timing.nRCD)
         for bank in pc.banks:
             bank.set_time(float(timing.nRCD))
+            # Complete activation for enhanced bank state machine
+            if hasattr(bank, 'complete_activation'):
+                bank.complete_activation()
 
         assert pc.can_read() is True
 
@@ -488,6 +491,9 @@ class TestPseudoChannelTiming:
         pc.set_time(timing.nRCD)
         for bank in pc.banks:
             bank.set_time(float(timing.nRCD))
+            # Complete activation for enhanced bank state machine
+            if hasattr(bank, 'complete_activation'):
+                bank.complete_activation()
 
         assert pc.can_write() is True
 

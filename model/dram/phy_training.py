@@ -8,9 +8,23 @@ Key features:
 - PHY initialization state machine (PH-003)
 - Training sequence state machine (PH-004)
 - Read/Write DQS training
-- Margin training (MT)
-- VREF CA training
+- Read DQ (RDDQ) training - data eye training
+- Write DQ (WDQ) training - write data eye training
+- Gate Training (GL) for read gate alignment
+- VREF CA/DQ training
 - DFI 5.1 interface integration
+- Per-lane and per-group calibration support
+
+Training Sequence (JEDEC JESD270-4A):
+1. Initialize training
+2. Read DQS training (T_RDDQS)
+3. Write leveling (T_WRLVL)
+4. Read DQ training / Read Data Eye (T_RDDQ / RDDQ)
+5. Write DQ training / Write Data Eye (T_WRDQ / WDQ)
+6. Gate Training (T_GL)
+7. VREF CA training (T_VREF_CA)
+8. VREF DQ training (T_VREF_DQ)
+9. Verify and complete
 
 Reference:
 - JEDEC JESD270-4A HBM4 specification
@@ -67,13 +81,17 @@ class TrainingPhase(Enum):
     TRAIN_RD_DQS = auto()                  # Read DQS training
     TRAIN_WR_LEVELING = auto()             # Write leveling
 
-    # Margin training phases
-    TRAIN_RD_MT = auto()                   # Read margin training
-    TRAIN_WR_MT = auto()                   # Write margin training
+    # DQ training phases - Read DQ / RDDQ (data eye training)
+    TRAIN_RD_DQ = auto()                  # Read DQ training (RDDQ)
+    TRAIN_RD_DQ_EYE = auto()               # Read DQ eye center training
 
-    # DQ training phases
-    TRAIN_RD_DQ = auto()                  # Read DQ training
-    TRAIN_WR_DQ = auto()                   # Write DQ training
+    # DQ training phases - Write DQ / WDQ (data eye training)
+    TRAIN_WR_DQ = auto()                   # Write DQ training (WDQ)
+    TRAIN_WR_DQ_EYE = auto()               # Write DQ eye center training
+
+    # Gate training
+    TRAIN_GATE = auto()                    # Gate training (read gate alignment)
+    TRAIN_GATE_DELAY = auto()              # Gate delay optimization
 
     # VREF training
     TRAIN_VREF_CA = auto()                 # VREF CA training
@@ -159,12 +177,14 @@ class DFI5TrainingControl:
         cmd_map = {
             TrainingPhase.TRAIN_RD_DQS: (True, 1, 0),
             TrainingPhase.TRAIN_WR_LEVELING: (True, 1, 1),
-            TrainingPhase.TRAIN_RD_MT: (True, 2, 0),
-            TrainingPhase.TRAIN_WR_MT: (True, 2, 1),
-            TrainingPhase.TRAIN_RD_DQ: (True, 3, 0),
-            TrainingPhase.TRAIN_WR_DQ: (True, 3, 1),
-            TrainingPhase.TRAIN_VREF_CA: (True, 4, 0),
-            TrainingPhase.TRAIN_VREF_DQ: (True, 4, 1),
+            TrainingPhase.TRAIN_RD_DQ: (True, 2, 0),       # RDDQ
+            TrainingPhase.TRAIN_RD_DQ_EYE: (True, 2, 1),   # Read eye center
+            TrainingPhase.TRAIN_WR_DQ: (True, 3, 0),       # WDQ
+            TrainingPhase.TRAIN_WR_DQ_EYE: (True, 3, 1),   # Write eye center
+            TrainingPhase.TRAIN_GATE: (True, 4, 0),       # Gate training
+            TrainingPhase.TRAIN_GATE_DELAY: (True, 4, 1),  # Gate delay
+            TrainingPhase.TRAIN_VREF_CA: (True, 5, 0),
+            TrainingPhase.TRAIN_VREF_DQ: (True, 5, 1),
         }
         return cmd_map.get(cmd, (False, 0, 0))
 
@@ -221,14 +241,16 @@ class PHYTrainingStateMachine:
     10. Verify and complete
     """
 
-    # Training phase sequence order
+    # Training phase sequence order (JEDEC JESD270-4A)
     TRAINING_SEQUENCE = [
         TrainingPhase.TRAIN_RD_DQS,
         TrainingPhase.TRAIN_WR_LEVELING,
-        TrainingPhase.TRAIN_RD_MT,
-        TrainingPhase.TRAIN_WR_MT,
         TrainingPhase.TRAIN_RD_DQ,
+        TrainingPhase.TRAIN_RD_DQ_EYE,
         TrainingPhase.TRAIN_WR_DQ,
+        TrainingPhase.TRAIN_WR_DQ_EYE,
+        TrainingPhase.TRAIN_GATE,
+        TrainingPhase.TRAIN_GATE_DELAY,
         TrainingPhase.TRAIN_VREF_CA,
         TrainingPhase.TRAIN_VREF_DQ,
     ]
@@ -358,10 +380,12 @@ class PHYTrainingStateMachine:
         phase_handlers = {
             TrainingPhase.TRAIN_RD_DQS: self._train_rd_dqs,
             TrainingPhase.TRAIN_WR_LEVELING: self._train_wr_leveling,
-            TrainingPhase.TRAIN_RD_MT: self._train_rd_mt,
-            TrainingPhase.TRAIN_WR_MT: self._train_wr_mt,
             TrainingPhase.TRAIN_RD_DQ: self._train_rd_dq,
+            TrainingPhase.TRAIN_RD_DQ_EYE: self._train_rd_dq_eye,
             TrainingPhase.TRAIN_WR_DQ: self._train_wr_dq,
+            TrainingPhase.TRAIN_WR_DQ_EYE: self._train_wr_dq_eye,
+            TrainingPhase.TRAIN_GATE: self._train_gate,
+            TrainingPhase.TRAIN_GATE_DELAY: self._train_gate_delay,
             TrainingPhase.TRAIN_VREF_CA: self._train_vref_ca,
             TrainingPhase.TRAIN_VREF_DQ: self._train_vref_dq,
         }
@@ -438,75 +462,10 @@ class PHYTrainingStateMachine:
 
         return True
 
-    def _train_rd_mt(self) -> bool:
-        """Execute Read Margin Training
-
-        Optimizes read VREF for maximum margin.
-
-        Returns:
-            True if training passed
-        """
-        tra_req, tra_mode, tra_type = self.dfi_control.encode_training_cmd(
-            TrainingPhase.TRAIN_RD_MT)
-        self.dfi_control.tra_req = tra_req
-        self.dfi_control.tra_mode = tra_mode
-        self.dfi_control.tra_type = tra_type
-
-        # VREF sweep for read
-        best_vref = 32  # Center default
-        best_margin = 0.0
-
-        for vref in range(64):  # 6-bit VREF DAC
-            margin = self._measure_rd_margin(vref)
-            if margin > best_margin:
-                best_margin = margin
-                best_vref = vref
-
-        self.params.rd_vref = best_vref
-        self.params.rd_margin = best_margin
-
-        if best_margin < 0.15:
-            self.params.training_errors.append("RD margin training failed")
-            return False
-
-        return True
-
-    def _train_wr_mt(self) -> bool:
-        """Execute Write Margin Training
-
-        Optimizes write VREF for maximum margin.
-
-        Returns:
-            True if training passed
-        """
-        tra_req, tra_mode, tra_type = self.dfi_control.encode_training_cmd(
-            TrainingPhase.TRAIN_WR_MT)
-        self.dfi_control.tra_req = tra_req
-        self.dfi_control.tra_mode = tra_mode
-        self.dfi_control.tra_type = tra_type
-
-        best_vref = 32
-        best_margin = 0.0
-
-        for vref in range(64):
-            margin = self._measure_wr_margin(vref)
-            if margin > best_margin:
-                best_margin = margin
-                best_vref = vref
-
-        self.params.wr_vref = best_vref
-        self.params.wr_margin = best_margin
-
-        if best_margin < 0.15:
-            self.params.training_errors.append("WR margin training failed")
-            return False
-
-        return True
-
     def _train_rd_dq(self) -> bool:
-        """Execute Read DQ Training
+        """Execute Read DQ Training (RDDQ)
 
-        Per-lane DQ delay calibration.
+        Per-lane DQ delay calibration for read data capture.
 
         Returns:
             True if training passed
@@ -524,8 +483,44 @@ class PHYTrainingStateMachine:
 
         return True
 
+    def _train_rd_dq_eye(self) -> bool:
+        """Execute Read DQ Eye Center Training
+
+        Fine-tunes read DQ delay for optimal data eye center.
+
+        Returns:
+            True if training passed
+        """
+        tra_req, tra_mode, tra_type = self.dfi_control.encode_training_cmd(
+            TrainingPhase.TRAIN_RD_DQ_EYE)
+        self.dfi_control.tra_req = tra_req
+        self.dfi_control.tra_mode = tra_mode
+        self.dfi_control.tra_type = tra_type
+
+        # Fine-tune around best delay found in RD_DQ
+        best_margin = 0.0
+        for lane in range(self._lane_count):
+            base_delay = self.params.lane_delays.get(lane, 32)
+
+            # Sweep around base delay
+            for offset in range(-8, 9):
+                delay = base_delay + offset
+                if 0 <= delay <= 63:
+                    margin = self._measure_rd_dq_margin(delay)
+                    if margin > best_margin:
+                        best_margin = margin
+                        self.params.lane_delays[lane] = delay
+
+        self.params.rd_margin = best_margin
+
+        if best_margin < 0.15:
+            self.params.training_errors.append("RD DQ eye center training failed")
+            return False
+
+        return True
+
     def _train_wr_dq(self) -> bool:
-        """Execute Write DQ Training
+        """Execute Write DQ Training (WDQ)
 
         Per-lane write DQ delay calibration.
 
@@ -541,6 +536,108 @@ class PHYTrainingStateMachine:
         for lane in range(self._lane_count):
             best_delay = self._calibrate_lane_wr(lane)
             self.params.lane_delays[lane + self._lane_count] = best_delay
+
+        return True
+
+    def _train_wr_dq_eye(self) -> bool:
+        """Execute Write DQ Eye Center Training
+
+        Fine-tunes write DQ delay for optimal data eye center.
+
+        Returns:
+            True if training passed
+        """
+        tra_req, tra_mode, tra_type = self.dfi_control.encode_training_cmd(
+            TrainingPhase.TRAIN_WR_DQ_EYE)
+        self.dfi_control.tra_req = tra_req
+        self.dfi_control.tra_mode = tra_mode
+        self.dfi_control.tra_type = tra_type
+
+        # Fine-tune around best delay found in WR_DQ
+        best_margin = 0.0
+        for lane in range(self._lane_count):
+            base_delay = self.params.lane_delays.get(lane + self._lane_count, 32)
+
+            # Sweep around base delay
+            for offset in range(-8, 9):
+                delay = base_delay + offset
+                if 0 <= delay <= 63:
+                    margin = self._measure_wr_dq_margin(delay)
+                    if margin > best_margin:
+                        best_margin = margin
+                        self.params.lane_delays[lane + self._lane_count] = delay
+
+        self.params.wr_margin = best_margin
+
+        if best_margin < 0.15:
+            self.params.training_errors.append("WR DQ eye center training failed")
+            return False
+
+        return True
+
+    def _train_gate(self) -> bool:
+        """Execute Gate Training
+
+        Trains read gate timing to properly capture data.
+
+        Returns:
+            True if training passed
+        """
+        tra_req, tra_mode, tra_type = self.dfi_control.encode_training_cmd(
+            TrainingPhase.TRAIN_GATE)
+        self.dfi_control.tra_req = tra_req
+        self.dfi_control.tra_mode = tra_mode
+        self.dfi_control.tra_type = tra_type
+
+        best_delay = 0
+        best_margin = 0.0
+
+        for delay in range(64):
+            margin = self._measure_gate_margin(delay)
+            if margin > best_margin:
+                best_margin = margin
+                best_delay = delay
+
+        self.params.rd_dqs_gate_delay = best_delay
+
+        if best_margin < 0.1:
+            self.params.training_errors.append("Gate training margin too small")
+            return False
+
+        return True
+
+    def _train_gate_delay(self) -> bool:
+        """Execute Gate Delay Optimization
+
+        Fine-tunes gate delay for optimal timing.
+
+        Returns:
+            True if training passed
+        """
+        tra_req, tra_mode, tra_type = self.dfi_control.encode_training_cmd(
+            TrainingPhase.TRAIN_GATE_DELAY)
+        self.dfi_control.tra_req = tra_req
+        self.dfi_control.tra_mode = tra_mode
+        self.dfi_control.tra_type = tra_type
+
+        base_delay = self.params.rd_dqs_gate_delay
+        best_delay = base_delay
+        best_margin = 0.0
+
+        # Fine sweep around base delay
+        for offset in range(-4, 5):
+            delay = base_delay + offset
+            if 0 <= delay <= 63:
+                margin = self._measure_gate_margin(delay)
+                if margin > best_margin:
+                    best_margin = margin
+                    best_delay = delay
+
+        self.params.rd_dqs_gate_delay = best_delay
+
+        if best_margin < 0.12:
+            self.params.training_errors.append("Gate delay optimization failed")
+            return False
 
         return True
 
@@ -670,6 +767,48 @@ class PHYTrainingStateMachine:
 
         Args:
             delay: Write leveling delay tap
+
+        Returns:
+            Margin as fraction of UI
+        """
+        import random
+        noise = random.uniform(-0.05, 0.05)
+        margin = 0.5 - abs(delay - 32) / 64 + noise
+        return max(0.0, min(1.0, margin))
+
+    def _measure_rd_dq_margin(self, delay: int) -> float:
+        """Measure read DQ margin for given delay
+
+        Args:
+            delay: DQ delay tap value
+
+        Returns:
+            Margin as fraction of UI (0.0 to 1.0)
+        """
+        import random
+        noise = random.uniform(-0.04, 0.04)
+        margin = 0.5 - abs(delay - 32) / 64 + noise
+        return max(0.0, min(1.0, margin))
+
+    def _measure_wr_dq_margin(self, delay: int) -> float:
+        """Measure write DQ margin for given delay
+
+        Args:
+            delay: Write DQ delay tap value
+
+        Returns:
+            Margin as fraction of UI
+        """
+        import random
+        noise = random.uniform(-0.04, 0.04)
+        margin = 0.5 - abs(delay - 32) / 64 + noise
+        return max(0.0, min(1.0, margin))
+
+    def _measure_gate_margin(self, delay: int) -> float:
+        """Measure gate training margin
+
+        Args:
+            delay: Gate delay tap value
 
         Returns:
             Margin as fraction of UI
@@ -910,6 +1049,43 @@ class PHYTrainingStateMachine:
             True if training completed successfully
         """
         return self.status.current_phase == TrainingPhase.TRAIN_COMPLETE
+
+    def start_loopback_test(self) -> bool:
+        """Signal start of loopback test from loopback controller
+
+        This is called by the loopback controller when starting
+        a loopback test sequence.
+
+        Returns:
+            True if loopback test can proceed
+        """
+        # If training is complete, allow loopback test
+        if self.is_training_passed():
+            return True
+        # If training is in progress, don't allow loopback
+        return False
+
+    def get_loopback_ready_status(self) -> Dict[str, Any]:
+        """Get status for loopback test readiness
+
+        Returns:
+            Dictionary with loopback readiness information
+        """
+        return {
+            'training_complete': self.is_training_passed(),
+            'training_failed': self.status.current_phase == TrainingPhase.TRAIN_FAIL,
+            'current_phase': self.status.current_phase.name,
+            'coefficients': {
+                'rd_dqs_delay': self.params.rd_dqs_delay,
+                'wr_level_delay': self.params.wr_level_delay,
+                'rd_vref': self.params.rd_vref,
+                'wr_vref': self.params.wr_vref,
+                'ca_vref': self.params.ca_vref,
+                'rd_margin': self.params.rd_margin,
+                'wr_margin': self.params.wr_margin,
+            },
+            'lane_count': self._lane_count,
+        }
 
 
 class PHYInitializationStateMachine:

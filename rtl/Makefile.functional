@@ -1,0 +1,140 @@
+# =============================================================================
+# HBM Functional Testbench Makefile
+# =============================================================================
+
+# Directory structure
+RTL_DIR := $(shell pwd)
+BUILD_DIR := $(RTL_DIR)/build
+OBJ_DIR := $(RTL_DIR)/obj_dir
+LOG_DIR := $(RTL_DIR)/logs
+
+# Verilator configuration
+VERILATOR := verilator
+
+# Top module
+TOP_MODULE := hbm_functional_tb
+
+# Source files (SystemVerilog) - excluding UVM package
+RTL_SOURCES := \
+    $(RTL_DIR)/hbm_types.svh \
+    $(RTL_DIR)/hbm_controller.sv
+
+TB_SOURCE := $(RTL_DIR)/hbm_functional_tb.sv
+TB_MAIN := $(RTL_DIR)/hbm_functional_tb_main.cpp
+
+# Build flags
+CXX := g++
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2
+LDFLAGS := -lpthread
+
+# Simulation parameters
+SIM_TIME ?= 500us
+MAX_CYCLES ?= 500000
+
+# Colors
+GREEN  := \033[0;32m
+YELLOW := \033[0;33m
+RED    := \033[0;31m
+NC     := \033[0m
+
+.PHONY: help
+help:
+	@echo ""
+	@echo "$(GREEN)HBM Functional Testbench Makefile$(NC)"
+	@echo "===================================="
+	@echo ""
+	@echo "Targets:"
+	@echo "  $(YELLOW)make build$(NC) - Build testbench with Verilator"
+	@echo "  $(YELLOW)make run$(NC)   - Build and run with verbose output"
+	@echo "  $(YELLOW)make sim$(NC)   - Quick simulation"
+	@echo "  $(YELLOW)make clean$(NC) - Remove generated files"
+	@echo "  $(YELLOW)make lint$(NC)  - Lint-only check"
+	@echo "  $(YELLOW)make wave$(NC)  - View waveforms"
+	@echo "  $(YELLOW)make help$(NC)  - Display this help"
+	@echo ""
+	@echo "Options (environment variables):"
+	@echo "  SIM_TIME=<time>   - Simulation time (default: 500us)"
+	@echo "  MAX_CYCLES=<n>    - Maximum cycles (default: 500000)"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make sim SIM_TIME=100us"
+	@echo "  make run"
+	@echo ""
+
+# Target: lint (syntax check only)
+.PHONY: lint
+lint:
+	@echo "$(GREEN)== Running Verilator Lint Check ==$(NC)"
+	@mkdir -p $(LOG_DIR)
+	$(VERILATOR) --lint-only -Wall -Wno-fatal \
+		--no-timing \
+		$(TB_SOURCE) $(RTL_SOURCES) 2>&1 | tee $(LOG_DIR)/lint.log
+	@echo ""
+	@echo "$(GREEN)== Lint Check Complete ==$(NC)"
+
+# Target: build
+.PHONY: build
+build: $(OBJ_DIR)/V$(TOP_MODULE)
+	@echo "$(GREEN)== Build Complete ==$(NC)"
+	@echo "Binary: $(OBJ_DIR)/V$(TOP_MODULE)"
+
+$(OBJ_DIR)/V$(TOP_MODULE): $(RTL_SOURCES) $(TB_SOURCE) $(TB_MAIN)
+	@echo "$(YELLOW)== Building HBM Functional Testbench ==$(NC)"
+	@mkdir -p $(OBJ_DIR) $(LOG_DIR) $(BUILD_DIR)
+	cd $(RTL_DIR) && $(VERILATOR) \
+		--cc \
+		--exe \
+		--build \
+		--sv \
+		--no-timing \
+		--trace \
+		--trace-structs \
+		--trace-depth 100 \
+		-Wno-fatal \
+		--top-module $(TOP_MODULE) \
+		$(TB_SOURCE) \
+		$(TB_MAIN) \
+		$(RTL_SOURCES) \
+		-Mdir $(OBJ_DIR) \
+		-CFLAGS "-std=c++17 -O2 -DVM_TRACE_FMT_VCD" \
+		-LDFLAGS "-lpthread" \
+		2>&1 | tee $(LOG_DIR)/build.log
+	@echo ""
+	@echo "$(GREEN)== Build Complete ==$(NC)"
+
+# Target: run (build + run with verbose output)
+.PHONY: run
+run: build
+	@echo "$(YELLOW)== Running Simulation ==$(NC)"
+	@echo ""
+	@cd $(OBJ_DIR) && ./V$(TOP_MODULE) +TIME=$(SIM_TIME) 2>&1 | tee $(LOG_DIR)/sim.log
+	@echo ""
+
+# Target: sim (quick run)
+.PHONY: sim
+sim: build
+	@echo "$(YELLOW)== Running Quick Simulation ==$(NC)"
+	@cd $(OBJ_DIR) && ./V$(TOP_MODULE) +TIME=$(SIM_TIME)
+
+# Target: wave (view waveforms)
+.PHONY: wave
+wave: $(RTL_DIR)/$(TOP_MODULE).vcd
+	@echo "$(YELLOW)== Opening Waveform ==$(NC)"
+	@if command -v gtkwave &> /dev/null; then \
+		gtkwave $(RTL_DIR)/$(TOP_MODULE).vcd &; \
+	else \
+		echo "$(RED)gtkwave not found. Install gtkwave to view waveforms.$(NC)"; \
+	fi
+
+# Target: clean
+.PHONY: clean
+clean:
+	@echo "$(YELLOW)== Cleaning Generated Files ==$(NC)"
+	@rm -rf $(OBJ_DIR)
+	@rm -rf $(BUILD_DIR)
+	@rm -rf $(LOG_DIR)
+	@rm -rf $(RTL_DIR)/verilator*
+	@rm -rf $(RTL_DIR)/$(TOP_MODULE).vcd
+	@echo "$(GREEN)== Clean Complete ==$(NC)"
+
+.DEFAULT_GOAL := help

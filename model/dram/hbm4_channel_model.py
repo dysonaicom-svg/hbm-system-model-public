@@ -1,17 +1,24 @@
 """
-HBM4 Channel Model - Enhanced Version
+HBM4 Channel Model - Enhanced Version with Full State Tracking
 
 Implements 32 independent channels, each with 2 pseudo-channels and 8 bank groups.
-Based on Ramulator 2.0 hierarchical node structure.
+Enhanced with comprehensive bank state tracking and timing validation.
 
 Key features:
 - 32 independent memory channels
 - 2 pseudo-channels per channel (64 total)
-- 8 bank groups per pseudo-channel (2 banks per bank group)
-- Independent bank state machines per pseudo-channel
+- 8 bank groups per pseudo-channel (2 banks per group)
+- Independent bank state machines per pseudo-channel with CLOSED/OPEN/ACTIVATING/PRECHARGING
 - Bank group-aware command scheduling
+- State transition timing validation
+- Integration with HBM4 refresh scheduler
 - Command scheduling and timing
-- Numeric command encoding for RTL interface
+
+Key HBM4 Timing Parameters:
+- tRCD: 12 cycles (Activate to Read/Write)
+- tRP: 12 cycles (Precharge)
+- tRAS: 28 cycles (Activate to Precharge)
+- tRC: 40 cycles (Activate to Activate same bank)
 
 Command Encoding (aligned with RTL hbm_types.svh):
 - 0: NOP    - No operation
@@ -31,12 +38,19 @@ Reference:
 
 from enum import IntEnum
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple
-import time
+from typing import List, Optional, Dict, Tuple, Any
+import logging
 
-from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
 from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade, HBM4_SPEED_GRADES
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade
+
+# Import the enhanced bank state machine
+from model.dram.hbm4_bank_state_machine import (
+    HBM4BankStateMachine, HBM4BankArray, HBM4BankState, HBM4Command,
+    HBM4BankTiming, TimingViolation, create_hbm4_bank_state_machine
+)
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -179,10 +193,6 @@ class BankGroup:
             current_cycle = self.current_cycle
         self.last_act_cycle = current_cycle
 
-    def set_time(self, current_time: float):
-        """Set current simulation time"""
-        self.current_time = current_time
-
 
 @dataclass
 class PseudoChannel:
@@ -209,7 +219,10 @@ class PseudoChannel:
     bank_groups: List[BankGroup]
 
     # Flat bank list for compatibility (maps to bank_groups)
-    banks: List[BankStateMachine]
+    banks: List[Any] = field(default_factory=list)
+
+    # Enhanced bank array with new state machine
+    enhanced_banks: Optional[HBM4BankArray] = None
 
     # State tracking
     state: PseudoChannelState = PseudoChannelState.IDLE
@@ -220,7 +233,11 @@ class PseudoChannel:
     _last_act_bank_group: int = -1
     _bg_activation_count: int = 0
 
-    def __init__(self, channel_id: int, pseudo_channel_id: int, spec: HBM4Spec, timing: Optional[HBM4Timing] = None):
+    # Timing violations
+    timing_violations: List[TimingViolation] = field(default_factory=list)
+
+    def __init__(self, channel_id: int, pseudo_channel_id: int, spec: HBM4Spec,
+                 timing: Optional[HBM4Timing] = None, use_enhanced_banks: bool = True):
         """Initialize pseudo-channel
 
         Args:
@@ -228,6 +245,7 @@ class PseudoChannel:
             pseudo_channel_id: Pseudo-channel index (0 or 1)
             spec: HBM4 specification
             timing: HBM4 timing parameters (uses default if None)
+            use_enhanced_banks: Use enhanced HBM4BankStateMachine if True
         """
         self.channel_id = channel_id
         self.pseudo_channel_id = pseudo_channel_id
@@ -248,19 +266,33 @@ class PseudoChannel:
             for g in range(spec.bank_groups_per_channel)
         ]
 
-        # Create flat bank list for compatibility
-        self.banks = [
-            BankStateMachine(bank_id, self.timing)
-            for bank_id in range(spec.banks_per_pseudo_channel)
-        ]
+        if use_enhanced_banks:
+            # Use enhanced bank state machine
+            self.enhanced_banks = HBM4BankArray(
+                pseudo_channel_id=pseudo_channel_id,
+                channel_id=channel_id,
+                timing=HBM4BankTiming()
+            )
+            self.banks = self.enhanced_banks.banks
+        else:
+            # Legacy bank state machine
+            from model.dram.bank_state_machine import BankStateMachine
+            self.banks = [
+                BankStateMachine(bank_id, self.timing)
+                for bank_id in range(spec.banks_per_pseudo_channel)
+            ]
+            self.enhanced_banks = None
+
+        # Initialize remaining fields that aren't auto-initialized due to custom __init__
+        self.timing_violations: List[TimingViolation] = []
 
     def set_time(self, current_cycle: int) -> None:
         """Set current time for this pseudo-channel"""
         self.current_time = float(current_cycle)
+        # Note: banks are updated via enhanced_banks.set_time() or directly
+        # when PseudoChannel.tick() is called
         for bg in self.bank_groups:
             bg.set_time(current_cycle)
-        for bank in self.banks:
-            bank.set_time(current_cycle)
 
     def get_bank_group(self, bank_id: int) -> BankGroup:
         """Get the bank group for a given bank ID
@@ -274,7 +306,7 @@ class PseudoChannel:
         group_idx = bank_id // self.banks_per_group
         return self.bank_groups[group_idx]
 
-    def get_bank_in_group(self, bank_group: int, index_in_group: int) -> BankStateMachine:
+    def get_bank_in_group(self, bank_group: int, index_in_group: int):
         """Get a specific bank within a bank group
 
         Args:
@@ -282,7 +314,7 @@ class PseudoChannel:
             index_in_group: Index within bank group (0-1)
 
         Returns:
-            BankStateMachine for the bank
+            Bank state machine for the bank
         """
         bank_id = bank_group * self.banks_per_group + index_in_group
         return self.banks[bank_id]
@@ -305,40 +337,79 @@ class PseudoChannel:
                 return False
             bank = self.banks[bank_id]
             bank.set_time(self.current_time)
-            if bank.can_activate():
-                bank.activate(row)
-                self.open_row = row
-                self.state = PseudoChannelState.ACTIVE
+            if hasattr(bank, 'can_activate'):
+                if bank.can_activate():
+                    result, _ = bank.activate(row)
+                    if result:
+                        self.open_row = row
+                        self.state = PseudoChannelState.ACTIVE
 
-                # Update bank group tracking
-                inferred_bg = bank_id // self.banks_per_group
-                self._last_act_bank_group = inferred_bg
-                bg = self.bank_groups[inferred_bg]
-                bg.record_activation()
-                return True
-            return False
+                        # Update bank group tracking
+                        inferred_bg = bank_id // self.banks_per_group
+                        self._last_act_bank_group = inferred_bg
+                        bg = self.bank_groups[inferred_bg]
+                        bg.record_activation()
+                        return True
+                return False
+            else:
+                # Enhanced bank state machine
+                if bank.can_activate():
+                    result, _ = bank.activate(row)
+                    if result:
+                        self.open_row = row
+                        self.state = PseudoChannelState.ACTIVE
+
+                        # Update bank group tracking
+                        inferred_bg = bank_id // self.banks_per_group
+                        self._last_act_bank_group = inferred_bg
+                        bg = self.bank_groups[inferred_bg]
+                        bg.record_activation()
+                        return True
+                return False
 
         # Find an idle bank to activate
         for bank in self.banks:
             bank.set_time(self.current_time)
-            if bank.can_activate():
-                bank.activate(row)
-                self.open_row = row
-                self.state = PseudoChannelState.ACTIVE
+            if hasattr(bank, 'can_activate'):
+                if bank.can_activate():
+                    result, _ = bank.activate(row)
+                    if result:
+                        self.open_row = row
+                        self.state = PseudoChannelState.ACTIVE
 
-                # Update bank group tracking
-                if bank_group is not None:
-                    self._last_act_bank_group = bank_group
-                    bg = self.bank_groups[bank_group]
-                    bg.record_activation()
-                else:
-                    # Infer bank group from bank index
-                    inferred_bg = bank.bank.bank_id // self.banks_per_group
-                    self._last_act_bank_group = inferred_bg
-                    bg = self.bank_groups[inferred_bg]
-                    bg.record_activation()
+                        # Update bank group tracking
+                        if bank_group is not None:
+                            self._last_act_bank_group = bank_group
+                            bg = self.bank_groups[bank_group]
+                            bg.record_activation()
+                        else:
+                            # Infer bank group from bank index
+                            inferred_bg = bank.bank.bank_id // self.banks_per_group
+                            self._last_act_bank_group = inferred_bg
+                            bg = self.bank_groups[inferred_bg]
+                            bg.record_activation()
 
-                return True
+                        return True
+            else:
+                if bank.can_activate():
+                    result, _ = bank.activate(row)
+                    if result:
+                        self.open_row = row
+                        self.state = PseudoChannelState.ACTIVE
+
+                        # Update bank group tracking
+                        if bank_group is not None:
+                            self._last_act_bank_group = bank_group
+                            bg = self.bank_groups[bank_group]
+                            bg.record_activation()
+                        else:
+                            # Infer bank group
+                            inferred_bg = bank.bank_id // self.banks_per_group
+                            self._last_act_bank_group = inferred_bg
+                            bg = self.bank_groups[inferred_bg]
+                            bg.record_activation()
+
+                        return True
 
         # All banks busy
         return False
@@ -357,18 +428,34 @@ class PseudoChannel:
         bank = self.get_bank_in_group(bank_group, index_in_group)
         bank.set_time(self.current_time)
 
-        if bank.can_activate():
-            bank.activate(row)
-            self.open_row = row
-            self.state = PseudoChannelState.ACTIVE
+        if hasattr(bank, 'can_activate'):
+            if bank.can_activate():
+                result, _ = bank.activate(row)
+                if result:
+                    self.open_row = row
+                    self.state = PseudoChannelState.ACTIVE
 
-            # Update bank group tracking
-            bg = self.bank_groups[bank_group]
-            bg.record_activation(self.current_time)
-            self._last_act_bank_group = bank_group
+                    # Update bank group tracking
+                    bg = self.bank_groups[bank_group]
+                    bg.record_activation(self.current_time)
+                    self._last_act_bank_group = bank_group
 
-            return True
-        return False
+                    return True
+            return False
+        else:
+            if bank.can_activate():
+                result, _ = bank.activate(row)
+                if result:
+                    self.open_row = row
+                    self.state = PseudoChannelState.ACTIVE
+
+                    # Update bank group tracking
+                    bg = self.bank_groups[bank_group]
+                    bg.record_activation(self.current_time)
+                    self._last_act_bank_group = bank_group
+
+                    return True
+            return False
 
     def is_row_open(self, row: int) -> bool:
         """Check if row is currently open in any bank
@@ -389,8 +476,12 @@ class PseudoChannel:
         """
         for bank in self.banks:
             bank.set_time(self.current_time)
-            if bank.can_precharge():
-                bank.precharge()
+            if hasattr(bank, 'can_precharge'):
+                if bank.can_precharge():
+                    bank.precharge()
+            else:
+                if bank.can_precharge():
+                    bank.precharge()
 
         self.open_row = -1
         self.state = PseudoChannelState.IDLE
@@ -411,13 +502,30 @@ class PseudoChannel:
         bank = self.banks[bank_id]
         bank.set_time(self.current_time)
 
-        if bank.can_precharge():
-            bank.precharge()
-            # Check if all banks are now idle
-            if all(b.bank.state == BankStateEnum.IDLE for b in self.banks):
-                self.open_row = -1
-                self.state = PseudoChannelState.IDLE
-            return True
+        if hasattr(bank, 'can_precharge'):
+            if bank.can_precharge():
+                bank.precharge()
+                # Check if the precharged bank is now idle
+                from model.dram.hbm4_bank_state_machine import HBM4BankState
+                if bank.get_state() == HBM4BankState.CLOSED:
+                    self.open_row = -1
+                # Update channel state based on ALL banks
+                all_idle = all(b.get_state() == HBM4BankState.CLOSED for b in self.banks)
+                if all_idle:
+                    self.state = PseudoChannelState.IDLE
+                return True
+        else:
+            if bank.can_precharge():
+                bank.precharge()
+                # Check if the precharged bank is now closed
+                from model.dram.bank_state_machine import BankStateEnum
+                if bank.bank.state == BankStateEnum.IDLE:
+                    self.open_row = -1
+                # Update channel state based on ALL banks
+                all_idle = all(b.bank.state == BankStateEnum.IDLE for b in self.banks)
+                if all_idle:
+                    self.state = PseudoChannelState.IDLE
+                return True
         return False
 
     def can_read(self) -> bool:
@@ -427,9 +535,14 @@ class PseudoChannel:
             True if any bank can accept a read
         """
         for bank in self.banks:
-            bank.set_time(self.current_time)
-            if bank.can_read():
-                return True
+            # Update bank time to current simulation time for proper timing checks
+            bank.set_time(int(self.current_time))
+            if hasattr(bank, 'can_read'):
+                if bank.can_read():
+                    return True
+            else:
+                if bank.can_read():
+                    return True
         return False
 
     def can_write(self) -> bool:
@@ -439,9 +552,14 @@ class PseudoChannel:
             True if any bank can accept a write
         """
         for bank in self.banks:
-            bank.set_time(self.current_time)
-            if bank.can_write():
-                return True
+            # Update bank time to current simulation time for proper timing checks
+            bank.set_time(int(self.current_time))
+            if hasattr(bank, 'can_write'):
+                if bank.can_write():
+                    return True
+            else:
+                if bank.can_write():
+                    return True
         return False
 
     def can_read_in_bank_group(self, bank_group: int) -> bool:
@@ -456,9 +574,14 @@ class PseudoChannel:
         bg = self.bank_groups[bank_group]
         for bank_idx in bg.bank_indices:
             bank = self.banks[bank_idx]
-            bank.set_time(self.current_time)
-            if bank.can_read():
-                return True
+            # Update bank time to current simulation time for proper timing checks
+            bank.set_time(int(self.current_time))
+            if hasattr(bank, 'can_read'):
+                if bank.can_read():
+                    return True
+            else:
+                if bank.can_read():
+                    return True
         return False
 
     def can_write_in_bank_group(self, bank_group: int) -> bool:
@@ -474,8 +597,12 @@ class PseudoChannel:
         for bank_idx in bg.bank_indices:
             bank = self.banks[bank_idx]
             bank.set_time(self.current_time)
-            if bank.can_write():
-                return True
+            if hasattr(bank, 'can_write'):
+                if bank.can_write():
+                    return True
+            else:
+                if bank.can_write():
+                    return True
         return False
 
     def refresh(self, bank_id: Optional[int] = None) -> bool:
@@ -487,20 +614,37 @@ class PseudoChannel:
         Returns:
             True if refresh succeeded
         """
+        from model.dram.bank_state_machine import BankStateEnum
+
         if bank_id is not None:
             # Per-bank refresh (REFsb)
             if bank_id < 0 or bank_id >= len(self.banks):
                 return False
             bank = self.banks[bank_id]
-            if bank.bank.state == BankStateEnum.IDLE:
-                bank.refresh()
-                # Set pseudo-channel state to REFRESHING so tick() completes it
-                self.state = PseudoChannelState.REFRESHING
-                return True
+
+            # Check if bank is closed/idle
+            if hasattr(bank.bank, 'state'):
+                # Legacy bank state machine
+                if bank.bank.state == BankStateEnum.IDLE:
+                    bank.refresh()
+                    self.state = PseudoChannelState.REFRESHING
+                    return True
+            else:
+                # Enhanced bank state machine
+                if bank.get_state().name == 'CLOSED':
+                    bank.refresh()
+                    self.state = PseudoChannelState.REFRESHING
+                    return True
             return False
         else:
             # All-bank refresh (REFab) - all banks must be IDLE
-            all_idle = all(b.bank.state == BankStateEnum.IDLE for b in self.banks)
+            if hasattr(self.banks[0].bank, 'state'):
+                # Legacy bank state machine
+                all_idle = all(b.bank.state == BankStateEnum.IDLE for b in self.banks)
+            else:
+                # Enhanced bank state machine
+                all_idle = all(b.get_state().name == 'CLOSED' for b in self.banks)
+
             if all_idle:
                 for bank in self.banks:
                     bank.refresh()
@@ -518,6 +662,7 @@ class PseudoChannel:
             True if refresh succeeded
         """
         bg = self.bank_groups[bank_group]
+        from model.dram.bank_state_machine import BankStateEnum
         # All banks in group must be IDLE
         all_idle = all(
             self.banks[idx].bank.state == BankStateEnum.IDLE
@@ -540,6 +685,7 @@ class PseudoChannel:
             Dictionary with bank group state information
         """
         bg = self.bank_groups[bank_group]
+        from model.dram.bank_state_machine import BankStateEnum
         return {
             'group_id': bg.group_id,
             'last_act_cycle': bg.last_act_cycle,
@@ -547,13 +693,47 @@ class PseudoChannel:
                                if self.banks[idx].bank.state == BankStateEnum.ACTIVE)
         }
 
-    def tick(self):
-        """Advance time for this pseudo-channel"""
-        self.current_time += 1.0
+    def tick(self, current_cycle: Optional[int] = None):
+        """Advance time for this pseudo-channel
+
+        Args:
+            current_cycle: If provided, set time to this value; otherwise increment
+        """
+        if current_cycle is not None:
+            self.current_time = float(current_cycle)
+        else:
+            self.current_time += 1.0
+
+        # Update enhanced banks if present - propagate time and tick
+        if self.enhanced_banks:
+            self.enhanced_banks.set_time(int(self.current_time))
+            # Don't advance cycle here since set_time already sets the absolute time
+            self.enhanced_banks.tick(advance_cycle=False)
+        else:
+            # Legacy tick for non-enhanced banks
+            for bank in self.banks:
+                bank.set_time(int(self.current_time))
 
     def set_time(self, current_time: float):
         """Set current simulation time"""
         self.current_time = current_time
+
+    def validate_timing(self) -> List[TimingViolation]:
+        """Validate timing for all banks
+
+        Returns:
+            List of timing violations
+        """
+        violations = []
+        for bank in self.banks:
+            if hasattr(bank, 'validate_timing'):
+                violations.extend(bank.validate_timing())
+        self.timing_violations.extend(violations)
+        return violations
+
+    def get_timing_violations(self) -> List[TimingViolation]:
+        """Get all recorded timing violations"""
+        return self.timing_violations.copy()
 
 
 class HBM4Channel:
@@ -579,13 +759,15 @@ class HBM4Channel:
 
     @classmethod
     def create_with_speed_grade(cls, channel_id: int, speed_grade: str = "8Gbps",
-                                timing: Optional[HBM4Timing] = None) -> "HBM4Channel":
+                                timing: Optional[HBM4Timing] = None,
+                                use_enhanced_banks: bool = True) -> "HBM4Channel":
         """Create an HBM4Channel with a specific speed grade
 
         Args:
             channel_id: Channel index (0-31)
             speed_grade: One of "8Gbps", "12Gbps", "16Gbps"
             timing: Optional HBM4Timing (uses default for speed grade if None)
+            use_enhanced_banks: Use enhanced bank state machine
 
         Returns:
             HBM4Channel configured for the specified speed grade
@@ -598,15 +780,18 @@ class HBM4Channel:
         if timing is None:
             timing = get_timing_for_speed_grade(speed_grade)
 
-        return cls(channel_id, spec, timing)
+        return cls(channel_id, spec, timing, use_enhanced_banks=use_enhanced_banks)
 
-    def __init__(self, channel_id: int, spec: Optional[HBM4Spec] = None, timing: Optional[HBM4Timing] = None):
+    def __init__(self, channel_id: int, spec: Optional[HBM4Spec] = None,
+                 timing: Optional[HBM4Timing] = None,
+                 use_enhanced_banks: bool = True):
         """Initialize HBM4 channel
 
         Args:
             channel_id: Channel index (0-31)
             spec: HBM4 specification (uses default if None)
             timing: HBM4 timing parameters (uses default if None)
+            use_enhanced_banks: Use enhanced HBM4BankStateMachine if True
         """
         if spec is None:
             spec = HBM4Spec()
@@ -617,10 +802,11 @@ class HBM4Channel:
         self.spec = spec
         self.timing = timing
         self.current_cycle = 0
+        self.use_enhanced_banks = use_enhanced_banks
 
         # Create 2 pseudo-channels per channel
         self.pseudo_channels = [
-            PseudoChannel(channel_id, pch_id, spec, timing)
+            PseudoChannel(channel_id, pch_id, spec, timing, use_enhanced_banks)
             for pch_id in range(spec.pseudo_channels_per_channel)
         ]
 
@@ -629,6 +815,9 @@ class HBM4Channel:
 
         # Bank group-aware command scheduling
         self._bg_scheduler = BankGroupScheduler(timing)
+
+        # Timing violations
+        self.timing_violations: List[TimingViolation] = []
 
     def set_time(self, current_cycle: int) -> None:
         """Set current simulation cycle and propagate to pseudo-channels
@@ -731,30 +920,52 @@ class HBM4Channel:
         elif cmd in ['RD', 'RDA']:
             # Check if row is open in the specified bank
             bank_obj = pc.banks[bank]
-            if bank_obj.bank.state == BankStateEnum.IDLE:
-                # Need to activate first
-                if not pc.activate_row(row, bank_id=bank):
-                    return False
-            elif bank_obj.bank.open_row != row:
-                # Different row open - need to precharge and activate
-                pc.precharge_bank(bank)
-                if not pc.activate_row(row, bank_id=bank):
-                    return False
+            if hasattr(bank_obj.bank, 'state'):
+                from model.dram.bank_state_machine import BankStateEnum
+                if bank_obj.bank.state == BankStateEnum.IDLE:
+                    # Need to activate first
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
+                elif bank_obj.bank.open_row != row:
+                    # Different row open - need to precharge and activate
+                    pc.precharge_bank(bank)
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
+            else:
+                # Enhanced bank state machine
+                if bank_obj.get_state().name == 'CLOSED':
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
+                elif bank_obj.get_open_row() != row:
+                    pc.precharge_bank(bank)
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
             pc.state = PseudoChannelState.READING
             return True
 
         elif cmd in ['WR', 'WRA']:
             # Check if row is open in the specified bank
             bank_obj = pc.banks[bank]
-            if bank_obj.bank.state == BankStateEnum.IDLE:
-                # Need to activate first
-                if not pc.activate_row(row, bank_id=bank):
-                    return False
-            elif bank_obj.bank.open_row != row:
-                # Different row open - need to precharge and activate
-                pc.precharge_bank(bank)
-                if not pc.activate_row(row, bank_id=bank):
-                    return False
+            if hasattr(bank_obj.bank, 'state'):
+                from model.dram.bank_state_machine import BankStateEnum
+                if bank_obj.bank.state == BankStateEnum.IDLE:
+                    # Need to activate first
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
+                elif bank_obj.bank.open_row != row:
+                    # Different row open - need to precharge and activate
+                    pc.precharge_bank(bank)
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
+            else:
+                # Enhanced bank state machine
+                if bank_obj.get_state().name == 'CLOSED':
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
+                elif bank_obj.get_open_row() != row:
+                    pc.precharge_bank(bank)
+                    if not pc.activate_row(row, bank_id=bank):
+                        return False
             pc.state = PseudoChannelState.WRITING
             return True
 
@@ -857,30 +1068,26 @@ class HBM4Channel:
         """Advance channel time by one cycle"""
         self.current_cycle += 1
 
-        # Update all pseudo-channels
+        # Update all pseudo-channels - sync time properly
         for pc in self.pseudo_channels:
-            pc.set_time(self.current_cycle)
-
-            # Update bank state machines
-            for bank in pc.banks:
-                bank.set_time(self.current_cycle)
-
-            # Update bank groups
-            for bg in pc.bank_groups:
-                bg.set_time(self.current_cycle)
+            # Pass the new cycle to pseudo-channel tick
+            # PseudoChannel.tick will propagate to enhanced_banks via set_time
+            pc.tick(self.current_cycle)
 
             # Complete refresh operations - check per-bank
             if pc.state == PseudoChannelState.REFRESHING:
+                from model.dram.bank_state_machine import BankStateEnum
                 # Track which banks were refreshing (before completing)
                 banks_were_refreshing = [
                     bank for bank in pc.banks
-                    if bank.bank.state == BankStateEnum.REFRESHING
+                    if hasattr(bank.bank, 'state') and bank.bank.state == BankStateEnum.REFRESHING
                 ]
                 # Complete all refreshing banks
                 for bank in banks_were_refreshing:
-                    bank.complete_refresh()
+                    if hasattr(bank, 'complete_refresh'):
+                        bank.complete_refresh()
                 # Only transition to IDLE if no more refreshing banks remain
-                if not any(b.bank.state == BankStateEnum.REFRESHING for b in pc.banks):
+                if not any(hasattr(b.bank, 'state') and b.bank.state == BankStateEnum.REFRESHING for b in pc.banks):
                     pc.state = PseudoChannelState.IDLE
                     self.state = HBM4ChannelState.IDLE
 
@@ -898,15 +1105,20 @@ class HBM4Channel:
             pc.current_cycle = 0
             # Reset all banks
             for bank in pc.banks:
-                bank.bank.state = BankStateEnum.IDLE
-                bank.bank.open_row = -1
-                bank.bank.activate_time = 0
-                bank.bank.precharge_time = 0
+                if hasattr(bank.bank, 'state'):
+                    from model.dram.bank_state_machine import BankStateEnum
+                    bank.bank.state = BankStateEnum.IDLE
+                    bank.bank.open_row = -1
+                    bank.bank.activate_time = 0
+                    bank.bank.precharge_time = 0
+                else:
+                    # Enhanced bank state machine
+                    bank.reset()
             # Reset bank groups
             for bg in pc.bank_groups:
                 bg.last_act_cycle = -1
 
-    def get_bank(self, pseudo_channel: int, bank: int) -> Optional[BankStateMachine]:
+    def get_bank(self, pseudo_channel: int, bank: int):
         """Get a specific bank state machine
 
         Args:
@@ -914,7 +1126,7 @@ class HBM4Channel:
             bank: Bank index (0-15)
 
         Returns:
-            BankStateMachine or None if invalid indices
+            Bank state machine or None if invalid indices
         """
         if pseudo_channel not in [0, 1]:
             return None
@@ -989,12 +1201,40 @@ class HBM4Channel:
 
         return True
 
+    def validate_timing(self) -> List[TimingViolation]:
+        """Validate timing for all banks in this channel
+
+        Returns:
+            List of timing violations
+        """
+        violations = []
+        for pc in self.pseudo_channels:
+            violations.extend(pc.validate_timing())
+        self.timing_violations.extend(violations)
+        return violations
+
+    def get_timing_violations(self) -> List[TimingViolation]:
+        """Get all recorded timing violations"""
+        return self.timing_violations.copy()
+
     def get_state_summary(self) -> dict:
         """Get channel state summary
 
         Returns:
             Dictionary with state information
         """
+        from model.dram.bank_state_machine import BankStateEnum
+
+        active_banks = 0
+        for pc in self.pseudo_channels:
+            for b in pc.banks:
+                if hasattr(b.bank, 'state'):
+                    if b.bank.state == BankStateEnum.ACTIVE:
+                        active_banks += 1
+                else:
+                    if b.get_state().name == 'OPEN':
+                        active_banks += 1
+
         return {
             'channel_id': self.channel_id,
             'state': self.state.name,
@@ -1003,19 +1243,25 @@ class HBM4Channel:
                     'id': pc.pseudo_channel_id,
                     'state': pc.state.name,
                     'open_row': pc.open_row,
-                    'active_banks': sum(1 for b in pc.banks if b.bank.state == BankStateEnum.ACTIVE),
+                    'active_banks': sum(1 for b in pc.banks
+                                       if (hasattr(b.bank, 'state') and b.bank.state == BankStateEnum.ACTIVE)
+                                       or (not hasattr(b.bank, 'state') and b.get_state().name == 'OPEN')),
                     'bank_groups': [
                         {
                             'id': bg.group_id,
                             'active_banks': sum(1 for idx in bg.bank_indices
-                                               if pc.banks[idx].bank.state == BankStateEnum.ACTIVE)
+                                               if (hasattr(pc.banks[idx].bank, 'state')
+                                                   and pc.banks[idx].bank.state == BankStateEnum.ACTIVE)
+                                               or (not hasattr(pc.banks[idx].bank, 'state')
+                                                   and pc.banks[idx].get_state().name == 'OPEN'))
                         }
                         for bg in pc.bank_groups
                     ]
                 }
                 for pc in self.pseudo_channels
             ],
-            'current_cycle': self.current_cycle
+            'current_cycle': self.current_cycle,
+            'timing_violations': len(self.timing_violations)
         }
 
 
@@ -1168,12 +1414,14 @@ class HBM4ChannelArray:
     Manages all 32 HBM4 channels and provides system-level operations.
     """
 
-    def __init__(self, spec: Optional[HBM4Spec] = None, timing: Optional[HBM4Timing] = None):
+    def __init__(self, spec: Optional[HBM4Spec] = None, timing: Optional[HBM4Timing] = None,
+                 use_enhanced_banks: bool = True):
         """Initialize channel array
 
         Args:
             spec: HBM4 specification (uses default if None)
             timing: HBM4 timing parameters (uses default if None)
+            use_enhanced_banks: Use enhanced bank state machine
         """
         if spec is None:
             spec = HBM4Spec()
@@ -1182,15 +1430,19 @@ class HBM4ChannelArray:
 
         self.spec = spec
         self.timing = timing
+        self.use_enhanced_banks = use_enhanced_banks
 
         # Create all 32 channels
         self.channels = [
-            HBM4Channel(i, spec, timing)
+            HBM4Channel(i, spec, timing, use_enhanced_banks)
             for i in range(spec.channels)
         ]
 
         # System-level scheduler
         self.scheduler = BankGroupScheduler(timing)
+
+        # Timing violations
+        self.timing_violations: List[TimingViolation] = []
 
     def get_channel(self, channel_id: int) -> Optional[HBM4Channel]:
         """Get a specific channel
@@ -1225,6 +1477,18 @@ class HBM4ChannelArray:
         for ch in self.channels:
             ch.tick()
 
+    def validate_all_timing(self) -> List[TimingViolation]:
+        """Validate timing for all channels
+
+        Returns:
+            List of all timing violations
+        """
+        violations = []
+        for ch in self.channels:
+            violations.extend(ch.validate_timing())
+        self.timing_violations = violations
+        return violations
+
     @property
     def num_channels(self) -> int:
         """Number of channels in the array"""
@@ -1240,8 +1504,15 @@ class HBM4ChannelArray:
         """Total system bandwidth in TB/s"""
         return self.total_bandwidth_gbs / 1000
 
+    @property
+    def total_banks(self) -> int:
+        """Total number of banks across all channels"""
+        return self.spec.total_banks
+
     def get_system_state_summary(self) -> dict:
         """Get system-wide state summary"""
+        total_violations = sum(len(ch.timing_violations) for ch in self.channels)
+
         return {
             'num_channels': len(self.channels),
             'total_pseudo_channels': len(self.channels) * self.spec.pseudo_channels_per_channel,
@@ -1249,5 +1520,6 @@ class HBM4ChannelArray:
             'total_banks': self.spec.total_banks,
             'peak_bandwidth_gbs': self.total_bandwidth_gbs,
             'peak_bandwidth_tbs': self.total_bandwidth_tbs,
+            'timing_violations': total_violations,
             'channels': [ch.get_state_summary() for ch in self.channels]
         }

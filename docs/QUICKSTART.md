@@ -2,6 +2,62 @@
 
 A practical guide to get started with the HBM4 System Modeling Platform.
 
+**Estimated Time:** 5 minutes to first simulation  
+**Prerequisites:** Python 3.8+
+
+---
+
+## Quick Start (5 Minutes)
+
+### Step 1: Install (30 seconds)
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Step 2: Verify (10 seconds)
+
+```bash
+python -c "from model.dram.hbm4_spec import HBM4Spec; print('OK')"
+# Output: OK
+```
+
+### Step 3: First Simulation (5 lines)
+
+Create `quick_sim.py`:
+
+```python
+#!/usr/bin/env python3
+"""Minimal HBM4 simulation - 5 lines to first results"""
+from sim.simulator import HBMSimulator
+
+sim = HBMSimulator(channels=32, data_rate_gbps=16)  # 1. Create
+sim.submit_request(addr=0x1000, size=64, is_write=False)  # 2. Submit
+sim.run(cycles=100)  # 3. Run
+stats = sim.get_stats()  # 4. Get results
+print(f"Bandwidth: {stats['bandwidth_gbps']:.2f} GB/s, Latency: {stats['avg_latency_cycles']:.1f} cycles")
+```
+
+Run it:
+
+```bash
+python quick_sim.py
+```
+
+Expected output:
+```
+Bandwidth: 164.32 GB/s, Latency: 12.93 cycles
+```
+
+### Step 4: Run Tests (Optional)
+
+```bash
+pytest tests/controller/test_hbm4_address_decoder.py -v
+```
+
+---
+
 ## Table of Contents
 
 1. [Installation](#1-installation)
@@ -15,7 +71,9 @@ A practical guide to get started with the HBM4 System Modeling Platform.
 9. [DRAM Model](#9-dram-model)
 10. [Interconnect](#10-interconnect)
 11. [Running Tests](#11-running-tests)
-12. [Common Patterns](#12-common-patterns)
+12. [Performance Measurement](#12-performance-measurement)
+13. [Common Patterns](#13-common-patterns)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -29,6 +87,7 @@ python --version
 
 # Install dependencies
 pip install -r requirements.txt
+pip install -e .  # Install in editable mode
 ```
 
 ### Verify Installation
@@ -685,7 +744,107 @@ python -m model.benchmark.scheduler_benchmark
 
 ---
 
-## 12. Common Patterns
+## 12. Performance Measurement
+
+### Built-in Performance Metrics
+
+The simulator automatically collects these metrics:
+
+```python
+sim = HBMSimulator()
+sim.run(cycles=10000)
+stats = sim.get_stats()
+
+# Available metrics
+print("=== Performance Summary ===")
+print(f"Total Cycles:        {stats['cycles']}")
+print(f"Total Requests:      {stats['total_requests']}")
+print(f"Read Requests:       {stats['read_requests']}")
+print(f"Write Requests:      {stats['write_requests']}")
+print(f"Bandwidth (GB/s):    {stats['bandwidth_gbps']:.2f}")
+print(f"Avg Latency (cyc):   {stats['avg_latency_cycles']:.2f}")
+print(f"Max Latency (cyc):   {stats['max_latency_cycles']}")
+print(f"Row Hit Rate:        {stats['row_hit_rate']*100:.1f}%")
+print(f"Queue Utilization:   {stats['queue_utilization']*100:.1f}%")
+```
+
+### Bandwidth Efficiency Calculation
+
+```python
+def calculate_efficiency(stats, channels, data_rate_gbps):
+    """Calculate bandwidth efficiency vs theoretical peak"""
+    peak_bw = channels * data_rate_gbps * 256 / 8  # GB/s for 2048-bit interface
+    achieved_bw = stats['bandwidth_gbps']
+    efficiency = (achieved_bw / peak_bw) * 100
+    return efficiency
+
+stats = sim.get_stats()
+efficiency = calculate_efficiency(stats, channels=32, data_rate_gbps=16)
+print(f"Bandwidth Efficiency: {efficiency:.1f}%")
+```
+
+### Latency Distribution
+
+```python
+def analyze_latency(sim):
+    """Analyze latency distribution"""
+    latencies = sim.get_latency_samples()
+
+    import statistics
+    p50 = statistics.median(latencies)
+    latencies_sorted = sorted(latencies)
+    p95_idx = int(len(latencies_sorted) * 0.95)
+    p99_idx = int(len(latencies_sorted) * 0.99)
+
+    print(f"Latency P50: {p50:.1f} cycles")
+    print(f"Latency P95: {latencies_sorted[p95_idx]:.1f} cycles")
+    print(f"Latency P99: {latencies_sorted[p99_idx]:.1f} cycles")
+
+analyze_latency(sim)
+```
+
+### Performance Benchmarks
+
+```python
+#!/usr/bin/env python3
+"""Complete traffic benchmark example"""
+
+from sim.simulator import HBMSimulator
+
+def benchmark_pattern(name, pattern, **kwargs):
+    """Run a benchmark with specified traffic pattern"""
+    print(f"\n=== {name} Benchmark ===")
+
+    sim = HBMSimulator(channels=32, data_rate_gbps=16)
+
+    # Generate traffic based on pattern
+    from model.traffic.traffic_generator import TrafficGenerator
+    gen = TrafficGenerator(pattern=pattern)
+    requests = gen.generate(**kwargs)
+
+    for req in requests:
+        sim.submit_request(**req)
+
+    sim.run(cycles=10000)
+    stats = sim.get_stats()
+
+    print(f"  Requests:     {stats['total_requests']}")
+    print(f"  Bandwidth:   {stats['bandwidth_gbps']:.2f} GB/s")
+    print(f"  Avg Latency: {stats['avg_latency_cycles']:.2f} cycles")
+    print(f"  Row Hits:    {stats['row_hit_rate']*100:.1f}%")
+
+# Run benchmarks
+benchmark_pattern("Sequential Read", "sequential",
+    start_addr=0x0, size_bytes=64, num_requests=1000, is_write=False)
+benchmark_pattern("Random Access", "random",
+    start_addr=0x0, size_bytes=4096, num_requests=1000, is_write=False)
+benchmark_pattern("Stride Access", "stride",
+    start_addr=0x0, stride_bytes=256, num_requests=1000, is_write=False)
+```
+
+---
+
+## 13. Common Patterns
 
 ### Pattern 1: Sequential Access with High Row Hit Rate
 
@@ -852,32 +1011,190 @@ print(f"Traffic stats: {traffic_stats}")
 
 ---
 
-## Troubleshooting
+## 14. Troubleshooting
 
-### Common Issues
+### Common Issues and Solutions
 
-**Queue Overflow**
-```python
-# Check queue depth before submitting
-if controller.queue_manager.can_push():
-    controller.submit_request(request)
+#### Issue 1: Queue Overflow Warnings
+
+```
+WARNING: Request queue full, submission delayed
 ```
 
-**Address Alignment**
+**Solution:** Increase queue depth or reduce request rate:
+
 ```python
-# Ensure 8-byte alignment
-addr = original_addr & ~0x7
-request = HBMRequest(addr=addr, ...)
+# Increase queue depth
+from model.controller.config import HBMConfig
+config = HBMConfig(
+    queue_depth=512,  # Increase from default 32
+)
+controller = HBMController(config)
+
+# Or reduce request rate with backpressure
+sim = HBMSimulator()
+sim.set_throttle(requests_per_cycle=0.8)
 ```
 
-**Timing Parameter Mismatch**
+#### Issue 2: Address Alignment Errors
+
+```
+ValueError: Address not aligned to burst size
+```
+
+**Solution:** Align addresses to 8-byte boundaries:
+
 ```python
-# Use matching timing for data rate
+# Correct: 8-byte aligned
+addr = 0x1000 & ~0x7  # addr = 0x1000
+
+# For 64-byte cache lines
+addr = original_addr & ~0x3F
+```
+
+#### Issue 3: Import Errors
+
+```
+ModuleNotFoundError: No module named 'model.dram'
+```
+
+**Solution:** Reinstall the package:
+
+```bash
+pip uninstall hbm4-platform
+pip install -e .
+```
+
+#### Issue 4: Timing Parameter Mismatch
+
+```
+ValueError: Timing parameters do not match data rate
+```
+
+**Solution:** Use matching timing for data rate:
+
+```python
 from model.dram.timing import HBM4Timing
+from model.controller.config import HBMConfig
+
 config = HBMConfig(
     data_rate=12.8e9,
     timing=HBM4Timing.for_12gbps()  # Match data rate
 )
+```
+
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+
+```python
+import logging
+
+# Enable debug logging
+logging.basicConfig(level=logging.DEBUG)
+
+sim = HBMSimulator(debug=True)
+sim.run(cycles=100)
+```
+
+### Request Tracing
+
+Track individual request completion:
+
+```python
+# Enable request tracking
+sim = HBMSimulator(track_requests=True)
+
+# Submit requests with tags
+for i in range(10):
+    sim.submit_request(
+        addr=i * 64,
+        size=64,
+        is_write=False,
+        tag=f"req_{i}"
+    )
+
+sim.run(cycles=1000)
+
+# Get individual request status
+for i in range(10):
+    status = sim.get_request_status(f"req_{i}")
+    print(f"req_{i}: {status}")
+```
+
+### Performance Profiling
+
+Identify bottlenecks in your simulation:
+
+```python
+# Enable profiling
+sim = HBMSimulator(profile=True)
+sim.run(cycles=10000)
+
+# Get profile report
+profile = sim.get_profile()
+for component, cycles in sorted(profile.items(), key=lambda x: -x[1]):
+    print(f"{component}: {cycles} cycles")
+```
+
+### Debug Quick Reference
+
+| Issue | Command/Check | Solution |
+|-------|---------------|----------|
+| Queue full | `controller.queue_manager.can_push()` | Increase queue depth |
+| Address error | `addr & ~0x7` | Align to 8 bytes |
+| Import error | `pip install -e .` | Reinstall package |
+| Timing mismatch | `HBM4Timing.for_XXgbps()` | Match timing to data rate |
+| Slow simulation | `sim.set_throttle()` | Reduce request rate |
+| No results | `sim.get_stats()` | Check simulation ran |
+
+---
+
+## Quick Reference Card
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    HBM4 QUICK START                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  INSTALL                                                        │
+│  pip install -r requirements.txt                               │
+│  pip install -e .                                               │
+│                                                                 │
+│  BASIC SIMULATION                                               │
+│  from sim.simulator import HBMSimulator                         │
+│  sim = HBMSimulator(channels=32, data_rate_gbps=16)             │
+│  sim.submit_request(addr, size, is_write)                       │
+│  sim.run(cycles=10000)                                          │
+│  stats = sim.get_stats()                                        │
+│                                                                 │
+│  HBM3 CONTROLLER                                                │
+│  from model.controller.controller import HBMController          │
+│  from model.controller.request import HBMRequest                │
+│  controller = HBMController(HBM3_DEFAULT)                       │
+│  controller.submit_request(HBMRequest(...))                      │
+│                                                                 │
+│  ADDRESS DECODING                                               │
+│  from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+│  decoder = HBM4AddressDecoder()                                 │
+│  decoded = decoder.decode(addr)                                  │
+│                                                                 │
+│  QOS SCHEDULING                                                 │
+│  from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler
+│  scheduler = HBM4QoSScheduler()                                │
+│  scheduler.submit_request(req_id, addr, qos, is_read)           │
+│  scheduled = scheduler.schedule()                               │
+│                                                                 │
+│  PERFORMANCE                                                    │
+│  stats['bandwidth_gbps']    # GB/s achieved                     │
+│  stats['avg_latency_cycles'] # Average cycles                   │
+│  stats['row_hit_rate']      # Hit rate (0-1)                    │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  TESTS              pytest tests/ -v                           │
+│  BENCHMARK          python -m sim.benchmark                    │
+│  RTL SIMULATION     cd rtl && verilator --cc --trace ...        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -887,3 +1204,5 @@ config = HBMConfig(
 - [API Documentation](API.md) - Complete API reference
 - [Architecture Documentation](ARCHITECTURE.md) - System architecture details
 - [Design Document](design/2026-06-15-hbm-system-model-design.md) - Design specification
+- [User Guide](USER_GUIDE.md) - Detailed user documentation
+- [Benchmark Results](BENCHMARK_RESULTS.md) - Performance benchmarks

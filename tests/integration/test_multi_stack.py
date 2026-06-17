@@ -63,7 +63,7 @@ class TestStackConfiguration:
         """Test HBM4 default stack configuration"""
         config = HBM4_DEFAULT
         assert config.stack_count == 4
-        assert config.channels_per_stack == 16
+        assert config.channels_per_stack == 32  # HBM4 has 32 channels per stack
 
 
 # ============================================================================

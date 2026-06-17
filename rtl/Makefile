@@ -26,6 +26,7 @@ RTL_SOURCES := \
 	$(RTL_DIR)/dram_model.sv
 
 TB_SOURCE := $(RTL_DIR)/hbm_controller_tb_simple.sv
+TB_MAIN := $(RTL_DIR)/hbm_controller_tb_main.cpp
 
 # File list for lint
 FILELIST := $(RTL_DIR)/filelist.f
@@ -77,16 +78,19 @@ sim: $(OBJ_DIR)/V$(TOP_MODULE)
 	@echo "$(GREEN)== Running Simulation ==$(NC)"
 	cd $(OBJ_DIR) && ./V$(TOP_MODULE) +TIME=$(SIM_TIME) 2>&1 | tee $(LOG_DIR)/sim.log
 
-$(OBJ_DIR)/V$(TOP_MODULE): $(RTL_SOURCES) $(TB_SOURCE) $(FILELIST)
+$(OBJ_DIR)/V$(TOP_MODULE): $(RTL_SOURCES) $(TB_SOURCE) $(TB_MAIN) $(FILELIST)
 	@echo "$(GREEN)== Building with Verilator ==$(NC)"
 	@mkdir -p $(OBJ_DIR) $(LOG_DIR)
 	cd $(RTL_DIR) && $(VERILATOR) \
 		--cc \
+		--exe \
 		--build \
 		--sv \
 		--no-timing \
 		-Wno-fatal \
 		--top-module $(TOP_MODULE) \
+		$(TB_SOURCE) \
+		$(TB_MAIN) \
 		-f $(FILELIST) \
 		--Mdir $(OBJ_DIR) \
 		-CFLAGS "-std=c++17 -O2" \

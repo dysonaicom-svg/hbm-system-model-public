@@ -48,6 +48,10 @@ class ScalingBenchmark:
         for count in channel_counts:
             # Create new config with modified channel count
             # Use single stack to avoid scaling issues
+            # Limit address range to ensure channel_id < channels_per_stack
+            # Channel bits are typically in the lower address bits
+            address_bits = max(8, (count * 4).bit_length())  # At least 8 bits for channel mapping
+
             config = HBMConfig(
                 stack_count=1,  # Single stack for clean channel scaling
                 channels_per_stack=count,

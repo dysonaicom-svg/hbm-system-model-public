@@ -461,7 +461,8 @@ class TestUVMSequences:
         success2 = channel.issue_command('RD', pseudo_channel=0, bank=0, row=0)
         assert success2
 
-        channel.set_time(timing.nRCDRD + timing.nCL + timing.nBL)
+        # Must meet tRAS before PRE
+        channel.set_time(timing.nRCDRD + timing.nCL + timing.nBL + timing.nRAS)
 
         success3 = channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
         assert success3
@@ -487,7 +488,8 @@ class TestUVMSequences:
         success2 = channel.issue_command('WR', pseudo_channel=0, bank=1, row=100)
         assert success2
 
-        channel.set_time(timing.nRCDWR + timing.nCWL + timing.nBL + timing.nWR)
+        # Must meet tRAS before PRE
+        channel.set_time(timing.nRCDWR + timing.nCWL + timing.nBL + timing.nWR + timing.nRAS)
 
         success3 = channel.issue_command('PRE', pseudo_channel=0, bank=1, row=100)
         assert success3

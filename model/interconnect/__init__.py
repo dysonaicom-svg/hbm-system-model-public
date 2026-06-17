@@ -78,6 +78,10 @@ from .interconnect import (
     BinaryTreeInterconnect,
     InterconnectFactory,
 
+    # Enhanced Classes
+    HBM4AddressTranslator,
+    InterconnectScheduler,
+
     # Utility
     create_interconnect,
 )
@@ -100,6 +104,10 @@ __all__ = [
     'BinaryTreeInterconnect',
     'InterconnectFactory',
 
+    # Enhanced Classes
+    'HBM4AddressTranslator',
+    'InterconnectScheduler',
+
     # Utility
     'create_interconnect',
 
@@ -118,6 +126,12 @@ __all__ = [
     'AXI4TransactionResponse',
     'create_axi4_bridge',
     'create_axi4lite_bridge',
+
+    # AXI4 Bridge Enhanced Classes
+    'AXI4TransactionIDTracker',
+    'AXI4ReorderingBuffer',
+    'AXI4BurstGenerator',
+    'AXI4MasterInterface',
 
     # AXI4 Converter
     'AddressMapping',
@@ -146,7 +160,9 @@ def __getattr__(name):
     if name in ('AXI4Bridge', 'AXI4BridgeConfig', 'AXI4BurstType', 'AXI4Response',
                 'AXI4Size', 'AXI4Lock', 'AXI4Cache', 'AXI4Prot', 'AXI4Signals',
                 'AXI4ReadTransaction', 'AXI4WriteTransaction', 'AXI4TransactionResponse',
-                'create_axi4_bridge', 'create_axi4lite_bridge'):
+                'create_axi4_bridge', 'create_axi4lite_bridge',
+                'AXI4TransactionIDTracker', 'AXI4ReorderingBuffer', 'AXI4BurstGenerator',
+                'AXI4MasterInterface'):
         from . import axi4_bridge as _mod
         return getattr(_mod, name)
 
@@ -160,6 +176,10 @@ def __getattr__(name):
                 'PerformanceMetrics', 'AXI4Monitor', 'create_axi4_monitor',
                 'analyze_axi4_log'):
         from . import axi4_monitor as _mod
+        return getattr(_mod, name)
+
+    if name in ('HBM4AddressTranslator', 'InterconnectScheduler'):
+        from . import interconnect as _mod
         return getattr(_mod, name)
 
     raise AttributeError(f"module 'model.interconnect' has no attribute '{name}'")

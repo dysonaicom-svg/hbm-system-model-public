@@ -23,6 +23,3 @@
 
 # DRAM model
 /home/ic/JXTF/HBM/rtl/dram_model.sv
-
-# Testbench (standalone SV testbench)
-/home/ic/JXTF/HBM/rtl/hbm_controller_tb_simple.sv

@@ -41,7 +41,38 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 
 ---
 
-## 📁 三、核心文件
+## 🎯 三、5分钟入门指南
+
+详细的入门指南请参考: [QUICKSTART.md](./QUICKSTART.md)
+
+### 快速开始 (5行代码)
+
+```python
+from sim.simulator import HBMSimulator
+
+sim = HBMSimulator(channels=32, data_rate_gbps=16)
+sim.submit_request(addr=0x1000, size=64, is_write=False)
+sim.run(cycles=100)
+stats = sim.get_stats()
+print(f"Bandwidth: {stats['bandwidth_gbps']:.2f} GB/s")
+```
+
+### 常用模式
+
+```python
+# 顺序访问 (高行命中率)
+TrafficGenerator(pattern="sequential")
+
+# 随机访问
+TrafficGenerator(pattern="random")
+
+# 跨步访问 (向量处理)
+TrafficGenerator(pattern="stride")
+```
+
+---
+
+## 📁 四、核心文件
 
 ```
 model/
@@ -72,7 +103,7 @@ rtl/
 
 ---
 
-## 📈 四、性能基准
+## 📈 五、性能基准
 
 | 模式 | 吞吐量 | 延迟 | 行命中率 |
 |------|--------|------|----------|
@@ -84,7 +115,7 @@ rtl/
 
 ---
 
-## 🔧 五、配置参数
+## 🔧 六、配置参数
 
 ### HBM4 配置
 
@@ -104,7 +135,7 @@ Interface:    2048-bit
 
 ---
 
-## 📚 六、关键文档
+## 📚 七、关键文档
 
 | 文档 | 位置 | 说明 |
 |------|------|------|
@@ -116,7 +147,7 @@ Interface:    2048-bit
 
 ---
 
-## 🧪 七、测试类别
+## 🧪 八、测试类别
 
 ```
 tests/
@@ -130,18 +161,36 @@ tests/
 
 ---
 
-## ⚠️ 八、常见问题
+## ⚠️ 九、常见问题
 
 ### Q: 队列满
 ```python
-stats = controller.get_stats()
-if stats['queues']['read_depth'] < 256:
-    controller.submit_request(...)
+# 增加队列深度
+from model.controller.config import HBMConfig
+config = HBMConfig(queue_depth=512)
+controller = HBMController(config)
+
+# 或使用节流
+sim.set_throttle(requests_per_cycle=0.8)
 ```
 
-### Q: 地址对齐
+### Q: 地址对齐错误
 ```python
 addr = original_addr & ~0x7  # 8-byte aligned
+addr = original_addr & ~0x3F  # 64-byte aligned (cache line)
+```
+
+### Q: 导入错误
+```bash
+pip uninstall hbm4-platform
+pip install -e .
+```
+
+### Q: 调试模式
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+sim = HBMSimulator(debug=True)
 ```
 
 ### Q: RTL 编译
@@ -150,9 +199,18 @@ verilator --cc --trace --top-module hbm_controller_tb \
     hbm_controller_tb.sv hbm_controller.sv hbm_types.svh
 ```
 
+### Q: 性能分析
+```python
+sim = HBMSimulator(profile=True)
+sim.run(cycles=10000)
+profile = sim.get_profile()
+for comp, cycles in sorted(profile.items(), key=lambda x: -x[1]):
+    print(f"{comp}: {cycles} cycles")
+```
+
 ---
 
-## 📋 九、任务清单
+## 📋 十、任务清单
 
 - [ ] 提交清理更改 (.gitignore, CLAUDE.md)
 - [ ] 推送 public_release 到 GitHub
@@ -162,4 +220,4 @@ verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
-*快速参考 - 2026-06-16*
+*快速参考 - 2026-06-17*

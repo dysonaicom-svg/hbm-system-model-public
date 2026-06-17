@@ -234,7 +234,9 @@ class TestBankGroupAwareActivation:
 
         assert result is True
         bank = pc0.get_bank_in_group(0, 0)
-        assert bank.bank.is_active
+        # Bank should be in ACTIVATING state immediately after activation
+        # (transitions to OPEN after tRCD=12 cycles)
+        assert bank.bank.is_activating
         assert bank.bank.open_row == 100
 
     def test_activate_row_updates_bank_group_state(self):
@@ -264,8 +266,10 @@ class TestBankGroupAwareActivation:
         bank0 = pc0.get_bank_in_group(2, 0)
         bank1 = pc0.get_bank_in_group(2, 1)
 
-        assert bank0.bank.is_active
-        assert bank1.bank.is_active
+        # Both banks should be in ACTIVATING state immediately after activation
+        # (transitions to OPEN after tRCD=12 cycles)
+        assert bank0.bank.is_activating
+        assert bank1.bank.is_activating
 
     def test_issue_command_with_bank_group(self):
         """Must issue command with bank group targeting"""
@@ -279,8 +283,10 @@ class TestBankGroupAwareActivation:
         )
 
         assert result is True
+        # Bank should be in ACTIVATING state immediately after activation
+        # (transitions to OPEN after tRCD=12 cycles)
         bank = ch.get_bank(0, 7)  # BG3, index 1 = bank 7
-        assert bank.bank.is_active
+        assert bank.bank.is_activating
 
 
 # =============================================================================
@@ -439,20 +445,26 @@ class TestChannelCommandHandling:
         result = ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
 
         assert result is True
+        # Bank should be in ACTIVATING state immediately after activation
+        # (transitions to OPEN after tRCD=12 cycles)
         pc0 = ch.pseudo_channels[0]
-        active_banks = [b for b in pc0.banks if b.bank.is_active]
+        active_banks = [b for b in pc0.banks if b.bank.is_activating]
         assert len(active_banks) > 0
 
     def test_issue_command_precharge(self):
         """PRE command must precharge banks"""
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
         # Activate first
         ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
 
-        # Advance time to meet tRAS timing requirement (nRAS in spec)
-        ch.set_time(spec.nRAS + 1)
+        # Advance time using tick to meet tRAS timing requirement
+        # tRAS = 28 cycles for bank timing, need 29 ticks minimum
+        bank_timing = HBM4BankTiming()
+        for _ in range(bank_timing.tRAS + 1):
+            ch.tick()
 
         # Precharge - should now succeed after tRAS is satisfied
         result = ch.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
@@ -488,6 +500,7 @@ class TestChannelCommandHandling:
 
     def test_numeric_command_encoding(self):
         """Numeric command encoding must work"""
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -495,8 +508,11 @@ class TestChannelCommandHandling:
         result = ch.issue_numeric_command(HBM4Command.ACT, pseudo_channel=0, bank=0, row=100)
         assert result is True
 
-        # Advance time to meet tRAS timing requirement (nRAS in spec)
-        ch.set_time(spec.nRAS + 1)
+        # Advance time to meet tRAS timing requirement using tick
+        # tRAS = 28 cycles for bank timing, need 29 ticks minimum
+        bank_timing = HBM4BankTiming()
+        for _ in range(bank_timing.tRAS + 1):
+            ch.tick()
 
         # PRE = 4 - needs time after ACT to satisfy tRAS
         result = ch.issue_numeric_command(HBM4Command.PRE, pseudo_channel=0, bank=0, row=0)
@@ -580,8 +596,8 @@ class TestChannelTiming:
         ch.tick()
 
         # After tick, pseudo-channel time should equal channel cycle
-        assert ch.pseudo_channels[0].current_time == ch.current_cycle
-        assert ch.pseudo_channels[1].current_time == ch.current_cycle
+        assert ch.pseudo_channels[0].current_time == float(ch.current_cycle)
+        assert ch.pseudo_channels[1].current_time == float(ch.current_cycle)
 
     def test_tick_advances_bank_groups(self):
         """tick() must advance all bank group times"""
@@ -590,9 +606,11 @@ class TestChannelTiming:
 
         ch.tick()
 
+        # Bank group times are tracked via the bank array
         for pc in ch.pseudo_channels:
-            for bg in pc.bank_groups:
-                assert bg.current_time == ch.current_cycle
+            for bank in pc.banks:
+                # Each bank's current_cycle should equal channel cycle
+                assert bank.current_cycle == ch.current_cycle
 
     def test_refresh_completes_after_tick(self):
         """Refresh must complete after sufficient ticks"""
@@ -850,26 +868,30 @@ class TestCommandScheduling:
 
     def test_can_schedule_read(self):
         """Must be able to schedule read if row open"""
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
         ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
 
-        # Advance time past tRCD (8 cycles)
-        for _ in range(10):
+        # Advance time past tRCD (12 cycles for bank timing, need 13 ticks)
+        bank_timing = HBM4BankTiming()
+        for _ in range(bank_timing.tRCD + 1):
             ch.tick()
 
         assert ch.can_schedule_command('RD', pseudo_channel=0, bank_group=0)
 
     def test_can_schedule_write(self):
         """Must be able to schedule write if row open"""
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
         ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
 
-        # Advance time past tRCD (8 cycles)
-        for _ in range(10):
+        # Advance time past tRCD (12 cycles for bank timing, need 13 ticks)
+        bank_timing = HBM4BankTiming()
+        for _ in range(bank_timing.tRCD + 1):
             ch.tick()
 
         assert ch.can_schedule_command('WR', pseudo_channel=0, bank_group=0)
@@ -1006,6 +1028,7 @@ class TestBankGroupReadWriteQueries:
 
     def test_can_read_in_bank_group(self):
         """Must query read capability per bank group"""
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -1014,14 +1037,16 @@ class TestBankGroupReadWriteQueries:
         # Activate in BG2
         pc0.activate_row_in_bank_group(2, 0, 100)
 
-        # Advance time past tRCD
-        for _ in range(10):
+        # Advance time past tRCD (12 cycles for bank timing, need 13 ticks)
+        bank_timing = HBM4BankTiming()
+        for _ in range(bank_timing.tRCD + 1):
             ch.tick()
 
         assert pc0.can_read_in_bank_group(2)
 
     def test_can_write_in_bank_group(self):
         """Must query write capability per bank group"""
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -1030,8 +1055,9 @@ class TestBankGroupReadWriteQueries:
         # Activate in BG3
         pc0.activate_row_in_bank_group(3, 1, 100)
 
-        # Advance time past tRCD
-        for _ in range(10):
+        # Advance time past tRCD (12 cycles for bank timing, need 13 ticks)
+        bank_timing = HBM4BankTiming()
+        for _ in range(bank_timing.tRCD + 1):
             ch.tick()
 
         assert pc0.can_write_in_bank_group(3)

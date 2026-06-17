@@ -243,7 +243,8 @@ class CommandSequencer:
         """
         self.spec = spec or HBM4Spec()
         self.last_command: Optional[DRAMCommand] = None
-        self.last_bank: Optional[int] = None
+        self.last_channel: Optional[int] = None  # Track channel for cross-channel optimization
+        self.last_bank: Optional[int] = None  # Track bank for same-bank turnaround
         self.last_bank_group: Optional[int] = None
 
     def check_row_hit(self, request: HBMRequest, bank_state: BankState) -> bool:
@@ -281,7 +282,8 @@ class CommandSequencer:
             return 0
 
         # No turnaround penalty for different channels (parallel access)
-        if channel_id is not None and self.last_bank != channel_id:
+        # This is the key optimization for HBM4 multi-channel architecture
+        if channel_id is not None and self.last_channel != channel_id:
             return 0
 
         # Only RD and WR commands have turnaround penalties
@@ -406,6 +408,7 @@ class CommandSequencer:
 
         # Update last command tracking
         self.last_command = DRAMCommand.PRE
+        self.last_channel = request.channel_id
         self.last_bank = request.bank_id
         self.last_bank_group = request.bank_group_id
 
@@ -474,6 +477,7 @@ class CommandSequencer:
 
         # Update last command tracking
         self.last_command = rd_wr_command
+        self.last_channel = request.channel_id
         self.last_bank = request.bank_id
         self.last_bank_group = request.bank_group_id
 

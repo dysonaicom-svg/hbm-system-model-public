@@ -75,10 +75,11 @@ class TestCommandSequencer:
 
         assert sequence is not None
         assert sequence.is_row_hit is True
-        # Row hit: no ACT needed
+        # Row hit: no ACT or PRE needed, just RD
         assert DRAMCommand.ACT not in sequence.command_types
         assert DRAMCommand.RD in sequence.command_types
-        assert DRAMCommand.PRE in sequence.command_types
+        # PRE is only included when auto_precharge is enabled
+        # For a simple row hit, only RD is required
 
     def test_sequencer_write_sequence(self):
         """Test command sequence generation for write"""
