@@ -291,13 +291,15 @@ class SimulationStats:
 class TrafficGenerator:
     """Traffic Generator - Optimized with row locality support"""
 
-    __slots__ = ('config', 'current_addr', 'hot_bank', 'hot_row', '_random')
+    __slots__ = ('config', 'current_addr', 'hot_bank', 'hot_bank_group', 'hot_row', 'hot_base', '_random')
 
     def __init__(self, config: SimulationConfig):
         self.config = config
         self.current_addr = 0
         self.hot_bank = 0
         self.hot_row = 0
+        self.hot_bank_group = 0
+        self.hot_base = 0
         self._random = random.Random(config.seed)
 
     def _compute_valid_address_range(self) -> int:
@@ -398,26 +400,47 @@ class TrafficGenerator:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.stride_value) % actual_range
         elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
-            # 80% access hot spot with row locality (same bank+row)
-            if self._random.random() < 0.8:
-                # Stay in hot row 70% of time, change row 30%
-                if self._random.random() < 0.7:
-                    # Same row, different column
-                    addr = self.current_addr + 64
-                    if addr > actual_range // 10:
-                        addr = self.current_addr - 64 if self.current_addr > 64 else 64
+            # HOT_SPOT: Focus traffic on a small region to maximize row locality
+            #
+            # HBM4 RBC mapping (row-locality optimized):
+            # - Row: bits 32:17 (16 bits, shift 17)
+            # - Bank: bits 36:33 (4 bits, shift 33)
+            # - BankGroup: bits 39:37 (3 bits, shift 37)
+            # - Channel: bits 45:41 (5 bits, shift 41)
+            #
+            # Strategy: Keep hot bank/row/channel fixed, vary column
+            hot_prob = self._random.random()
+            if hot_prob < 0.85:
+                # HOT region (85%): Stay in hot bank/row
+                # 90% same column stride, 10% new column in same row
+                col_prob = self._random.random()
+                if col_prob < 0.9:
+                    # Advance column within row
+                    addr = self.current_addr + 32
+                    col = (addr >> 11) & 0x3F
+                    if col >= 64:
+                        addr = self.current_addr - 32
                 else:
-                    # New row in hot bank
-                    self.hot_row = (self.hot_row + 1) % 256
-                    self.hot_bank = self._random.randint(0, 3)
-                # Use hot spot base + row*stride + column
-                hot_base = actual_range // 100  # Small hot region
-                addr = hot_base + (self.hot_row << 12) + (self.hot_bank << 20)
-                addr = min(addr, actual_range - 64)
-                self.current_addr = addr
+                    # New column in same row (wrap within row)
+                    col = self._random.randint(0, 63)
+                    addr = self.hot_base + (col << 11)
+            elif hot_prob < 0.95:
+                # WARM region (10%): Same bank, new row
+                self.hot_row = (self.hot_row + 1) % (1 << 16)
+                addr = self.hot_base
             else:
-                # Cold access - random
-                addr = self._random.randint(0, actual_range - 1)
+                # COLD region (5%): New bank/row
+                self.hot_bank = self._random.randint(0, 15)
+                self.hot_bank_group = self._random.randint(0, 7)
+                self.hot_row = self._random.randint(0, (1 << 16) - 1)
+                # Recalculate hot_base with new bank
+                self.hot_base = ((self.hot_row << 17) +
+                               (self.hot_bank << 33) +
+                               (self.hot_bank_group << 37))
+                self.hot_base = self.hot_base % actual_range
+                addr = self.hot_base
+            # Update current_addr for next column stride
+            self.current_addr = addr
         else:  # ADDR_SCATTER
             addr = self._random.randint(0, actual_range - 1)
 
@@ -450,10 +473,47 @@ class TrafficGenerator:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
         elif self.config.traffic_pattern == TrafficPattern.HOT_SPOT:
-            if self._random.random() < 0.8:
-                addr = self._random.randint(0, self.config.address_range // 10)
+            # HOT_SPOT: Focus traffic on a small region to maximize row locality
+            #
+            # HBM4 RBC mapping (row-locality optimized):
+            # - Row: bits 32:17 (16 bits, shift 17)
+            # - Bank: bits 36:33 (4 bits, shift 33)
+            # - BankGroup: bits 39:37 (3 bits, shift 37)
+            # - Channel: bits 45:41 (5 bits, shift 41)
+            #
+            # Strategy: Keep hot bank/row/channel fixed, vary column
+            hot_prob = self._random.random()
+            if hot_prob < 0.85:
+                # HOT region (85%): Stay in hot bank/row
+                # 90% same column stride, 10% new column in same row
+                col_prob = self._random.random()
+                if col_prob < 0.9:
+                    # Advance column within row
+                    addr = self.current_addr + 32
+                    col = (addr >> 11) & 0x3F
+                    if col >= 64:
+                        addr = self.current_addr - 32
+                else:
+                    # New column in same row (wrap within row)
+                    col = self._random.randint(0, 63)
+                    addr = self.hot_base + (col << 11)
+            elif hot_prob < 0.95:
+                # WARM region (10%): Same bank, new row
+                self.hot_row = (self.hot_row + 1) % (1 << 16)
+                addr = self.hot_base
             else:
-                addr = self._random.randint(0, self.config.address_range - 1)
+                # COLD region (5%): New bank/row
+                self.hot_bank = self._random.randint(0, 15)
+                self.hot_bank_group = self._random.randint(0, 7)
+                self.hot_row = self._random.randint(0, (1 << 16) - 1)
+                # Recalculate hot_base with new bank
+                self.hot_base = ((self.hot_row << 17) +
+                               (self.hot_bank << 33) +
+                               (self.hot_bank_group << 37))
+                self.hot_base = self.hot_base % self.config.address_range
+                addr = self.hot_base
+            # Update current_addr for next column stride
+            self.current_addr = addr
         else:
             addr = self._random.randint(0, self.config.address_range - 1)
 
@@ -927,6 +987,25 @@ class HBMSimulator:
 
             # 3. Generate command sequence using CommandSequencer
             sequence = self._generate_command_sequence(scheduled_request)
+
+            # 3.5. CRITICAL FIX: Update bank state IMMEDIATELY after sequence generation
+            # This is essential for row-hit detection on subsequent requests within the same cycle
+            # Without this, row-hit detection only works after request completes (many cycles later)
+            ctrl_bank_key = (scheduled_request.channel_id, scheduled_request.pseudo_channel_id,
+                           scheduled_request.bank_id)
+            if ctrl_bank_key not in self.controller.bank_states:
+                self.controller.bank_states[ctrl_bank_key] = BankState(
+                    bank_id=scheduled_request.bank_id
+                )
+            ctrl_bank = self.controller.bank_states[ctrl_bank_key]
+            # For row hit: row is already open, keep it open
+            # For row miss: need to open the row after ACT completes
+            if sequence.is_row_hit:
+                ctrl_bank.is_open = True
+                ctrl_bank.open_row = scheduled_request.row_id
+                ctrl_bank.last_row = scheduled_request.row_id
+            # For row miss, we can't update open_row here because ACT hasn't completed yet
+            # The completion handler will update it when the sequence finishes
 
             # 4. Execute on DRAM with proper timing
             actual_latency = self._execute_command_sequence(sequence)

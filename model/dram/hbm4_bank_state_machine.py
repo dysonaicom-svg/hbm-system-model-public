@@ -360,6 +360,9 @@ class HBM4BankStateMachine:
             cycle: Current simulation cycle
         """
         self.current_cycle = cycle
+        # Auto-complete activation when tRCD has elapsed
+        if self.bank.state == HBM4BankState.ACTIVATING:
+            self.complete_activation()
 
     def _record_violation(self, violation_type: str, required_cycles: int,
                           actual_cycles: int, description: str):
@@ -507,8 +510,12 @@ class HBM4BankStateMachine:
         Transitions: ACTIVATING -> OPEN
 
         Returns:
-            True if activation was completed
+            True if activation was completed (or already completed)
         """
+        # Already open means activation completed
+        if self.bank.state == HBM4BankState.OPEN:
+            return True
+
         if self.bank.state != HBM4BankState.ACTIVATING:
             return False
 

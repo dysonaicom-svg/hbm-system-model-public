@@ -376,9 +376,9 @@ class TestHBM4ControllerAddressDecoding:
         controller = HBM4Controller()
         decoder = HBM4AddressDecoder()
 
-        # For RBC mapping: row at bits 32:17 (16 bits), channel at bits 45:41
+        # For RCBC/HBM4 default mapping: row at bits 31:16 (16 bits), channel at bits 45:41
         row = 0x1000
-        addr = (row << 17) | 0x8  # Row at bits 32:17, 8-byte aligned
+        addr = (row << 16) | 0x8  # Row at bits 31:16, 8-byte aligned
         request_id = controller.submit_request(addr=addr, is_read=True)
         assert request_id is not None
 

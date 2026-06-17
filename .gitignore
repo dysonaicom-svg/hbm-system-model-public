@@ -2,15 +2,15 @@
 # HBM System Modeling Platform
 # =============================================================================
 
-# Build Artifacts
-obj_dir*/
-nvc_build/
-nvc_out_of_tree/
+# Simulation Outputs
 *.vcd
 *.fst
 *.wlf
 *.log
 .coverage
+sim/results/
+sim/build/
+obj_dir*/
 
 # Python
 __pycache__/
@@ -18,23 +18,27 @@ __pycache__/
 *.egg-info/
 venv/
 .venv/
+.eggs/
+*.egg
+
+# Build
 build/
-dist/
+logs/
+*.o
+*.a
+*.so
 
-# IDE
-.idea/
-.vscode/
-*.swp
+# Lock files
+uv.lock
+pip-wheel-metadata/
+Pipfile.lock
 
-# Simulation outputs
-sim/results/
-sim/build/
-seq_rd_comparison.json
-benchmark_results*.json
+# Claude Code
+.claude/
 
-# Vivado
-vivado*.jou
-vivado*.log
-.Xil/
-phase13_ooc/
-vivado/
+# MCP
+.mcp.json
+
+# Misc
+undefined/
+.claude/

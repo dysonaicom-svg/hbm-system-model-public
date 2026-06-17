@@ -190,7 +190,7 @@ class TestAddressDecoderHBM4SpecParameters:
         # Test boundary rows within decoder's 16-bit capacity (0-65535)
         test_rows = [0, 1, 100, 1000, 0x1000, 0x4000, 0x8000, 0xFFFF, 0xFFFE, 0xF000]
         for row in test_rows:
-            addr = row << 17  # Row field at bits 32:17 (16 bits in decoder)
+            addr = row << 16  # Row field at bit 16
             decoded = decoder.decode(addr)
             assert decoded.row_id == row, f"Expected row 0x{row:04x}, got 0x{decoded.row_id:04x}"
             assert 0 <= decoded.row_id < (1 << 16)  # Decoder uses 16-bit rows
@@ -208,8 +208,9 @@ class TestAddressDecoderHBM4SpecParameters:
 
         decoder = HBM4AddressDecoder()
         # All 64 columns should be valid
+        # Column field is at bit 8 in HBM4 address layout
         for col in range(64):
-            addr = col << 11
+            addr = col << 8
             decoded = decoder.decode(addr)
             assert decoded.col_id == col
             assert 0 <= decoded.col_id < 64
@@ -311,8 +312,8 @@ class TestAddressDecoderEdgeCases:
             (7 << 37) |    # Bank group
             (15 << 33) |   # Bank
             (0xFFFF << 17) | # Row
-            (63 << 11) |   # Column
-            (3 << 9)       # Burst
+            (63 << 8) |    # Column (was 11)
+            (3 << 6)       # Burst (was 9)
         )
         decoded = decoder.decode(addr)
         assert decoded.stack_id == 3
@@ -430,7 +431,7 @@ class TestAddressDecoderBoundaryConditions:
         """Column boundaries (0-63)"""
         decoder = HBM4AddressDecoder()
         for col in range(64):
-            addr = col << 11
+            addr = col << 8  # Column at bit 8
             assert decoder.get_column_id(addr) == col
 
     def test_stack_boundary(self):
@@ -691,7 +692,7 @@ class TestAddressDecoderHBM4Specific:
         # Test boundary rows (decoder uses 16-bit row field = 64K rows)
         test_rows = [0, 1, 2, 0x100, 0x1000, 0x8000, 0xFFFE, 0xFFFF]
         for row in test_rows:
-            addr = row << 17  # Row field position
+            addr = row << 16  # Row field at bit 16
             decoded = decoder.decode(addr)
             assert decoded.row_id == row, f"Row 0x{row:x} not decoded correctly"
 
@@ -699,7 +700,7 @@ class TestAddressDecoderHBM4Specific:
         """All 64 column addresses should decode correctly"""
         decoder = HBM4AddressDecoder()
         for col in range(64):
-            addr = col << 11  # Column field position
+            addr = col << 8  # Column field at bit 8
             decoded = decoder.decode(addr)
             assert decoded.col_id == col, f"Column {col} not decoded correctly"
 
@@ -765,7 +766,8 @@ class TestAddressDecoderCrossCoverage:
         ]
 
         for row, col in test_cases:
-            addr = (row << 17) | (col << 11)
+            # HBM4 row at bit 16, column at bit 8
+            addr = (row << 16) | (col << 8)
             decoded = decoder.decode(addr)
 
             assert decoded.row_id == row
@@ -775,16 +777,16 @@ class TestAddressDecoderCrossCoverage:
         """All fields combined should work correctly"""
         decoder = HBM4AddressDecoder()
 
-        # Test case with all fields at non-zero values
+        # HBM4 address format: Stack[47:46], CH[45:41], PCH[40], BG[39:37], BK[36:33], Row[32:16], Col[15:8], Burst[7:6]
         addr = (
             (3 << 46) |    # Stack: 3
             (31 << 41) |   # Channel: 31
             (1 << 40) |    # PCH: 1
-            (7 << 37) |    # BG: 7
-            (15 << 33) |   # Bank: 15
-            (0x1234 << 17) | # Row: 0x1234
-            (50 << 11) |   # Col: 50
-            (3 << 9)       # Burst: 3
+            (7 << 37) |   # BG: 7
+            (15 << 33) |  # Bank: 15
+            (0x1234 << 16) | # Row: 0x1234 (16 bits starting at bit 16)
+            (50 << 8) |    # Col: 50
+            (3 << 6)        # Burst: 3
         )
 
         decoded = decoder.decode(addr)
@@ -911,7 +913,7 @@ class TestAddressDecoderBoundaryConditions:
         decoder = HBM4AddressDecoder()
 
         addr_col0 = 0
-        addr_col63 = 63 << 11
+        addr_col63 = 63 << 8  # Column field at bit 8
 
         decoded_col0 = decoder.decode(addr_col0)
         decoded_col63 = decoder.decode(addr_col63)

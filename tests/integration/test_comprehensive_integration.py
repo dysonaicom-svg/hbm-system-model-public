@@ -1263,44 +1263,55 @@ class TestRecoveryScenarios:
 
     def test_recovery_after_timing_violation(self):
         """Test system recovery after timing violation"""
+        from model.dram.hbm4_channel_model import HBM4Channel, HBM4Timing
         spec = HBM4Spec()
-        channel = HBM4Channel(channel_id=0, spec=spec)
+        timing = HBM4Timing()
+        channel = HBM4Channel(channel_id=0, spec=spec, timing=timing)
+        bank = channel.get_bank(pseudo_channel=0, bank=0)
 
         # Issue commands with proper timing
         channel.issue_command('ACT', pseudo_channel=0, bank=0, row=0x100)
 
-        # Wait for tRAS + tRP (bank cycle time)
-        for _ in range(spec.nRAS + spec.nRP):
-            channel.tick()
+        # Wait for tRAS + tRP (bank cycle time) using set_time
+        # Use bank timing values (may differ from spec/channel timing)
+        tRAS = bank.timing.tRAS
+        tRP = bank.timing.tRP
+        channel.set_time(tRAS + tRP)
 
         # Precharge first
-        channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
+        success = channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
+        assert success, "PRE should succeed after tRAS"
 
-        # Wait for tRP
-        for _ in range(spec.nRP):
-            channel.tick()
+        # Wait for tRP + extra cycle to ensure precharge completes
+        # PRE completes at (tRAS + tRP) + tRP = tRAS + 2*tRP
+        channel.set_time(tRAS + 2 * tRP + 1)
 
-        # Issue second ACT - should work now
+        # Issue second ACT - should work now (need tRC from initial ACT)
         result = channel.issue_command('ACT', pseudo_channel=0, bank=0, row=0x200)
         assert result
 
     def test_recovery_after_refresh(self):
         """Test system recovery after refresh"""
+        from model.dram.hbm4_channel_model import HBM4Channel, HBM4Timing
         spec = HBM4Spec()
-        channel = HBM4Channel(channel_id=0, spec=spec)
+        timing = HBM4Timing()
+        channel = HBM4Channel(channel_id=0, spec=spec, timing=timing)
+        bank = channel.get_bank(pseudo_channel=0, bank=0)
+
+        # Get timing values
+        tRAS = bank.timing.tRAS
+        tRP = bank.timing.tRP
+        tRFC = bank.timing.tRFC
 
         # Activate, refresh, activate again
         channel.issue_command('ACT', pseudo_channel=0, bank=0, row=0x100)
-        for _ in range(spec.nRAS):
-            channel.tick()
+        channel.set_time(tRAS)
 
         channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
-        for _ in range(spec.nRP):
-            channel.tick()
+        channel.set_time(tRAS + tRP + 1)  # Wait for precharge to complete
 
         channel.issue_command('REFab', pseudo_channel=0, bank=0, row=0)
-        for _ in range(spec.nRFC):
-            channel.tick()
+        channel.set_time(tRAS + tRP + 1 + tRFC)
 
         # Should be able to activate again
         result = channel.issue_command('ACT', pseudo_channel=0, bank=0, row=0x200)

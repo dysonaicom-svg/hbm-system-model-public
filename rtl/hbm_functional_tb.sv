@@ -8,7 +8,9 @@
 `timescale 1ns / 1ps
 `include "hbm_types.svh"
 
-module hbm_functional_tb;
+module hbm_functional_tb(
+    input clk  // Clock driven by main.cpp in no-timing mode
+);
 
     // ===========================================================================
     // Test Configuration
@@ -47,19 +49,15 @@ module hbm_functional_tb;
     end
 
     // ===========================================================================
-    // Clock Generation - 1 GHz (driven by main)
+    // Clock and Reset
     // ===========================================================================
-    logic clk /* verilator public */ = 0;
-
-    // Clock toggle via main (external)
+    // Cycle counter
     always @(posedge clk) begin
         cycle_count <= cycle_count + 1;
     end
 
-    // ===========================================================================
-    // Reset Generation - synchronous with counter
-    // ===========================================================================
-    logic rst_n /* verilator public */ = 0;  // Start with reset active
+    // Reset generation - synchronous
+    logic rst_n = 0;  // Start with reset active
     logic rst_done = 0;
 
     always @(posedge clk) begin

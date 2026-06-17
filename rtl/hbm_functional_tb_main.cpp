@@ -3,10 +3,13 @@
 // =============================================================================
 #include <iostream>
 #include "verilated.h"
+#include "verilated_vcd_c.h"
 #include "Vhbm_functional_tb.h"
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+
+    // Enable tracing
     Verilated::traceEverOn(true);
 
     // Create testbench instance
@@ -18,14 +21,12 @@ int main(int argc, char** argv) {
     std::cout << "################################################################" << std::endl;
 
     int cycle_count = 0;
-    int max_cycles = 100000;
 
     // Main simulation loop - drive clock
-    // Testbench controls its own $finish when complete
-    while (!Verilated::gotFinish() && cycle_count < max_cycles) {
+    while (!Verilated::gotFinish() && cycle_count < 100000) {
         tb->clk = !tb->clk;
         tb->eval();
-        cycle_count++;
+        if (tb->clk) cycle_count++;
     }
 
     std::cout << std::endl;

@@ -106,9 +106,16 @@ class TestCommandSequence:
         success = channel.issue_command('PRE', pseudo_channel=0, bank=0, row=0)
         assert success, "PRE command should succeed"
 
-        # Verify bank returns to idle
+        # Advance time for precharge to complete (tRP)
+        channel.set_time(hbm4_timing.nRCDRD + hbm4_timing.nCL + hbm4_timing.nBL + hbm4_timing.nRAS + hbm4_timing.nRP)
+
+        # Verify bank returns to idle (may be in PRECHARGING state if tRP not complete)
         bank = channel.get_bank(pseudo_channel=0, bank=0)
-        assert bank.bank.state == BankStateEnum.IDLE
+        from model.dram.hbm4_bank_state_machine import HBM4BankState
+        # Wait for precharge to complete
+        while bank.bank.state == HBM4BankState.PRECHARGING:
+            channel.tick()
+        assert bank.bank.state == HBM4BankState.CLOSED
 
     def test_single_write_sequence(self, hbm4_channel, hbm4_timing):
         """Test ACT -> WR -> PRE sequence for a single write"""
@@ -136,9 +143,16 @@ class TestCommandSequence:
         success = channel.issue_command('PRE', pseudo_channel=0, bank=1, row=100)
         assert success, "PRE command should succeed"
 
+        # Advance time for precharge to complete (tRP)
+        channel.set_time(hbm4_timing.nRCDWR + hbm4_timing.nCWL + hbm4_timing.nBL + hbm4_timing.nWR + hbm4_timing.nRAS + hbm4_timing.nRP)
+
         # Verify bank returns to idle
         bank = channel.get_bank(pseudo_channel=0, bank=1)
-        assert bank.bank.state == BankStateEnum.IDLE
+        from model.dram.hbm4_bank_state_machine import HBM4BankState
+        # Wait for precharge to complete
+        while bank.bank.state == HBM4BankState.PRECHARGING:
+            channel.tick()
+        assert bank.bank.state == HBM4BankState.CLOSED
 
     def test_read_with_auto_precharge(self, hbm4_channel, hbm4_timing):
         """Test RDA (Read with auto-precharge) sequence"""
@@ -408,17 +422,17 @@ class TestControllerDRAMIntegration:
         """Test that controller correctly decodes addresses"""
         controller = hbm4_controller
 
-        # Test address using RBC mapping format:
-        # [Stack][Channel][Pch][Bg][Bank][Row][Col][Burst][Offset]
-        # Test address: channel 5, pseudo-channel 1, bank 3, row 0x1234
+        # Test address using HBM4 RCBC mapping (default):
+        # [Stack:47:46][Channel:45:41][Pch:40][Bg:39:37][Bank:36:33][Row:31:16][Col:15:8][Burst:7:6][Offset:5:3]
+        # Test address: channel 5, pseudo-channel 1, bank group 2, bank 3, row 0x1234
         test_addr = (
-            (0 << 46) |     # Stack
+            (0 << 46) |     # Stack (2 bits)
             (5 << 41) |     # Channel (5 bits)
-            (1 << 40) |     # Pseudo-channel
-            (2 << 37) |     # Bank group
-            (3 << 33) |     # Bank
-            (0x1234 << 17) | # Row
-            (0 << 11)        # Column
+            (1 << 40) |     # Pseudo-channel (1 bit)
+            (2 << 37) |     # Bank group (3 bits)
+            (3 << 33) |     # Bank (4 bits)
+            (0x1234 << 16) | # Row (16 bits at position 16-31)
+            (0 << 8)        # Column (8 bits at position 8-15)
         )
 
         decoded = address_decoder.decode(test_addr)
@@ -426,6 +440,7 @@ class TestControllerDRAMIntegration:
         # Verify decoding
         assert decoded.channel_id == 5
         assert decoded.pseudo_channel_id == 1
+        assert decoded.bank_group_id == 2
         assert decoded.bank_id == 3
         assert decoded.row_id == 0x1234
 

@@ -952,8 +952,13 @@ class MultiChannelTrafficGenerator:
             self._random = random.Random(config.seed)
         else:
             self._random = random.Random()
-        self.current_addr = 0
+        # Initialize HOT_SPOT tracking variables
         self.hot_bank = 0
+        self.hot_bank_group = 0
+        self.hot_row = 0
+        self.hot_channel = 0  # Fixed channel for hot spot
+        self.hot_base = 0
+        self.current_addr = 0
 
         # Reference to adaptive balancer (set by simulator)
         self._adaptive_balancer: Optional[AdaptiveLoadBalancer] = None
@@ -1021,10 +1026,58 @@ class MultiChannelTrafficGenerator:
             addr = self.current_addr
             self.current_addr = (self.current_addr + self.config.stride_value) % self.config.address_range
         elif self.config.traffic_pattern.value == "hot_spot":
-            if self._random.random() < 0.8:  # 80% access hot spot
-                addr = self._random.randint(0, self.config.address_range // 10)
+            # HOT_SPOT: Focus traffic on a small region to maximize row locality
+            #
+            # HBM4 RBC mapping (row-locality optimized):
+            # - Channel: bits 45:41 (5 bits, shift 41)
+            # - BankGroup: bits 39:37 (3 bits, shift 37)
+            # - Bank: bits 36:33 (4 bits, shift 33)
+            # - Row: bits 32:17 (16 bits, shift 17)
+            # - Column: bits 16:11 (6 bits, shift 11)
+            #
+            # Strategy: Keep hot channel/bank/row fixed, vary column
+            hot_prob = self._random.random()
+            if hot_prob < 0.85:
+                # HOT region (85%): Stay in hot channel/bank/row
+                # 90% same column stride, 10% new column in same row
+                col_prob = self._random.random()
+                if col_prob < 0.9:
+                    # Advance column within row (64 bytes per column)
+                    self.current_addr += 64
+                    col = (self.current_addr >> 11) & 0x3F
+                    if col >= 64:
+                        # Wrap within row - go back
+                        self.current_addr -= 64
+                else:
+                    # New column in same row
+                    col = self._random.randint(0, 63)
+                    self.current_addr = self.hot_base + (col << 11)
+                addr = self.current_addr
+            elif hot_prob < 0.95:
+                # WARM region (10%): Same bank, new row in same channel
+                self.hot_row = (self.hot_row + 1) % (1 << 16)
+                col = self._random.randint(0, 63)
+                addr = ((self.hot_channel << 41) +
+                       (self.hot_bank_group << 37) +
+                       (self.hot_bank << 33) +
+                       (self.hot_row << 17) +
+                       (col << 11))
+                self.current_addr = addr
             else:
-                addr = self._random.randint(0, self.config.address_range - 1)
+                # COLD region (5%): New channel/bank/row
+                self.hot_channel = self._random.randint(0, 31)  # 32 channels
+                self.hot_bank_group = self._random.randint(0, 7)
+                self.hot_bank = self._random.randint(0, 15)
+                self.hot_row = self._random.randint(0, (1 << 16) - 1)
+                col = self._random.randint(0, 63)
+                addr = ((self.hot_channel << 41) +
+                       (self.hot_bank_group << 37) +
+                       (self.hot_bank << 33) +
+                       (self.hot_row << 17) +
+                       (col << 11))
+                self.hot_base = addr
+                self.current_addr = addr
+            addr = addr & ~0x3F  # Align to 64 bytes
         else:  # scatter
             addr = self._random.randint(0, self.config.address_range - 1)
 

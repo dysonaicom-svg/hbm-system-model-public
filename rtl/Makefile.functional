@@ -126,6 +126,12 @@ wave: $(RTL_DIR)/$(TOP_MODULE).vcd
 		echo "$(RED)gtkwave not found. Install gtkwave to view waveforms.$(NC)"; \
 	fi
 
+# Target: copy_vcd (copy VCD to project root)
+.PHONY: copy_vcd
+copy_vcd:
+	@cp $(OBJ_DIR)/$(TOP_MODULE).vcd $(RTL_DIR)/$(TOP_MODULE).vcd
+	@echo "$(GREEN)VCD copied to $(RTL_DIR)/$(TOP_MODULE).vcd$(NC)"
+
 # Target: clean
 .PHONY: clean
 clean:

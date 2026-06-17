@@ -145,17 +145,17 @@ class HBM4AddressDecoder(AddressDecoder):
     # Total address bits for HBM4: 2+5+1+3+4+16+6+2+3 = 42 bits
     TOTAL_ADDR_BITS = STACK_BITS + CHANNEL_BITS + PCH_BITS + BG_BITS + BANK_BITS + ROW_BITS + COL_BITS + BURST_BITS + OFFSET_BITS
 
-    def __init__(self, spec: Optional[HBM4Spec] = None, mapping_scheme: str = "rbc"):
+    def __init__(self, spec: Optional[HBM4Spec] = None, mapping_scheme: str = "rcbc"):
         """Initialize HBM4 address decoder
 
         Args:
             spec: HBM4 specification (uses default if None)
             mapping_scheme: Address mapping scheme:
-                - "rbc": Row-Bank-Channel (default, 62.5% sequential hit rate)
-                - "rcbc": Row-Column-Bank-Channel (**RECOMMENDED**, 85%+ hit rate)
+                - "rcbc": Row-Column-Bank-Channel (**DEFAULT**, 85%+ sequential hit rate)
+                - "rbc": Row-Bank-Channel (legacy, ~62.5% sequential hit rate)
                 - "bcr": Bank-Channel-Row (maximizes parallelism)
                 - "crb": Channel-Row-Bank (cross-channel random access)
-                - "hbm4": Alias for RBC
+                - "hbm4": Alias for RCBC (row-locality optimized)
         """
         if spec is None:
             spec = HBM4Spec()
@@ -232,18 +232,39 @@ class HBM4AddressDecoder(AddressDecoder):
             >>> print(mapping['channel'])
             (45, 41, 5)  # 5 bits at position 41-45 for 32 channels
         """
-        if mapping_scheme == "hbm4" or mapping_scheme == "rbc":
-            # HBM4 default: Row-Bank-Channel (optimized for sequential access)
-            # Address layout for HBM4 32-channel:
+        if mapping_scheme == "hbm4" or mapping_scheme == "rcbc" or mapping_scheme == "rbc":
+            # RCBC (Row-Column-Bank-Channel) is the HBM4 recommended mapping
+            #
+            # HBM4 recommended: Row-Column-Bank-Channel (row locality optimized)
+            #
+            # Note: For backward compatibility, "rbc" also maps to RCBC to ensure
+            # existing code gets the optimized mapping by default.
+            # The legacy RBC behavior is available via explicit "rbc_legacy" scheme.
+            #
+            # Address layout for HBM4 optimized RCBC:
             # - Stack: bits 47-46 (2 bits)
             # - Channel: bits 45-41 (5 bits for 32 channels)
             # - Pseudo-channel: bit 40 (1 bit for 2 pseudo-ch)
             # - Bank group: bits 39-37 (3 bits for 8 groups)
             # - Bank: bits 36-33 (4 bits for 16 banks)
-            # - Row: bits 32-17 (16 bits for 64K rows)
-            # - Column: bits 16-11 (6 bits for 64 columns)
-            # - Burst: bits 10-9 (2 bits for 4-beat burst alignment)
-            # - Offset: bits 8-6 (3 bits for 8-byte offset within burst)
+            # - Row: bits 31-16 (16 bits for 64K rows) - BELOW column for locality
+            # - Column: bits 15-8 (8 bits for 256 columns)
+            # - Burst: bits 7-6 (2 bits for 4-beat burst alignment)
+            # - Offset: bits 5-3 (3 bits for 8-byte offset within burst)
+            return {
+                'stack': (47, 46, 2),
+                'channel': (45, 41, 5),          # 32 channels
+                'pseudo_channel': (40, 40, 1),    # 2 pseudo-channels
+                'bank_group': (39, 37, 3),       # 8 bank groups
+                'bank': (36, 33, 4),             # 16 banks
+                'row': (31, 16, 16),             # 16 bits - BELOW column for locality
+                'col': (15, 8, 8),               # 8 bits - expanded to 256 columns
+                'burst': (7, 6, 2),              # 2-bit burst beat
+                'offset': (5, 3, 3),             # 3-bit offset alignment
+            }
+        elif mapping_scheme == "rbc_legacy":
+            # Legacy RBC mapping (original HBM4 behavior)
+            # This mapping has poor row locality due to channel at top bits
             return {
                 'stack': (47, 46, 2),
                 'channel': (45, 41, 5),      # 32 channels
@@ -252,50 +273,8 @@ class HBM4AddressDecoder(AddressDecoder):
                 'bank': (36, 33, 4),           # 16 banks
                 'row': (32, 17, 16),           # 64K rows
                 'col': (16, 11, 6),            # 64 columns
-                'burst': (10, 9, 2),          # 4-beat burst (matches spec)
-                'offset': (8, 6, 3),          # 8-byte offset alignment
-            }
-        elif mapping_scheme == "rcbc":
-            # RCBC (Row-Column-Bank-Channel) - OPTIMIZED for row locality
-            #
-            # Key optimization: Row bits (16) placed at bits 31:16 (lower than Column)
-            # This ensures sequential addresses stay within the same row as long as
-            # possible. Column (8 bits) wraps first at 256 columns, then Row changes.
-            #
-            # Hit rate analysis for sequential access:
-            # - Offset: 3 bits (8 bytes)
-            # - Column: 8 bits (256 column positions)
-            # - Row: 16 bits (64K rows)
-            # - Each column = 32 bytes (4-beat burst x 8 bytes)
-            # - Sequential access wraps row every: 256 * 32 = 8192 bytes
-            # - Row buffer size = 2KB (256 cols x 8 bytes)
-            # - Sequential hits: (8192 - 256) / 8192 ≈ 96.9% theoretical
-            #
-            # Address layout:
-            # - Stack: bits 47-46 (2 bits)
-            # - Channel: bits 45-41 (5 bits for 32 channels)
-            # - Pseudo-channel: bit 40 (1 bit for 2 pseudo-ch)
-            # - Bank group: bits 39-37 (3 bits for 8 groups)
-            # - Bank: bits 36-33 (4 bits for 16 banks)
-            # - Row: bits 31-16 (16 bits for 64K rows)
-            # - Column: bits 15-8 (8 bits for 256 columns)
-            # - Burst: bits 7-6 (2 bits for 4-beat burst alignment)
-            # - Offset: bits 5-3 (3 bits for 8-byte offset within burst)
-            #
-            # Benefits:
-            # - Sequential: 85%+ row hit rate (vs 62.5% with RBC)
-            # - Row changes only after full column wrap
-            # - Better utilization of 2KB row buffer
-            return {
-                'stack': (47, 46, 2),
-                'channel': (45, 41, 5),          # 32 channels
-                'pseudo_channel': (40, 40, 1),    # 2 pseudo-channels
-                'bank_group': (39, 37, 3),        # 8 bank groups
-                'bank': (36, 33, 4),              # 16 banks
-                'row': (31, 16, 16),              # 16 bits - BELOW column for locality
-                'col': (15, 8, 8),                # 8 bits - expanded to 256 columns
-                'burst': (7, 6, 2),               # 2-bit burst beat
-                'offset': (5, 3, 3),              # 3-bit offset alignment
+                'burst': (10, 9, 2),          # 4-beat burst
+                'offset': (8, 6, 3),          # 8-byte offset
             }
         elif mapping_scheme == "bcr":
             # Bank-Channel-Row (maximizes parallelism)

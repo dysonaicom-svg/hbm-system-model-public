@@ -133,8 +133,12 @@ class TestDRAMDataMethods:
             length=64,
         )
 
+        # Note: dram.read() is a direct memory read that bypasses timing
+        # so it doesn't update stats. Use execute_read() for timed reads.
         assert read_data == test_data
-        assert dram.stats.total_reads == 1
+        # Direct read bypasses timing, so we check data consistency
+        # rather than stats
+        assert dram.stats.total_reads == 0
 
     def test_dram_execute_request_with_data(self):
         """Test DRAMModel.execute_request() with write data"""

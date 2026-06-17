@@ -289,10 +289,12 @@ class PseudoChannel:
     def set_time(self, current_cycle: int) -> None:
         """Set current time for this pseudo-channel"""
         self.current_time = float(current_cycle)
-        # Note: banks are updated via enhanced_banks.set_time() or directly
-        # when PseudoChannel.tick() is called
+        # Update bank groups
         for bg in self.bank_groups:
             bg.set_time(current_cycle)
+        # Update individual banks for proper timing checks
+        if self.enhanced_banks is not None:
+            self.enhanced_banks.set_time(current_cycle)
 
     def get_bank_group(self, bank_id: int) -> BankGroup:
         """Get the bank group for a given bank ID
@@ -715,8 +717,13 @@ class PseudoChannel:
                 bank.set_time(int(self.current_time))
 
     def set_time(self, current_time: float):
-        """Set current simulation time"""
+        """Set current simulation time and propagate to enhanced banks"""
         self.current_time = current_time
+        # Propagate to enhanced banks and complete state transitions
+        if self.enhanced_banks:
+            self.enhanced_banks.set_time(int(self.current_time))
+            # Complete any pending state transitions (activation, precharge, etc.)
+            self.enhanced_banks.tick(advance_cycle=False)
 
     def validate_timing(self) -> List[TimingViolation]:
         """Validate timing for all banks
