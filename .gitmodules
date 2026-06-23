@@ -1,0 +1,5 @@
+[submodule "public_release"]
+	active = true
+	path = public_release
+	url = https://github.com/dysonaicom-svg/hbm-system-model-public.git
+	update = rebase
