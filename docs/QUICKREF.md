@@ -2,7 +2,7 @@
 
 > 简洁的项目状态和命令速查
 
-*Last Updated: 2026-06-23*
+*Last Updated: 2026-06-24*
 
 ---
 
@@ -11,10 +11,11 @@
 | 项目 | 值 |
 |------|-----|
 | 分支 | `feat/hbm4-logic-base-die-phase2` |
-| 测试数 | **4,409** ✅ |
+| 版本 | 2.2.0 |
+| 测试数 | **4,409+** ✅ |
 | Python 文件 | 150+ |
 | RTL 文件 | 7 |
-| 开发阶段 | Phase 2 - Logic Base Die |
+| 开发阶段 | Phase G-J - Logic Base Die, Unified Simulator, Performance, Integration |
 | 最新提交 | `ab9d1f0` |
 
 ---
