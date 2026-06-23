@@ -1,0 +1,324 @@
+{
+  "metadata": {
+    "timestamp": "2026-06-16T02:12:46.082689",
+    "total_results": 1,
+    "hbm_version": "hbm3"
+  },
+  "results": [
+    {
+      "pattern": "sequential",
+      "request_rate": 0.5,
+      "total_requests": 12851,
+      "completed": 12850,
+      "row_hit_rate": 0.0,
+      "avg_latency": 2.4309727626459146,
+      "max_latency": 30,
+      "min_latency": 2,
+      "throughput_gbps": 0.08224321262549317,
+      "bandwidth_efficiency": 5.019727333098948e-05,
+      "wall_clock_time_ms": 2796.126365661621,
+      "efficiency": 0.5020117973358335,
+      "dram_activations": 13,
+      "requests_per_second": 4595.643515188351,
+      "latency_percentiles": {
+        "p50": 1.321398131882446,
+        "p75": 1.6058412172139327,
+        "p90": 2.0290366301434526,
+        "p95": 2.77778455012964,
+        "p99": 3.499366485496902,
+        "p999": 3.634192138576248,
+        "std_dev": 0.5264717956001121
+      },
+      "per_channel_utilization": [
+        {
+          "channel_id": 0,
+          "requests": 25701,
+          "total_latency_cycles": 31238,
+          "row_hits": 12649,
+          "row_misses": 201,
+          "utilization_percent": 100.0,
+          "hit_rate": 0.9843579766536965,
+          "bandwidth_gbps": 164.4928255009961,
+          "read_requests": 17990,
+          "write_requests": 7710
+        },
+        {
+          "channel_id": 1,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 2,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 3,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 4,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 5,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 6,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 7,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 8,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 9,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 10,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 11,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 12,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 13,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 14,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        },
+        {
+          "channel_id": 15,
+          "requests": 0,
+          "total_latency_cycles": 0,
+          "row_hits": 0,
+          "row_misses": 0,
+          "utilization_percent": 0.0,
+          "hit_rate": 0.0,
+          "bandwidth_gbps": 0.0,
+          "read_requests": 0,
+          "write_requests": 0
+        }
+      ],
+      "row_buffer_metrics": {
+        "row_hit_rate": 0.0,
+        "row_miss_rate": 0.0,
+        "row_conflict_rate": 1.0,
+        "total_row_activations": 13,
+        "row_hit_latency_savings_cycles": 0,
+        "optimal_vs_actual_ratio": 0.0,
+        "best_case_bandwidth_gbps": 20078.125,
+        "worst_case_bandwidth_gbps": 301171.875,
+        "actual_bandwidth_gbps": 0.08224321262549317
+      },
+      "multi_channel_bandwidth": {
+        "total_bandwidth_gbps": 164.4928255009961,
+        "peak_bandwidth_gbps": 1638.4,
+        "avg_channel_bandwidth_gbps": 164.4928255009961,
+        "channel_balance_score": 1.0,
+        "min_channel_bandwidth_gbps": 164.4928255009961,
+        "max_channel_bandwidth_gbps": 164.4928255009961,
+        "bandwidth_variance": 0.0,
+        "active_channels": 1,
+        "total_channels": 16
+      },
+      "bank_group_utilization": [
+        {
+          "bank_group_id": 0,
+          "total_activations": 4,
+          "total_reads": 2,
+          "total_writes": 1,
+          "active_cycles": 16,
+          "idle_cycles": 25583,
+          "utilization_percent": 0.06250244150162115
+        },
+        {
+          "bank_group_id": 1,
+          "total_activations": 3,
+          "total_reads": 2,
+          "total_writes": 0,
+          "active_cycles": 12,
+          "idle_cycles": 25587,
+          "utilization_percent": 0.046876831126215865
+        },
+        {
+          "bank_group_id": 2,
+          "total_activations": 3,
+          "total_reads": 2,
+          "total_writes": 0,
+          "active_cycles": 12,
+          "idle_cycles": 25587,
+          "utilization_percent": 0.046876831126215865
+        },
+        {
+          "bank_group_id": 3,
+          "total_activations": 3,
+          "total_reads": 2,
+          "total_writes": 0,
+          "active_cycles": 12,
+          "idle_cycles": 25587,
+          "utilization_percent": 0.046876831126215865
+        }
+      ],
+      "qos_metrics": {
+        "high_priority_requests": 3855,
+        "low_priority_requests": 8995,
+        "high_priority_completed": 3662,
+        "low_priority_completed": 8365,
+        "avg_high_priority_latency": 2.066326848249027,
+        "avg_low_priority_latency": 2.7956186770428015,
+        "priority_starvation_count": 0,
+        "qos_violation_count": -193,
+        "fairness_index": 0.0
+      },
+      "timestamp": "2026-06-16T02:12:46.080898",
+      "hbm_version": "hbm3",
+      "config_info": {
+        "channels_per_stack": 8,
+        "stack_count": 2,
+        "total_channels": 16,
+        "peak_bandwidth_gbps": 1638.4,
+        "data_rate_gbps": 6.4
+      }
+    }
+  ],
+  "summary": {
+    "total_results": 1,
+    "total_completed_requests": 12850,
+    "avg_throughput_gbps": 0.08224321262549317,
+    "max_throughput_gbps": 0.08224321262549317,
+    "avg_row_hit_rate": 0.0,
+    "avg_latency_cycles": 2.4309727626459146,
+    "avg_channel_balance": 1.0,
+    "avg_qos_fairness": 0.0,
+    "patterns_tested": [
+      "sequential"
+    ],
+    "hbm_versions": [
+      "hbm3"
+    ]
+  }
+}
