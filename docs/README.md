@@ -2,7 +2,7 @@
 
 > **Version**: 2.1.1 | **Status**: Phase 2 Complete | **Tests**: 4,409 Passing
 > **Branch**: `feat/hbm4-logic-base-die-phase2`
-> **Last Updated**: 2026-06-24
+> **Last Updated**: 2026-06-25
 
 ---
 
@@ -224,11 +224,11 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 | Commit | Description |
 |--------|-------------|
-| `ab9d1f0` | fix: add missing List import and enhance address decoder |
-| `2408575` | docs: Complete final verification report for HBM3 Python vs Ramulator2 comparison |
-| `8f8827e` | fix: correct trace replay timing and add BankState import |
-| `4600e4f` | feat: add HBM3 comparison framework for Ramulator2 validation |
-| `7a3a1d3` | feat: update DRAM models and benchmark suite |
+| `10f658d` | sync: update submodules and .gitmodules configuration |
+| `71ad1b9` | docs: update CLAUDE.md with Phase 3 info and test statistics |
+| `99505aa` | docs: update to v2.1.1 - refresh documentation and bump version |
+| `4bedff1` | fix: resolve import errors and update address mapping tests |
+| `2ad6857` | feat: HBM4 Logic Base Die Phase 3 - Performance Optimization and Verification Enhancement |
 
 ---
 
@@ -284,4 +284,4 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
-*Document generated: 2026-06-24*
+*Document generated: 2026-06-25*
