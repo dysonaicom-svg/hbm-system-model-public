@@ -43,7 +43,7 @@ from sim.interconnect.gem5_types import (
     create_read_request,
     create_write_request,
 )
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 # ============================================================================
@@ -825,7 +825,7 @@ class TestIntegration:
 
     def test_bridge_with_controller(self, default_bridge, hbm4_spec):
         """Test bridge works with HBM4 controller"""
-        from model.controller.hbm4_controller import HBM4Controller
+        from model.controller.HBM4_controller import HBM4Controller
 
         controller = HBM4Controller(spec=hbm4_spec)
 

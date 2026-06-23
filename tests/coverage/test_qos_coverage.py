@@ -17,9 +17,9 @@ Coverage targets:
 
 import pytest
 import time as time_module
-from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel, QueuedRequest
+from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel, QueuedRequest
 from model.controller.request import HBMRequest, RequestState
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 class TestQoSPriorityLevels:

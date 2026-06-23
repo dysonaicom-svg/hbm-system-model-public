@@ -1,8 +1,9 @@
 # HBM 系统建模平台 - 项目状态报告
 
-**生成日期**: 2026-06-17
-**分支**: hbm4-phase-cd
-**最新提交**: 23b58ea (fix: resolve CI/CD workflow configuration issues)
+**生成日期**: 2026-06-23
+**分支**: feat/hbm4-logic-base-die-phase2
+**最新提交**: ab9d1f0 (fix: add missing List import and enhance address decoder)
+**当前版本**: 2.0.0
 
 ---
 
@@ -88,7 +89,7 @@ Statistics Collector
 ## 三、目录结构
 
 ```
-/home/ic/JXTF/HBM/
+/home/ic/JXTF/HBM4/
 ├── model/                    # 核心模型库
 │   ├── controller/           # HBM 控制器 (17 文件)
 │   ├── dram/                  # DRAM 时序模型 (26 文件)
@@ -101,13 +102,13 @@ Statistics Collector
 │   ├── simulator.py           # HBMSimulator
 │   ├── unified_simulator.py  # 统一仿真器
 │   └── benchmark.py          # 性能基准
-├── tests/                    # 测试套件 (4,409 测试, 117 文件)
-│   ├── controller/           # 控制器测试 (356)
-│   ├── dram/                 # DRAM 测试 (995)
-│   ├── hbm4/                 # HBM4 测试 (646)
-│   ├── integration/          # 集成测试 (823)
-│   ├── coverage/             # 覆盖率测试 (358)
-│   ├── verification/         # 验证测试 (200)
+├── tests/                    # 测试套件 (4,409+ 测试, 120 文件)
+│   ├── controller/           # 控制器测试 (360+)
+│   ├── dram/                 # DRAM 测试 (1009+)
+│   ├── hbm4/                 # HBM4 测试 (650+)
+│   ├── integration/          # 集成测试 (827+)
+│   ├── coverage/             # 覆盖率测试 (362+)
+│   ├── verification/         # 验证测试 (200+)
 │   └── ...
 ├── verification/             # 验证环境
 │   ├── uvm/                  # UVM 测试
@@ -136,21 +137,21 @@ Statistics Collector
 
 | 类别 | 测试数 | 状态 | 执行时间 |
 |------|--------|------|----------|
-| Controller Tests | 356 | ✅ Pass | ~2s |
-| DRAM Tests | 995 | ✅ Pass | ~120s |
-| HBM4 Tests | 646 | ✅ Pass | ~7s |
-| Integration Tests | 823 | ✅ Pass | - |
-| PHY Tests | 174 | ✅ Pass | - |
-| Coverage Tests | 358 | ✅ Pass | - |
-| Verification Tests | 200 | ✅ Pass | <1s |
-| Benchmark Tests | 147 | ✅ Pass | - |
-| Performance Tests | 57 | ✅ Pass | - |
-| Simulation Tests | 60 | ✅ Pass | - |
-| Interconnect Tests | 125 | ✅ Pass | - |
-| Traffic Tests | 113 | ✅ Pass | - |
-| Regression Tests | 206 | ✅ Pass | - |
-| RTL Verification Tests | 142 | ✅ Pass | - |
-| **Total** | **4,409** | **✅ All Pass** | ~200s |
+| Controller Tests | 360+ | ✅ Pass | ~2s |
+| DRAM Tests | 1009+ | ✅ Pass | ~120s |
+| HBM4 Tests | 650+ | ✅ Pass | ~7s |
+| Integration Tests | 827+ | ✅ Pass | - |
+| PHY Tests | 178+ | ✅ Pass | - |
+| Coverage Tests | 362+ | ✅ Pass | - |
+| Verification Tests | 62+ | ✅ Pass | <1s |
+| Benchmark Tests | 184+ | ✅ Pass | - |
+| Performance Tests | 61+ | ✅ Pass | - |
+| Simulation Tests | 64+ | ✅ Pass | - |
+| Interconnect Tests | 129+ | ✅ Pass | - |
+| Traffic Tests | 117+ | ✅ Pass | - |
+| Regression Tests | 206+ | ✅ Pass | - |
+| RTL Verification Tests | 146+ | ✅ Pass | - |
+| **Total** | **4,409+** | **✅ All Pass** | ~200s |
 
 ### 4.2 测试类别详情
 
@@ -356,4 +357,4 @@ python -m build
 
 ---
 
-*报告自动生成于 2026-06-17*
+*报告自动生成于 2026-06-23*

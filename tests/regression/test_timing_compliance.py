@@ -267,7 +267,7 @@ class TestBankTiming:
 
         Only 4 activations allowed within tFAW window.
         """
-        from model.dram.hbm4_channel_model import BankGroupScheduler
+        from model.dram.HBM4_channel_model import BankGroupScheduler
         from model.dram.timing import HBM3Timing
 
         timing = HBM3Timing()
@@ -328,7 +328,7 @@ class TestCommandTiming:
 
         Consecutive reads to same bank group require tCCD cycles.
         """
-        from model.dram.hbm4_channel_model import BankGroupScheduler
+        from model.dram.HBM4_channel_model import BankGroupScheduler
         from model.dram.timing import HBM3Timing
 
         timing = HBM3Timing()
@@ -365,7 +365,7 @@ class TestCommandTiming:
 
         Write followed by read requires turnaround time.
         """
-        from model.dram.hbm4_channel_model import BankGroupScheduler
+        from model.dram.HBM4_channel_model import BankGroupScheduler
         from model.dram.timing import HBM3Timing
 
         timing = HBM3Timing()
@@ -403,7 +403,7 @@ class TestCommandTiming:
 
         Different bank groups have shorter turnaround time.
         """
-        from model.dram.hbm4_channel_model import BankGroupScheduler
+        from model.dram.HBM4_channel_model import BankGroupScheduler
         from model.dram.timing import HBM3Timing
 
         timing = HBM3Timing()

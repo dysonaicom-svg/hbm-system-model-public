@@ -11,9 +11,9 @@ This example demonstrates bandwidth measurement in HBM4:
 Run: python examples/bandwidth_benchmark.py
 """
 
-from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
-from model.controller.hbm4_controller import HBM4Controller
-from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.controller.HBM4_controller import HBM4Controller
+from model.controller.HBM4_address_decoder import HBM4AddressDecoder
 
 
 def run_sequential_access(controller, decoder, base_addr, num_requests):

@@ -17,9 +17,9 @@ HBM4 Channel Architecture:
 Run: python examples/multi_channel.py
 """
 
-from model.dram.hbm4_spec import HBM4Spec
-from model.dram.hbm4_channel_model import HBM4ChannelArray
-from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.dram.HBM4_spec import HBM4Spec
+from model.dram.HBM4_channel_model import HBM4ChannelArray
+from model.controller.HBM4_address_decoder import HBM4AddressDecoder
 from model.dram.dfi_interface import DFI5Interface
 
 

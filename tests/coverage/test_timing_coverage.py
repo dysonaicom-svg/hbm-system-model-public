@@ -19,8 +19,8 @@ import pytest
 import time as time_module
 from model.dram.timing import HBM4Timing, HBM3Timing, HBM2Timing
 from model.dram.bank_state_machine import BankStateMachine, BankStateEnum, Bank
-from model.dram.hbm4_channel_model import HBM4Channel, HBM4ChannelState, PseudoChannel, PseudoChannelState
-from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.HBM4_channel_model import HBM4Channel, HBM4ChannelState, PseudoChannel, PseudoChannelState
+from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
 
 
 class TestTimingParameters:
@@ -1172,7 +1172,7 @@ class TestTimingSpecParameters:
 
     def test_spec_speed_grades(self):
         """HBM4Spec speed grades should be available"""
-        from model.dram.hbm4_spec import HBM4_SPEED_GRADES
+        from model.dram.HBM4_spec import HBM4_SPEED_GRADES
 
         assert "8Gbps" in HBM4_SPEED_GRADES
         assert "12Gbps" in HBM4_SPEED_GRADES
@@ -1198,7 +1198,7 @@ class TestTimingSpecParameters:
 
     def test_create_spec_from_speed_grade(self):
         """create_hbm4_spec_from_speed_grade should work"""
-        from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+        from model.dram.HBM4_spec import create_hbm4_spec_from_speed_grade
 
         spec = create_hbm4_spec_from_speed_grade("8Gbps")
         assert spec.data_rate_gtps == 8.0

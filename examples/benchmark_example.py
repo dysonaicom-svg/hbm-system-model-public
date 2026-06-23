@@ -17,10 +17,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.controller.hbm4_controller import HBM4Controller
-from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
-from model.dram.hbm4_channel_model import HBM4ChannelArray
-from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.HBM4_controller import HBM4Controller
+from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.HBM4_channel_model import HBM4ChannelArray
+from model.controller.HBM4_address_decoder import HBM4AddressDecoder
 
 
 def print_section(title):

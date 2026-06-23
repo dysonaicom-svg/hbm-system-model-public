@@ -504,7 +504,7 @@ class MBISTController:
             return
 
         # Decode address for channel model
-        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
         decoder = HBM4AddressDecoder(spec=self.spec)
 
         decoded = decoder.decode(address)
@@ -531,7 +531,7 @@ class MBISTController:
         if not self.channel_model:
             return 0
 
-        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
         decoder = HBM4AddressDecoder(spec=self.spec)
 
         decoded = decoder.decode(address)
@@ -604,7 +604,7 @@ class MBISTController:
         fault_type = self._classify_fault(expected, actual)
 
         # Decode address
-        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
         if self.spec:
             decoder = HBM4AddressDecoder(spec=self.spec)
             decoded = decoder.decode(address)

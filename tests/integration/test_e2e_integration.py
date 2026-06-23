@@ -16,15 +16,15 @@ from dataclasses import dataclass, field
 # Add project root to path
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
-from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
-from model.dram.hbm4_channel_model import (
+from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.HBM4_channel_model import (
     HBM4Channel, HBM4ChannelArray, HBM4Command, PseudoChannelState, BankGroup
 )
-from model.dram.hbm4_channel_model import HBM4Timing, get_timing_for_speed_grade
+from model.dram.HBM4_channel_model import HBM4Timing, get_timing_for_speed_grade
 from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
-from model.controller.hbm4_controller import HBM4Controller
-from model.controller.hbm4_address_decoder import HBM4AddressDecoder, DecodedAddress
-from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.HBM4_controller import HBM4Controller
+from model.controller.HBM4_address_decoder import HBM4AddressDecoder, DecodedAddress
+from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 
 
 # =============================================================================
@@ -111,7 +111,7 @@ class TestCommandSequence:
 
         # Verify bank returns to idle (may be in PRECHARGING state if tRP not complete)
         bank = channel.get_bank(pseudo_channel=0, bank=0)
-        from model.dram.hbm4_bank_state_machine import HBM4BankState
+        from model.dram.HBM4_bank_state_machine import HBM4BankState
         # Wait for precharge to complete
         while bank.bank.state == HBM4BankState.PRECHARGING:
             channel.tick()
@@ -148,7 +148,7 @@ class TestCommandSequence:
 
         # Verify bank returns to idle
         bank = channel.get_bank(pseudo_channel=0, bank=1)
-        from model.dram.hbm4_bank_state_machine import HBM4BankState
+        from model.dram.HBM4_bank_state_machine import HBM4BankState
         # Wait for precharge to complete
         while bank.bank.state == HBM4BankState.PRECHARGING:
             channel.tick()

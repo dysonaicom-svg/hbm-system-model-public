@@ -35,6 +35,16 @@ from sim.visualization.report_generator import (
     generate_ascii_report,
     generate_json_report,
 )
+from sim.visualization.advanced_charts import (
+    AdvancedVisualizer,
+    PerformanceAnalyzer,
+    VisualizationData,
+    ASCIIRenderer,
+    ChartConfig,
+    ChartType,
+    create_visualizer,
+    analyze_and_visualize,
+)
 
 __all__ = [
     # Bandwidth charts
@@ -63,4 +73,13 @@ __all__ = [
     'generate_html_report',
     'generate_ascii_report',
     'generate_json_report',
+    # Advanced visualization
+    'AdvancedVisualizer',
+    'PerformanceAnalyzer',
+    'VisualizationData',
+    'ASCIIRenderer',
+    'ChartConfig',
+    'ChartType',
+    'create_visualizer',
+    'analyze_and_visualize',
 ]

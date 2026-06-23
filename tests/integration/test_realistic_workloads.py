@@ -20,9 +20,9 @@ from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass, field
 import math
 
-from model.controller.hbm4_controller import HBM4Controller
-from model.dram.hbm4_spec import HBM4Spec
-from model.dram.hbm4_channel_model import HBM4ChannelArray
+from model.controller.HBM4_controller import HBM4Controller
+from model.dram.HBM4_spec import HBM4Spec
+from model.dram.HBM4_channel_model import HBM4ChannelArray
 from model.controller.config import HBMConfig
 
 

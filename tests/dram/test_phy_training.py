@@ -67,6 +67,12 @@ class TestPHYTrainingStateMachine:
             TrainingPhase.TRAIN_GATE_DELAY,
             TrainingPhase.TRAIN_VREF_CA,
             TrainingPhase.TRAIN_VREF_DQ,
+            # PAM3 training phases (HBM4E)
+            TrainingPhase.TRAIN_PAM3_INIT,
+            TrainingPhase.TRAIN_PAM3_VREF,
+            TrainingPhase.TRAIN_PAM3_EYE,
+            TrainingPhase.TRAIN_PAM3_DFE,
+            TrainingPhase.TRAIN_PAM3_VERIFY,
         ]
 
         assert PHYTrainingStateMachine.TRAINING_SEQUENCE == expected_sequence
@@ -681,6 +687,211 @@ class TestPHYTrainingWithDFI:
 
         # DFI should have training signals
         assert init_sm.dfi.training_in_progress or init_sm.dfi.training_complete
+
+
+# PAM3 Training Tests
+class TestPAM3Training:
+    """Tests for PAM3 training functionality (HBM4E)"""
+
+    def test_pam3_enabled_by_config(self):
+        """Test PAM3 mode can be enabled via config"""
+        config = {'pam3_enabled': True}
+        sm = PHYTrainingStateMachine(channel_id=0, config=config)
+
+        assert sm.pam3_enabled is True
+        assert sm.pam3_config is not None
+        assert sm.params.pam3_enabled is True
+
+    def test_pam3_disabled_by_default(self):
+        """Test PAM3 mode is disabled by default"""
+        sm = PHYTrainingStateMachine(channel_id=0)
+
+        assert sm.pam3_enabled is False
+        assert sm.pam3_config is None
+
+    def test_pam3_signal_config(self):
+        """Test PAM3 signal configuration"""
+        from model.dram.phy_training import PAM3SignalConfig, PAM3Level
+
+        config = PAM3SignalConfig()
+        config.vref_high = 70
+        config.vref_low = 20
+
+        assert config.validate_vref_settings() is True
+
+        # Test level detection
+        assert config.get_pam3_level(0.8) == PAM3Level.HIGH
+        assert config.get_pam3_level(0.3) == PAM3Level.ZERO
+        assert config.get_pam3_level(-0.8) == PAM3Level.LOW
+
+    def test_pam3_vref_validation(self):
+        """Test PAM3 VREF validation"""
+        from model.dram.phy_training import PAM3SignalConfig, PAM3_VREF_DAC_RANGE
+
+        config = PAM3SignalConfig()
+        config.vref_high = PAM3_VREF_DAC_RANGE[1] + 1  # Out of range
+
+        assert config.validate_vref_settings() is False
+        assert len(config.errors) > 0
+
+    def test_pam3_level_order(self):
+        """Test PAM3 level ordering"""
+        from model.dram.phy_training import PAM3SignalConfig, PAM3Level
+
+        config = PAM3SignalConfig()
+        config.vref_high = 80
+        config.vref_low = 20
+
+        # Verify level ordering
+        assert config.vref_low < config.vref_high
+
+    def test_pam3_eye_center_calculation(self):
+        """Test PAM3 eye center calculation"""
+        from model.dram.phy_training import PAM3SignalConfig
+
+        config = PAM3SignalConfig()
+        config.vref_high = 80
+        config.vref_low = 20
+
+        upper_center, lower_center = config.calculate_eye_center()
+
+        # Upper eye center should be in upper half
+        assert upper_center > 0.5
+        # Lower eye center should be in lower half
+        assert lower_center < 0.5
+        # Upper should be above lower
+        assert upper_center > lower_center
+
+    def test_pam3_training_sequence_order(self):
+        """Test PAM3 training phases are in correct order"""
+        from model.dram.phy_training import PHYTrainingStateMachine, PAM3TrainingState
+
+        # Verify PAM3 sequence is defined
+        assert len(PHYTrainingStateMachine.PAM3_TRAINING_SEQUENCE) > 0
+
+        # Verify correct order
+        expected = [
+            PAM3TrainingState.PAM3_INIT,
+            PAM3TrainingState.PAM3_VREF_CAL,
+            PAM3TrainingState.PAM3_EYE_TRAINING,
+            PAM3TrainingState.PAM3_DFE_TAPS,
+            PAM3TrainingState.PAM3_MARGIN_VERIFY,
+        ]
+        assert PHYTrainingStateMachine.PAM3_TRAINING_SEQUENCE == expected
+
+    def test_pam3_dfe_taps_initialization(self):
+        """Test PAM3 DFE taps are initialized correctly"""
+        from model.dram.phy_training import PAM3SignalConfig, PAM3_DFE_NUM_TAPS
+
+        config = PAM3SignalConfig()
+
+        assert len(config.dfe_taps) == PAM3_DFE_NUM_TAPS
+        assert all(t == 0.0 for t in config.dfe_taps)
+
+    def test_pam3_status_reporting(self):
+        """Test PAM3 status reporting"""
+        config = {'pam3_enabled': True}
+        sm = PHYTrainingStateMachine(channel_id=0, config=config)
+
+        status = sm.get_pam3_status()
+
+        assert status['enabled'] is True
+        assert 'pam3_state' in status
+        assert 'vref_settings' in status
+        assert 'margins' in status
+
+    def test_pam3_set_mode(self):
+        """Test setting PAM3 mode"""
+        sm = PHYTrainingStateMachine(channel_id=0)
+
+        assert sm.pam3_enabled is False
+
+        sm.set_pam3_mode(True)
+        assert sm.pam3_enabled is True
+        assert sm.pam3_config is not None
+
+        sm.set_pam3_mode(False)
+        assert sm.pam3_enabled is False
+
+    def test_pam3_loopback_status(self):
+        """Test PAM3 is included in loopback status"""
+        config = {'pam3_enabled': True}
+        sm = PHYTrainingStateMachine(channel_id=0, config=config)
+
+        status = sm.get_loopback_ready_status()
+
+        assert 'pam3_coefficients' in status
+        assert 'upper_vref' in status['pam3_coefficients']
+        assert 'lower_vref' in status['pam3_coefficients']
+        assert 'dfe_taps' in status['pam3_coefficients']
+
+    def test_pam3_training_results(self):
+        """Test PAM3 is included in training results"""
+        config = {'pam3_enabled': True}
+        sm = PHYTrainingStateMachine(channel_id=0, config=config)
+
+        results = sm.get_training_results()
+
+        assert 'pam3' in results
+        assert results['pam3']['enabled'] is True
+
+
+class TestDFI5Features:
+    """Tests for DFI 5.0 specific features"""
+
+    def test_dfi_freq_change_protocol(self):
+        """Test DFI 5.0 frequency change protocol"""
+        ctrl = DFI5TrainingControl()
+
+        ctrl.start_freq_change(target_ratio=2)
+
+        assert ctrl.freq_change_req is True
+        assert ctrl.freq_ratio == 2
+
+    def test_dfi_low_power_state(self):
+        """Test DFI 5.0 low power state transitions"""
+        from model.dram.phy_training import DFI5LowPowerState
+
+        ctrl = DFI5TrainingControl()
+
+        ctrl.enter_low_power(DFI5LowPowerState.LP_CTRL)
+
+        assert ctrl.lp_req is True
+        assert ctrl.lp_state == DFI5LowPowerState.LP_CTRL
+
+        ctrl.exit_low_power()
+        assert ctrl.lp_state == DFI5LowPowerState.LP_IDLE
+
+    def test_dfi_pim_mode(self):
+        """Test DFI 5.0 PHY Independent Mode"""
+        ctrl = DFI5TrainingControl()
+
+        ctrl.enable_pim_mode(pim_mode=1)
+
+        assert ctrl.pim_enable is True
+        assert ctrl.pim_mode == 1
+        assert ctrl.pim_training_req is True
+
+    def test_dfi_pam3_training_encoding(self):
+        """Test DFI 5.0 PAM3 training command encoding"""
+        from model.dram.phy_training import PAM3TrainingState
+
+        ctrl = DFI5TrainingControl()
+
+        req, subtype = ctrl.encode_pam3_training_cmd(PAM3TrainingState.PAM3_VREF_CAL)
+
+        assert req is True
+        assert subtype == 1
+
+    def test_dfi_ctrl_update_handshake(self):
+        """Test DFI 5.0 control update handshake"""
+        ctrl = DFI5TrainingControl()
+
+        ctrl.ctrlupd_req = True
+        assert ctrl.ctrlupd_req is True
+
+        ctrl.ctrlupd_ack = True
+        assert ctrl.ctrlupd_ack is True
 
 
 if __name__ == '__main__':

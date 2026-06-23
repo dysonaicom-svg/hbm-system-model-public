@@ -26,7 +26,7 @@ import time
 
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.scheduler import BankState
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 class CommandType(Enum):

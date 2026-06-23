@@ -19,9 +19,9 @@ from dataclasses import dataclass
 # Add project root to path
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
-from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
-from model.dram.hbm4_channel_model import HBM4ChannelArray
-from model.controller.hbm4_controller import HBM4Controller
+from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.HBM4_channel_model import HBM4ChannelArray
+from model.controller.HBM4_controller import HBM4Controller
 from model.controller.config import HBMConfig, HBM3_DEFAULT
 
 from sim.simulator import (
@@ -388,7 +388,7 @@ class TestHBM4Integration:
         )
 
         # Verify controller is HBM4Controller
-        from model.controller.hbm4_controller import HBM4Controller
+        from model.controller.HBM4_controller import HBM4Controller
         assert isinstance(sim.controller, HBM4Controller)
 
 
@@ -664,7 +664,7 @@ class TestTimingVerification:
 
     def test_timing_parameters_alignment(self):
         """Test timing parameters are aligned"""
-        from model.dram.hbm4_spec import HBM4Spec
+        from model.dram.HBM4_spec import HBM4Spec
 
         spec = HBM4Spec()
 
@@ -678,7 +678,7 @@ class TestTimingVerification:
 
     def test_clock_period_calculation(self):
         """Test clock period calculation"""
-        from model.dram.hbm4_spec import HBM4Spec
+        from model.dram.HBM4_spec import HBM4Spec
 
         spec = HBM4Spec()
 

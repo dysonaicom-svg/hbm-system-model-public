@@ -56,7 +56,7 @@ from sim.interconnect.gem5_types import (
 )
 
 # HBM4 types
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 logger = logging.getLogger(__name__)
 
@@ -1289,7 +1289,7 @@ class Gem5Bridge:
         Returns:
             待处理请求数
         """
-        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
 
         decoder = HBM4AddressDecoder(spec=self.spec)
         count = 0
@@ -1303,7 +1303,7 @@ class Gem5Bridge:
 
     def get_channel_stats(self) -> Dict[int, Dict[str, int]]:
         """获取通道统计"""
-        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
 
         decoder = HBM4AddressDecoder(spec=self.spec)
         stats = {

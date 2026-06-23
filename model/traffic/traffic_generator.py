@@ -21,7 +21,7 @@ from collections import deque
 import numpy as np
 
 from model.controller.request import HBMRequest, RequestState
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 from model.traffic.address_pattern import (
     AddressPattern,
     AddressPatternConfig,

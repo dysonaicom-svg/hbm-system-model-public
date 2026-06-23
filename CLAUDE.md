@@ -4,6 +4,10 @@
 
 HBM (High Bandwidth Memory) 系统仿真平台，支持芯片设计探索和验证对齐。
 
+**Current Branch**: `feat/hbm4-logic-base-die-phase2`
+**Main Branch**: `master`
+**Development Phase**: Phase 2 - Logic Base Die 增强
+
 ## Architecture
 
 ```
@@ -35,14 +39,14 @@ Statistics Collector
 
 | Component | Files | Status |
 |-----------|-------|--------|
-| Controller | `controller.py`, `hbm4_controller.py` | ✅ Complete |
-| Address Decoder | `address_decoder.py`, `hbm4_address_decoder.py` | ✅ Complete |
-| QoS Scheduler | `qos_scheduler.py`, `hbm4_qos_scheduler.py` | ✅ Complete |
-| Refresh Scheduler | `refresh_scheduler.py`, `hbm4_refresh_scheduler.py` | ✅ Complete |
+| Controller | `controller.py`, `HBM4_controller.py` | ✅ Complete |
+| Address Decoder | `address_decoder.py`, `HBM4_address_decoder.py` | ✅ Complete |
+| QoS Scheduler | `qos_scheduler.py`, `HBM4_qos_scheduler.py` | ✅ Complete |
+| Refresh Scheduler | `refresh_scheduler.py`, `HBM4_refresh_scheduler.py` | ✅ Complete |
 | Request Queue | `queue.py`, `request.py` | ✅ Complete |
-| DRAM Timing | `timing.py`, `hbm4_spec.py` | ✅ Complete |
-| Channel Model | `channel_model.py`, `hbm4_channel_model.py` | ✅ Complete |
-| Bank State Machine | `bank_state_machine.py` | ✅ Complete |
+| DRAM Timing | `timing.py`, `HBM4_spec.py` | ✅ Complete |
+| Channel Model | `channel_model.py`, `HBM4_channel_model.py` | ✅ Complete |
+| Bank State Machine | `bank_state_machine.py`, `HBM4_bank_state_machine.py` | ✅ Complete |
 | PHY Training | `phy_training.py` | ✅ Complete |
 | MBIST Controller | `mbist_controller.py` | ✅ Complete |
 | Power Estimator | `power_estimator.py` | ✅ Complete |
@@ -51,6 +55,8 @@ Statistics Collector
 | DFI Interface | `dfi_interface.py` | ✅ Complete |
 | Logic Base Die | `logic_base_die.py` | ✅ Complete |
 | Thermal Model | `thermal_model.py` | ✅ Complete |
+| Compliance | `HBM4_compliance.py` | ✅ Complete |
+| Validation | `HBM4_validation.py` | ✅ Complete |
 
 ### RTL Components
 
@@ -70,6 +76,17 @@ Statistics Collector
 | Test Package | ✅ Complete |
 | Testbench | ✅ Complete |
 | Reference Models | ✅ Complete |
+
+### Simulation Tools
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| Trace Replayer | `trace_replayer.py` | ✅ Complete |
+| RTL Interface | `rtl_interface.py` | ✅ Complete |
+| Unified Simulator | `hbm4_unified_simulator.py` | ✅ Complete |
+| Result Comparison | `result_comparison.py` | ✅ Complete |
+| Advanced Visualization | `visualization/advanced_charts.py` | ✅ Complete |
+| Benchmark Suite | `benchmark_suite.py` | ✅ Complete |
 
 ## Key Documents
 
@@ -92,8 +109,17 @@ python -m sim.simulator --mode functional
 # Run unified simulation (Python + RTL)
 python -m sim.unified_simulator
 
+# Run HBM4 unified simulator
+python -m sim.hbm4_unified_simulator --mode full --channels 32
+
 # Run benchmark
 python -m sim.benchmark
+
+# Trace replay (requires Ramulator2 traces)
+python -m sim.trace_replayer --trace traces/ld_st.trace --format ramulator_ld_st
+
+# Result comparison (Python vs RTL)
+python -m sim.result_comparison --python results.json --rtl rtl_results.json
 
 # Run tests by category
 pytest tests/controller/ -v
@@ -111,18 +137,23 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| Controller Tests | 356 | ✅ Passing |
-| DRAM Tests | 995 | ✅ Passing |
-| HBM4 Tests | 646 | ✅ Passing |
-| Integration Tests | 823 | ✅ Passing |
-| PHY Tests | 174 | ✅ Passing |
-| Coverage Tests | 358 | ✅ Passing |
-| Verification Tests | 200 | ✅ Passing |
-| Benchmark Tests | 147 | ✅ Passing |
-| Other Tests | 634 | ✅ Passing |
-| **Total** | **4,333** | **✅ All Passing** |
+| Controller Tests | 360+ | ✅ Passing |
+| DRAM Tests | 1009+ | ✅ Passing |
+| HBM4 Tests | 650+ | ✅ Passing |
+| Integration Tests | 827+ | ✅ Passing |
+| Simulation Tests | 64+ | ✅ Passing |
+| Verification Tests | 62+ | ✅ Passing |
+| Benchmark Tests | 184+ | ✅ Passing |
+| Traffic Tests | 117+ | ✅ Passing |
+| Interconnect Tests | 129+ | ✅ Passing |
+| PHY Tests | 178+ | ✅ Passing |
+| Coverage Tests | 362+ | ✅ Passing |
+| Performance Tests | 61+ | ✅ Passing |
+| RTL Verification | 146+ | ✅ Passing |
+| Sim Tests | 190+ | ✅ Passing |
+| **Total** | **4,409+** | ✅ **All Passing** |
 
-**Test Files**: 120 test files with comprehensive coverage
+**Test Files**: 120+ test files with comprehensive coverage
 
 ## HBM4 Support
 
@@ -136,6 +167,9 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 - MBIST support
 - Logic Base Die integration
 - Thermal management
+- PAM3 encoding for signal integrity
+- Per-channel independent timing (JEDEC requirement)
+- DFI 5.0/5.1 interface support
 
 ## HBM4 Specifications
 
@@ -144,7 +178,7 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 | Data Rate | 8-16 GT/s |
 | Interface Width | 2048-bit |
 | Channels | 32 |
-| Peak Bandwidth | 2.048 TB/s |
+| Peak Bandwidth | 4.096 TB/s |
 | Stacks | 1-8 configurable |
 
 ## Development Model
@@ -162,7 +196,7 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 | Random | 19,132 | 29.89 cycles | ~82 GB/s | 0% |
 | Hotspot | 19,147 | 29.25 cycles | ~82 GB/s | 0% |
 
-*Peak Bandwidth: 2.048 TB/s (HBM4 @ 8 GT/s) | Achieved: ~164 GB/s (single channel)*
+*Peak Bandwidth: 4.096 TB/s (HBM4 @ 16 GT/s) | Achieved: ~164 GB/s (single channel)*
 
 ## CI/CD Status
 
@@ -213,16 +247,22 @@ verilator --cc --trace \
 ## Project Structure
 
 ```
-JXTF/HBM/
+JXTF/HBM4/
 ├── model/           # Python 模型
 │   ├── controller/  # HBM 控制器
-│   ├── dram/         # DRAM 模型
-│   ├── phy/          # PHY 模型
+│   ├── dram/        # DRAM 模型
+│   ├── phy/         # PHY 模型
 │   ├── interconnect/  # AXI/NoC 互联
-│   └── benchmark/     # 基准测试
+│   └── benchmark/    # 基准测试
 ├── sim/              # 仿真器
-│   ├── simulator.py   # HBMSimulator
-│   └── unified_simulator.py  # 统一仿真器
+│   ├── simulator.py              # HBMSimulator
+│   ├── hbm4_unified_simulator.py # HBM4 统一仿真器
+│   ├── trace_replayer.py         # Trace 回放
+│   ├── rtl_interface.py         # RTL 协同仿真
+│   ├── result_comparison.py      # 结果对比
+│   ├── visualization/            # 可视化
+│   │   └── advanced_charts.py
+│   └── benchmark_suite.py       # 基准测试套件
 ├── rtl/              # RTL 实现
 │   ├── hbm_controller.sv
 │   ├── dram_model.sv
@@ -230,7 +270,7 @@ JXTF/HBM/
 ├── verification/     # 验证环境
 │   ├── uvm/          # UVM 测试
 │   └── reference_model/
-├── tests/            # 测试套件 (4,333 测试, 120 文件)
+├── tests/            # 测试套件 (4,409+ 测试, 120+ 文件)
 ├── public_release/   # 发布包 (Git Submodule)
 └── research/        # 研究资料
     └── ramulator2/    # 参考模拟器
@@ -240,8 +280,45 @@ JXTF/HBM/
 
 | File | Description |
 |------|-------------|
-| `model/controller/hbm4_controller.py` | HBM4 Controller Core |
-| `model/dram/hbm4_channel_model.py` | HBM4 Channel Model |
-| `model/phy/phy_training.py` | PHY Training Sequences |
+| `model/controller/HBM4_controller.py` | HBM4 Controller Core |
+| `model/dram/HBM4_channel_model.py` | HBM4 Channel Model |
+| `model/dram/logic_base_die.py` | Logic Base Die (Unified Control Die) |
+| `model/dram/HBM4_bank_state_machine.py` | HBM4 Bank State Machine |
+| `model/dram/phy_training.py` | PHY Training Sequences |
+| `model/dram/dfi_interface.py` | DFI 5.0/5.1 Interface |
 | `sim/simulator.py` | Transaction-level Simulator |
+| `sim/hbm4_unified_simulator.py` | HBM4 Unified Simulator (32-channel) |
+| `sim/trace_replayer.py` | Trace Replayer for Ramulator2 |
+| `sim/rtl_interface.py` | RTL Co-simulation Interface |
+| `sim/result_comparison.py` | Python vs RTL Result Comparison |
 | `rtl/hbm_controller.sv` | RTL Controller Implementation |
+
+## Ramulator2 Integration
+
+The project includes [Ramulator2](https://github.com/CMU-SAFARI/ramulator2) as a git submodule for reference simulation and trace generation.
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/dysonaicom-svg/hbm-system-model-public.git
+
+# Update submodule
+git submodule update --init research/ramulator2
+```
+
+### Trace Replay Workflow
+
+1. Generate traces with Ramulator2:
+   ```bash
+   cd research/ramulator2
+   ./ramulator configs/HBM4.cfg --mode=trace ... > trace.ldst
+   ```
+
+2. Replay traces with Python model:
+   ```bash
+   python -m sim.trace_replayer --trace trace.ldst --format ramulator_ld_st
+   ```
+
+3. Compare results:
+   ```bash
+   python -m sim.result_comparison --python model.json --rtl rtl.json
+   ```

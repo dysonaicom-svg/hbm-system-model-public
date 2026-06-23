@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from dataclasses import asdict
 
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 from model.dram.bank_state_machine import BankStateEnum
 from model.dram.timing import HBM3Timing
 from model.controller.request import HBMRequest

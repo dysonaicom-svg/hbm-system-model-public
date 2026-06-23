@@ -12,7 +12,7 @@ This example demonstrates advanced HBM4 DRAM features:
 Run: python examples/dram_features.py
 """
 
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 from model.dram.ecc_crc import HBM4ECC, HBM4CRC, ErrorType
 from model.dram.lane_repair import HBM4LaneRepairModel, RepairStatus
 from model.dram.phy_training import PHYInitializationStateMachine, PHYInitState

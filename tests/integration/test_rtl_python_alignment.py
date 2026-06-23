@@ -15,10 +15,10 @@ from typing import Dict, List, Tuple
 # Add project root to path
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
-from model.dram.hbm4_spec import HBM4Spec, HBM4_DEFAULT_TIMING
-from model.dram.hbm4_channel_model import HBM4Command
-from model.controller.hbm4_address_decoder import HBM4AddressDecoder
-from model.controller.hbm4_controller import HBM4Controller
+from model.dram.HBM4_spec import HBM4Spec, HBM4_DEFAULT_TIMING
+from model.dram.HBM4_channel_model import HBM4Command
+from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.controller.HBM4_controller import HBM4Controller
 
 
 class TestRTLParameterAlignment:

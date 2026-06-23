@@ -786,26 +786,33 @@ class ChannelSelector:
         # HBM4 with stacks: Stack at [47:46], Channel at [45:41]
         channel_bits_needed = (self.num_channels - 1).bit_length()
 
-        if self.num_channels > 8 and channel_bits_needed <= 5:
-            # HBM4-style addressing: Stack[47:46] + Channel[45:41]
-            # Extract stack from bits [47:46]
-            stack_bits = (addr >> 46) & 0x3  # 2 bits for stack
+        if self.num_channels > 8:
+            # HBM4-style addressing (32+ channels)
+            # Channel at bits [45:41] for 32 channels (matching AddressDecoder RCBC)
+            # For 64 channels: extends to bits [46:41]
+            channel_bits_needed = (self.num_channels - 1).bit_length()
 
-            # Extract channel from bits [45:41]
-            channel_in_stack = (addr >> 41) & 0x1F  # 5 bits for channel
+            HBM4_CHANNELS_PER_STACK = 32
+            num_stacks = self.num_channels // HBM4_CHANNELS_PER_STACK
 
-            # Combine: global_channel = stack * 32 + channel
-            # For 128 channels (4 stacks * 32 channels): global = stack * 32 + channel
-            channels_per_stack = 32
-            global_channel = (stack_bits * channels_per_stack) + channel_in_stack
+            if num_stacks > 1:
+                # Multi-stack: stack bits at [47:46]
+                stack_bits = (addr >> 46) & 0x3  # 2 bits for stack
+                # Channel from bits [45:41] for 32 channels per stack
+                channel_in_stack = (addr >> 41) & (HBM4_CHANNELS_PER_STACK - 1)
+                # Combine into global channel ID
+                global_channel = (stack_bits * HBM4_CHANNELS_PER_STACK) + channel_in_stack
+                return global_channel % self.num_channels
 
-            return global_channel % self.num_channels
+            # Single-stack: channel at bits [45:41] for 32 channels
+            # channel_start_bit = 41 (lsb of channel field in RCBC)
+            channel_start_bit = 41
+            channel_bits = (addr >> channel_start_bit) & (self.num_channels - 1)
+            return int(channel_bits)
         else:
-            # HBM3-style addressing: Channel at bits [45:43]
-            # Formula: channel_start_bit = 46 - channel_bits_needed
-            channel_start_bit = 46 - channel_bits_needed
-
-            # Extract channel bits
+            # HBM3-style addressing (8 channels or less)
+            # Channel at bits [45:43] for 8 channels
+            channel_start_bit = 46 - (self.num_channels - 1).bit_length()
             channel_bits = (addr >> channel_start_bit) & (self.num_channels - 1)
             return int(channel_bits)
 

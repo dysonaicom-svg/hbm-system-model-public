@@ -13,14 +13,14 @@ import pytest
 import time
 from typing import Dict, List, Tuple
 
-from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG, HBM4_SPEED_GRADES
+from model.dram.HBM4_spec import HBM4Spec, HBM4_CONFIG, HBM4_SPEED_GRADES
 from model.controller.config import HBMConfig, HBM3_DEFAULT
-from model.controller.hbm4_controller import HBM4Controller
-from model.controller.hbm4_address_decoder import HBM4AddressDecoder
-from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler
-from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler
+from model.controller.HBM4_controller import HBM4Controller
+from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler
+from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler
 from model.controller.request import HBMRequest
-from model.dram.hbm4_channel_model import HBM4Channel
+from model.dram.HBM4_channel_model import HBM4Channel
 from model.interconnect.interconnect import (
     CrossbarInterconnect,
     MeshInterconnect,

@@ -19,14 +19,14 @@ import pytest
 import time
 from typing import List, Optional, Dict, Any
 
-from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG
+from model.dram.HBM4_spec import HBM4Spec, HBM4_CONFIG
 from model.dram.dfi_interface import (
     DFI5Interface, DFICommand, DFILowPowerState,
     DFIRequest, DFIResponse as DFIPhyResponse
 )
-from model.controller.hbm4_controller import HBM4Controller, ChannelState
-from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.hbm4_refresh_scheduler import (
+from model.controller.HBM4_controller import HBM4Controller, ChannelState
+from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.HBM4_refresh_scheduler import (
     HBM4RefreshScheduler, RefreshMode, RefreshPriority
 )
 from model.controller.dfi_encoder import (

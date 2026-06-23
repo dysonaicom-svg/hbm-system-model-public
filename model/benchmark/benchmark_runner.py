@@ -19,7 +19,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import json
 
-from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES, calculate_bandwidth
+from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES, calculate_bandwidth
 from .benchmark_config import BenchmarkConfig
 from .bandwidth_benchmark import BandwidthBenchmark, BandwidthResult
 from .latency_benchmark import LatencyBenchmark, LatencyResult

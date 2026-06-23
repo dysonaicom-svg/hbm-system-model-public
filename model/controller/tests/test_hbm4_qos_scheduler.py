@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 from typing import List
 
-from model.controller.hbm4_qos_scheduler import (
+from model.controller.HBM4_qos_scheduler import (
     HBM4QoSScheduler, QoSLevel, QoSClass, QoSWeight, QoSMonitor,
     TrafficType, TRAFFIC_TYPE_TO_QOS, QueuedRequest, BankConflictTracker
 )

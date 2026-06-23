@@ -12,7 +12,7 @@ from model.controller.config import HBMConfig, HBM3_DEFAULT
 from model.controller.controller import HBMController
 from model.controller.request import HBMRequest, RequestState
 from model.dram.dram_model import DRAMModel, create_dram_model
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 from sim.simulator import HBMSimulator, SimulationConfig, TrafficPattern
 
 
@@ -321,7 +321,7 @@ class TestHBM4Integration:
 
     def test_hbm4_spec_integration(self):
         """测试 HBM4 规格集成"""
-        from model.hbm4.power.power_estimator import HBM4PowerEstimator
+        from model.HBM4.power.power_estimator import HBM4PowerEstimator
 
         # 创建 HBM4 组件
         spec = HBM4Spec()
@@ -338,8 +338,8 @@ class TestHBM4Integration:
 
     def test_hbm4_controller_integration(self):
         """测试 HBM4 Controller 集成"""
-        from model.controller.hbm4_controller import HBM4Controller
-        from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
+        from model.controller.HBM4_controller import HBM4Controller
+        from model.dram.HBM4_spec import create_hbm4_spec_from_speed_grade
 
         # 创建 HBM4 配置 - 使用 HBM4Spec
         spec = create_hbm4_spec_from_speed_grade("8Gbps")

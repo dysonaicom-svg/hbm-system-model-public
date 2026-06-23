@@ -63,7 +63,7 @@ RTL_HBM3_TIMING = {
 # =============================================================================
 
 from model.dram.timing import HBM3Timing, HBM4Timing
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 # =============================================================================

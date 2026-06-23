@@ -20,9 +20,9 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
-from model.controller.hbm4_controller import HBM4Controller
-from model.dram.hbm4_spec import HBM4Spec
+from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.HBM4_controller import HBM4Controller
+from model.dram.HBM4_spec import HBM4Spec
 
 
 def print_section(title):

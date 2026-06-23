@@ -1,5 +1,7 @@
 # HBM System Modeling Platform
 
+> **Version**: 2.2 | **Status**: Phase 2 Development | **Branch**: `feat/hbm4-logic-base-die-phase2`
+
 High Bandwidth Memory (HBM) system simulation platform for chip design exploration and verification alignment.
 
 ## Features
@@ -7,10 +9,12 @@ High Bandwidth Memory (HBM) system simulation platform for chip design explorati
 - **HBM3 and HBM4 Support** - Full controller, DRAM model, DFI interface, and PHY-level simulation
 - **32-Channel Architecture** - 2x HBM3 channel count for increased bandwidth
 - **Speed Grades** - 8 Gbps, 12 Gbps, 16 Gbps data rates
-- **2 TB/s Peak Bandwidth** - Aggregate bandwidth at 16 Gbps
+- **4.096 TB/s Peak Bandwidth** - Aggregate bandwidth at 16 Gbps
 - **Multi-Channel Load Balancing** - Adaptive channel selection and fair bandwidth distribution
 - **Signal Integrity Analysis** - TX pre-emphasis, RX CTLE, DFE, IBIS models, eye diagram analysis
 - **DFI 5.0 Interface** - Complete controller-PHY interface specification
+- **Logic Base Die Integration** - Unified control die model with per-channel independence
+- **PAM3 Encoding** - Enhanced 3-level pulse amplitude modulation for HBM4
 
 ## Quick Start
 
@@ -27,7 +31,7 @@ pip install -e .
 ### Basic Usage
 
 ```python
-from model.controller.hbm4_controller import HBM4Controller
+from model.controller.HBM4_controller import HBM4Controller
 
 # Create controller
 controller = HBM4Controller()
@@ -177,18 +181,19 @@ print(f"Efficiency: {stats.efficiency:.2%}")
 
 | Component | File | Description |
 |-----------|------|-------------|
-| HBM4 Controller | `model/controller/hbm4_controller.py` | Main controller with QoS/FR-FCFS |
-| Address Decoder | `model/controller/hbm4_address_decoder.py` | RBC/BCR/CRB address mapping |
-| QoS Scheduler | `model/controller/hbm4_qos_scheduler.py` | 16-level priority scheduling |
-| Refresh Scheduler | `model/controller/hbm4_refresh_scheduler.py` | All-bank/per-bank refresh |
+| HBM4 Controller | `model/controller/HBM4_controller.py` | Main controller with QoS/FR-FCFS |
+| Address Decoder | `model/controller/HBM4_address_decoder.py` | RBC/BCR/CRB address mapping |
+| QoS Scheduler | `model/controller/HBM4_qos_scheduler.py` | 16-level priority scheduling |
+| Refresh Scheduler | `model/controller/HBM4_refresh_scheduler.py` | All-bank/per-bank refresh |
 | DFI Interface | `model/dram/dfi_interface.py` | DFI 5.0/5.1 protocol |
-| Channel Model | `model/dram/hbm4_channel_model.py` | Per-channel timing model |
-| Bank State Machine | `model/dram/bank_state_machine.py` | Per-bank state tracking |
+| Channel Model | `model/dram/HBM4_channel_model.py` | Per-channel timing model |
+| Bank State Machine | `model/dram/HBM4_bank_state_machine.py` | Per-bank state tracking |
 | Lane Repair | `model/dram/lane_repair.py` | Redundant lane mapping |
 | ECC/CRC | `model/dram/ecc_crc.py` | Error detection/correction |
 | PHY Training | `model/dram/phy_training.py` | Calibration sequences |
 | Signal Integrity | `model/phy/signal_integrity.py` | TX/RX equalization |
 | Eye Analyzer | `model/phy/eye_analyzer.py` | Eye diagram metrics |
+| Logic Base Die | `model/dram/logic_base_die.py` | Unified control die model |
 | Interconnect | `sim/interconnect/` | AXI crossbar and NoC mesh |
 | Trace Parser | `sim/trace/` | External trace replay |
 
@@ -302,13 +307,15 @@ python3 examples/qos_scheduling.py
 
 | Metric | Value |
 |--------|-------|
-| Test Coverage | 3,761 tests |
+| Test Coverage | 4,409+ tests |
 | Test Pass Rate | 100% |
 | Python Files | 150+ |
 | RTL Components | 7 |
-| HBM4 Phases | 6 (A-F) |
+| HBM4 Phases | Phase 2 (Logic Base Die) |
 | Documentation | 90%+ |
 
-**Latest Commit**: `f537ef2` - RTL address width fix and verification completion
+**Latest Commit**: `ab9d1f0` - fix: add missing List import and enhance address decoder
+
+**Current Branch**: `feat/hbm4-logic-base-die-phase2`
 
 **License**: Apache-2.0

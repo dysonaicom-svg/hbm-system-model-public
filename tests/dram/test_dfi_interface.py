@@ -23,7 +23,7 @@ from model.dram.dfi_interface import (
     DFIRequestQueueConfig, DFI5RequestQueue, DFI5FreqChangeState,
     DFIStateTransitionError, DFIErrorRecord, DFISignals
 )
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 class TestDFICompliance:
@@ -823,23 +823,27 @@ class TestDFIResponse:
 
 
 class TestDFICommandsEnum:
-    """Test DFI command enum values"""
+    """Test DFI command enum values
+
+    These tests verify the DFI 5.0 command encoding matches the specification.
+    Reference: DFI 5.0 Specification Table 4-1
+    """
 
     def test_act_command_value(self):
         """ACT command must have correct enum value"""
-        assert DFICommand.ACT.value == 0b0000
+        assert DFICommand.ACT.value == 0b0001
 
     def test_pre_command_value(self):
         """PRE command must have correct enum value"""
-        assert DFICommand.PRE.value == 0b0001
+        assert DFICommand.PRE.value == 0b0010
 
     def test_rd_command_value(self):
         """RD command must have correct enum value"""
-        assert DFICommand.RD.value == 0b0011
+        assert DFICommand.RD.value == 0b0100
 
     def test_wr_command_value(self):
         """WR command must have correct enum value"""
-        assert DFICommand.WR.value == 0b0100
+        assert DFICommand.WR.value == 0b0101
 
     def test_all_commands_defined(self):
         """All expected commands must be defined"""
@@ -1187,3 +1191,283 @@ class TestDFISignals:
         assert signals.freq_change_en is True
         assert signals.pwr_up_done is True
         assert signals.lp_state == DFILowPowerState.LP_CTRL
+
+
+class TestHBM4PAM3Signals:
+    """Test HBM4 PAM3 signal support"""
+
+    def test_pam3_enable_initial_state(self):
+        """PAM3 enable must be False initially"""
+        dfi = DFI5Interface()
+        assert dfi.pam3_enable is False
+
+    def test_pam3_mode_initial_state(self):
+        """PAM3 mode must be 0 (NRZ) initially"""
+        dfi = DFI5Interface()
+        assert dfi.pam3_mode == 0
+
+    def test_set_pam3_enable(self):
+        """set_pam3_enable() must enable PAM3"""
+        dfi = DFI5Interface()
+        dfi.set_pam3_enable(True)
+        assert dfi.pam3_enable is True
+
+    def test_set_pam3_mode(self):
+        """set_pam3_mode() must set PAM3 mode"""
+        dfi = DFI5Interface()
+        dfi.set_pam3_mode(1)  # PAM3 mode
+        assert dfi.pam3_mode == 1
+
+    def test_is_pam3_active(self):
+        """is_pam3_active() must check enable and settled state"""
+        dfi = DFI5Interface()
+        # Not active initially
+        assert dfi.is_pam3_active() is False
+
+        # Enable PAM3
+        dfi.set_pam3_enable(True)
+        dfi.set_pam3_mode(1)
+        # Not active until settled
+        assert dfi.is_pam3_active() is False
+
+        # Wait for settling
+        for _ in range(dfi.timing.tPAM3_SWITCH + 1):
+            dfi.tick()
+        assert dfi.is_pam3_active() is True
+
+    def test_pam3_switch_progress(self):
+        """get_pam3_switch_progress() must return switch info"""
+        dfi = DFI5Interface()
+        dfi.set_pam3_enable(True)
+
+        progress = dfi.get_pam3_switch_progress()
+        assert 'switch_pending' in progress
+        assert 'switch_counter' in progress
+        assert 'switch_latency' in progress
+        assert 'remaining_cycles' in progress
+
+
+class TestHBM4ExtendedDFISignals:
+    """Test HBM4 extended DFI 5.0 signals"""
+
+    def test_phyupd_resp_initial_state(self):
+        """phyupd_resp must be False initially"""
+        dfi = DFI5Interface()
+        assert dfi.phyupd_resp is False
+
+    def test_set_phyupd_resp(self):
+        """set_phyupd_resp() must set response"""
+        dfi = DFI5Interface()
+        dfi.set_phyupd_resp(True)
+        assert dfi.phyupd_resp is True
+
+    def test_self_refresh_n_initial_state(self):
+        """self_refresh_n must be True (active-high) initially"""
+        dfi = DFI5Interface()
+        assert dfi.self_refresh_n is True
+
+    def test_set_self_refresh_n(self):
+        """set_self_refresh_n() must set self-refresh state"""
+        dfi = DFI5Interface()
+        dfi.set_self_refresh_n(False)  # Active-low
+        assert dfi.self_refresh_n is False
+
+    def test_memdata_disable_initial_state(self):
+        """memdata_disable must be False initially"""
+        dfi = DFI5Interface()
+        assert dfi.memdata_disable is False
+
+    def test_set_memdata_disable(self):
+        """set_memdata_disable() must disable data path"""
+        dfi = DFI5Interface()
+        dfi.set_memdata_disable(True)
+        assert dfi.memdata_disable is True
+
+    def test_parity_signals(self):
+        """Parity signals must be accessible"""
+        dfi = DFI5Interface()
+
+        # parity_in
+        dfi.set_parity_in(True)
+        assert dfi.parity_in is True
+
+        # parity_out
+        dfi.set_parity_out(False)
+        assert dfi.parity_out is False
+
+        # parity_error
+        dfi.set_parity_error(True)
+        assert dfi.parity_error is True
+
+
+class TestHBM432ChannelSupport:
+    """Test HBM4 32-channel independent operation support"""
+
+    def test_channel_count_initial(self):
+        """Channel count must be 32 for HBM4"""
+        dfi = DFI5Interface()
+        assert dfi.get_channel_count() == 32
+
+    def test_set_channel_count(self):
+        """set_channel_count() must update channel count"""
+        dfi = DFI5Interface()
+        dfi.set_channel_count(16)
+        assert dfi.get_channel_count() == 16
+
+    def test_channel_active_status(self):
+        """Channel active status must be tracked"""
+        dfi = DFI5Interface()
+
+        # All channels initially active
+        assert dfi.get_active_channel_count() == 32
+
+        # Deactivate channels
+        dfi.set_channel_active(0, False)
+        dfi.set_channel_active(1, False)
+        assert dfi.get_active_channel_count() == 30
+        assert dfi.is_channel_active(0) is False
+        assert dfi.is_channel_active(1) is False
+        assert dfi.is_channel_active(2) is True
+
+    def test_channel_frequency(self):
+        """Channel-specific frequency must be tracked"""
+        dfi = DFI5Interface()
+
+        # Default frequency
+        assert dfi.get_channel_frequency(5) == 800
+
+        # Set custom frequency
+        dfi.set_channel_frequency(5, 1200)
+        assert dfi.get_channel_frequency(5) == 1200
+
+    def test_channel_lp_state(self):
+        """Channel-specific LP state must be tracked"""
+        dfi = DFI5Interface()
+
+        # Default LP state
+        assert dfi.get_channel_lp_state(5) == DFILowPowerState.LP_IDLE
+
+        # Set custom LP state
+        dfi.set_channel_lp_state(5, DFILowPowerState.LP_SELF_REFRESH)
+        assert dfi.get_channel_lp_state(5) == DFILowPowerState.LP_SELF_REFRESH
+
+    def test_channel_states_summary(self):
+        """get_channel_states() must return comprehensive info"""
+        dfi = DFI5Interface()
+
+        states = dfi.get_channel_states()
+        assert 'total_channels' in states
+        assert 'active_channels' in states
+        assert 'channel_active' in states
+        assert 'channel_frequencies' in states
+        assert 'channel_lp_states' in states
+
+    def test_enter_all_channels_lp(self):
+        """enter_all_channels_lp() must update all channels"""
+        dfi = DFI5Interface()
+
+        dfi.enter_all_channels_lp(DFILowPowerState.LP_SELF_REFRESH)
+
+        assert dfi.get_channel_lp_state(0) == DFILowPowerState.LP_SELF_REFRESH
+        assert dfi.get_channel_lp_state(31) == DFILowPowerState.LP_SELF_REFRESH
+        assert dfi.lp_state == DFILowPowerState.LP_SELF_REFRESH
+
+    def test_wakeup_all_channels(self):
+        """wakeup_all_channels() must restore all channels"""
+        dfi = DFI5Interface()
+
+        # Enter self-refresh
+        dfi.enter_all_channels_lp(DFILowPowerState.LP_SELF_REFRESH)
+
+        # Wake up
+        dfi.wakeup_all_channels()
+
+        assert dfi.get_channel_lp_state(0) == DFILowPowerState.LP_IDLE
+        assert dfi.get_channel_lp_state(31) == DFILowPowerState.LP_IDLE
+        assert dfi.lp_state == DFILowPowerState.LP_IDLE
+
+
+class TestHBM4TimingParameters:
+    """Test HBM4 extended timing parameters"""
+
+    def test_pam3_timing_parameters(self):
+        """PAM3 timing parameters must exist"""
+        timing = DFITimingParameters()
+        assert hasattr(timing, 'tPAM3_ENABLE')
+        assert hasattr(timing, 'tPAM3_SWITCH')
+        assert hasattr(timing, 'tPAM3_SETTLE')
+
+    def test_extended_dfi_timing(self):
+        """Extended DFI 5.0 timing parameters must exist"""
+        timing = DFITimingParameters()
+        assert hasattr(timing, 'tPHYUPD_RESP')
+        assert hasattr(timing, 'tPARITY_LATENCY')
+        assert hasattr(timing, 'tMEMDATA_DISABLE')
+
+    def test_channel_timing(self):
+        """Channel-specific timing parameters must exist"""
+        timing = DFITimingParameters()
+        assert hasattr(timing, 'tCHANNEL_GATE')
+        assert hasattr(timing, 'tCHANNEL_SYNC')
+
+    def test_timing_default_values(self):
+        """HBM4 timing parameters must have reasonable defaults"""
+        timing = DFITimingParameters()
+
+        assert timing.tPAM3_ENABLE == 4
+        assert timing.tPAM3_SWITCH == 8
+        assert timing.tPAM3_SETTLE == 2
+        assert timing.tPHYUPD_RESP == 6
+        assert timing.tPARITY_LATENCY == 2
+        assert timing.tMEMDATA_DISABLE == 2
+        assert timing.tCHANNEL_GATE == 1
+        assert timing.tCHANNEL_SYNC == 4
+
+
+class TestHBM4DFISignalsIntegration:
+    """Test HBM4 signals integration with get_dfi_signals()"""
+
+    def test_get_dfi_signals_includes_pam3(self):
+        """get_dfi_signals() must include PAM3 signals"""
+        dfi = DFI5Interface()
+        dfi.set_pam3_enable(True)
+        dfi.set_pam3_mode(1)
+
+        signals = dfi.get_dfi_signals()
+        assert hasattr(signals, 'pam3_enable')
+        assert hasattr(signals, 'pam3_mode')
+        assert signals.pam3_enable is True
+        assert signals.pam3_mode == 1
+
+    def test_get_dfi_signals_includes_extended_signals(self):
+        """get_dfi_signals() must include HBM4 extended signals"""
+        dfi = DFI5Interface()
+        dfi.set_phyupd_resp(True)
+        dfi.set_self_refresh_n(False)
+        dfi.set_memdata_disable(True)
+        dfi.set_parity_error(True)
+
+        signals = dfi.get_dfi_signals()
+        assert signals.phyupd_resp is True
+        assert signals.self_refresh_n is False
+        assert signals.memdata_disable is True
+        assert signals.parity_error is True
+
+    def test_reset_clears_hbm4_state(self):
+        """reset() must clear HBM4 state"""
+        dfi = DFI5Interface()
+
+        # Set HBM4 state
+        dfi.set_pam3_enable(True)
+        dfi.set_pam3_mode(1)
+        dfi.set_phyupd_resp(True)
+        dfi.set_channel_active(0, False)
+
+        # Reset
+        dfi.reset()
+
+        # Verify cleared
+        assert dfi.pam3_enable is False
+        assert dfi.pam3_mode == 0
+        assert dfi.phyupd_resp is False
+        assert dfi.is_channel_active(0) is True  # Reset to True

@@ -23,11 +23,11 @@ Modules:
 """
 
 # HBM4 Specification
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 # Channel Models
 from model.dram.channel_model import Channel, ChannelArray
-from model.dram.hbm4_channel_model import HBM4Channel
+from model.dram.HBM4_channel_model import HBM4Channel
 from model.dram.channel_timing import (
     IndependentChannelTiming,
     HBM4TimingManager,

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Iterator, Dict, Callable
 from enum import IntEnum
 
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 class AddressPattern(IntEnum):

@@ -32,7 +32,7 @@ import time
 from model.controller.config import HBMConfig, HBM4_DEFAULT
 from model.controller.request import HBMRequest, RequestState
 from model.controller.queue import ReadQueue, WriteQueue
-from model.dram.hbm4_spec import HBM4Spec
+from model.dram.HBM4_spec import HBM4Spec
 
 
 class QoSLevel(IntEnum):
