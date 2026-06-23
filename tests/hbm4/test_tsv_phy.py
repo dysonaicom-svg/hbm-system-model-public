@@ -13,7 +13,7 @@ Tests cover:
 
 import pytest
 import random
-from model.HBM4.phy.tsv_phy import (
+from model.hbm4.phy.tsv_phy import (
     HBM4TSVPHY,
     TSVGroupType,
     TrainingState,

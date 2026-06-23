@@ -17,10 +17,10 @@ from dataclasses import dataclass
 # Add project root to path
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
-from model.dram.HBM4_channel_model import HBM4Channel, HBM4Command
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.hbm4_channel_model import HBM4Channel, HBM4Command
 from model.dram.dfi_interface import DFI5Interface, DFICommand, DFILowPowerState
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 
 
 # =============================================================================
@@ -240,7 +240,7 @@ class TestRTLCommandEquivalence:
         # RTL timing from hbm_types.svh
         # HBM4 default: tRCD=8, tRP=8, tRAS=20, tRC=22, tCCD=4, tRRD=4, tFAW=16, tRFC=180, tREFI=3900
 
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
         spec = HBM4Spec()
 
         # Verify timing values match
@@ -278,8 +278,8 @@ class TestDPICInterface:
         # This test verifies the interface contract
 
         # For now, verify that our Python model supports the expected operations
-        from model.controller.HBM4_controller import HBM4Controller
-        from model.dram.HBM4_channel_model import HBM4Channel
+        from model.controller.hbm4_controller import HBM4Controller
+        from model.dram.hbm4_channel_model import HBM4Channel
 
         controller = HBM4Controller()
         assert hasattr(controller, 'submit_request')
@@ -396,7 +396,7 @@ class TestRTLControllerBehavior:
 
     def test_queue_depth_behavior(self):
         """Test queue depth behavior matches RTL"""
-        from model.controller.HBM4_controller import HBM4Controller
+        from model.controller.hbm4_controller import HBM4Controller
 
         controller = HBM4Controller()
 
@@ -414,7 +414,7 @@ class TestRTLControllerBehavior:
 
     def test_priority_queue_behavior(self):
         """Test priority queue behavior"""
-        from model.controller.HBM4_controller import HBM4Controller
+        from model.controller.hbm4_controller import HBM4Controller
 
         controller = HBM4Controller()
 
@@ -442,9 +442,9 @@ class TestUVMSequences:
 
     def test_single_read_sequence_model(self):
         """Model-based single read sequence test"""
-        from model.dram.HBM4_channel_model import HBM4Channel
-        from model.dram.HBM4_spec import HBM4Spec
-        from model.dram.HBM4_channel_model import HBM4Timing
+        from model.dram.hbm4_channel_model import HBM4Channel
+        from model.dram.hbm4_spec import HBM4Spec
+        from model.dram.hbm4_channel_model import HBM4Timing
 
         spec = HBM4Spec()
         timing = HBM4Timing()
@@ -469,9 +469,9 @@ class TestUVMSequences:
 
     def test_single_write_sequence_model(self):
         """Model-based single write sequence test"""
-        from model.dram.HBM4_channel_model import HBM4Channel
-        from model.dram.HBM4_spec import HBM4Spec
-        from model.dram.HBM4_channel_model import HBM4Timing
+        from model.dram.hbm4_channel_model import HBM4Channel
+        from model.dram.hbm4_spec import HBM4Spec
+        from model.dram.hbm4_channel_model import HBM4Timing
 
         spec = HBM4Spec()
         timing = HBM4Timing()
@@ -496,9 +496,9 @@ class TestUVMSequences:
 
     def test_multi_bank_sequence_model(self):
         """Model-based multi-bank sequence test"""
-        from model.dram.HBM4_channel_model import HBM4Channel
-        from model.dram.HBM4_spec import HBM4Spec
-        from model.dram.HBM4_channel_model import HBM4Timing
+        from model.dram.hbm4_channel_model import HBM4Channel
+        from model.dram.hbm4_spec import HBM4Spec
+        from model.dram.hbm4_channel_model import HBM4Timing
 
         spec = HBM4Spec()
         timing = HBM4Timing()
@@ -518,9 +518,9 @@ class TestUVMSequences:
 
     def test_refresh_sequence_model(self):
         """Model-based refresh sequence test"""
-        from model.dram.HBM4_channel_model import HBM4Channel
-        from model.dram.HBM4_spec import HBM4Spec
-        from model.dram.HBM4_channel_model import HBM4Timing
+        from model.dram.hbm4_channel_model import HBM4Channel
+        from model.dram.hbm4_spec import HBM4Spec
+        from model.dram.hbm4_channel_model import HBM4Timing
 
         spec = HBM4Spec()
         timing = HBM4Timing()
@@ -580,7 +580,7 @@ class TestIntegrationPoints:
     def test_dfi_interface_integration(self):
         """Test DFI interface integration with controller"""
         from model.dram.dfi_interface import DFI5Interface
-        from model.controller.HBM4_controller import HBM4Controller
+        from model.controller.hbm4_controller import HBM4Controller
 
         dfi = DFI5Interface()
         controller = HBM4Controller(enable_dfi=True)
@@ -590,8 +590,8 @@ class TestIntegrationPoints:
 
     def test_controller_dram_connection(self):
         """Test controller to DRAM model connection"""
-        from model.controller.HBM4_controller import HBM4Controller
-        from model.dram.HBM4_channel_model import HBM4ChannelArray
+        from model.controller.hbm4_controller import HBM4Controller
+        from model.dram.hbm4_channel_model import HBM4ChannelArray
 
         controller = HBM4Controller()
         channel_array = HBM4ChannelArray()
@@ -605,8 +605,8 @@ class TestIntegrationPoints:
 
     def test_address_decoder_controller_integration(self):
         """Test address decoder and controller integration"""
-        from model.controller.HBM4_controller import HBM4Controller
-        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+        from model.controller.hbm4_controller import HBM4Controller
+        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 
         controller = HBM4Controller()
         decoder = HBM4AddressDecoder()

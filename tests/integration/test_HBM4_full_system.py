@@ -31,13 +31,13 @@ from model.interconnect.interconnect import (
     CrossbarInterconnect, MeshInterconnect, BinaryTreeInterconnect,
     InterconnectRequest, InterconnectResponse, RoutingMode, ArbitrationMode
 )
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
-from model.dram.HBM4_channel_model import HBM4ChannelArray, HBM4Channel, HBM4Command
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.dram.hbm4_channel_model import HBM4ChannelArray, HBM4Channel, HBM4Command
 from model.dram.dfi_interface import DFI5Interface, DFICommand, DFILowPowerState
-from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
 
 
 # =============================================================================

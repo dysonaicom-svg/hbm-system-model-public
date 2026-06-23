@@ -4,7 +4,7 @@ HBM4 PHY Models
 Physical layer abstractions for HBM4 logic base die.
 """
 
-from model.HBM4.phy.tsv_phy import (
+from model.hbm4.phy.tsv_phy import (
     HBM4TSVPHY,
     TSVGroupType,
     TrainingState,

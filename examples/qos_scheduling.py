@@ -17,8 +17,8 @@ HBM4 QoS Priority Levels:
 Run: python examples/qos_scheduling.py
 """
 
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.dram.HBM4_spec import HBM4Spec
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.dram.hbm4_spec import HBM4Spec
 import time
 
 

@@ -12,13 +12,13 @@ Tests the complete QoS scheduling system with:
 import pytest
 from typing import List, Dict, Tuple
 
-from model.dram.HBM4_spec import HBM4Spec
-from model.dram.HBM4_channel_model import HBM4ChannelArray
-from model.controller.HBM4_controller import (
+from model.dram.hbm4_spec import HBM4Spec
+from model.dram.hbm4_channel_model import HBM4ChannelArray
+from model.controller.hbm4_controller import (
     HBM4Controller, HBM4ControllerStats, CommandPipeline, PipelineCommand,
     ChannelState
 )
-from model.controller.HBM4_qos_scheduler import (
+from model.controller.hbm4_qos_scheduler import (
     HBM4QoSScheduler, QoSLevel, TrafficType
 )
 from model.controller.request import HBMRequest, HBMResponse, RequestState

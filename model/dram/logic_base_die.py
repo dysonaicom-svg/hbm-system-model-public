@@ -31,7 +31,7 @@ from collections import deque
 import math
 
 # Import existing HBM4 modules
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 from model.dram.phy_signal import (
     PAM3SignalModel,
     HBM4PAM3Encoder,

@@ -30,7 +30,7 @@ from enum import Enum
 from collections import deque
 import logging
 
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +484,7 @@ class HBM4MemoryPort:
         self._on_response: Optional[Callable] = None
 
         # 地址解码器
-        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
         self._decoder = HBM4AddressDecoder(spec=self.spec)
 
         # 当前周期

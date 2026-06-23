@@ -933,7 +933,7 @@ def create_tsv_phy(
     Returns:
         Configured HBM4TSVPHY
     """
-    from model.dram.HBM4_spec import HBM4_SPEED_GRADES
+    from model.dram.hbm4_spec import HBM4_SPEED_GRADES
 
     data_rate = HBM4_SPEED_GRADES[speed_grade]['data_rate_gtps']
 

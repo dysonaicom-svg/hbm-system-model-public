@@ -18,8 +18,8 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_controller import HBM4Controller
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_controller import HBM4Controller
 
 
 def print_section(title):

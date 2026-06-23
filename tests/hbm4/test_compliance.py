@@ -17,7 +17,7 @@ from typing import Dict, Any, Tuple
 # Add model path for imports
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
-from model.dram.HBM4_spec_production import (
+from model.dram.hbm4_spec_production import (
     HBM4ProductionSpec,
     SpeedGrade,
     ValidationLevel,
@@ -29,7 +29,7 @@ from model.dram.HBM4_spec_production import (
     HBM4_PRODUCTION_GRADES,
 )
 
-from model.dram.HBM4_validation import (
+from model.dram.hbm4_validation import (
     SiliconValidator,
     SiliconValidationReport,
     MarginResult,
@@ -39,7 +39,7 @@ from model.dram.HBM4_validation import (
     run_production_validation,
 )
 
-from model.dram.HBM4_compliance import (
+from model.dram.hbm4_compliance import (
     HBM4ComplianceChecker,
     ComplianceReport,
     ComplianceCheck,

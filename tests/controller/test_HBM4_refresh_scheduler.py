@@ -11,7 +11,7 @@ Comprehensive tests covering:
 """
 
 import pytest
-from model.controller.HBM4_refresh_scheduler import (
+from model.controller.hbm4_refresh_scheduler import (
     HBM4RefreshScheduler,
     RefreshMode,
     RefreshPriority,
@@ -19,7 +19,7 @@ from model.controller.HBM4_refresh_scheduler import (
     RefreshBankStatus,
     RefreshSchedulerFactory,
 )
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class TestHBM4RefreshSchedulerCreation:

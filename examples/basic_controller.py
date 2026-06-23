@@ -10,8 +10,8 @@ This example demonstrates the basic usage of the HBM4Controller:
 Run: python examples/basic_controller.py
 """
 
-from model.dram.HBM4_spec import HBM4Spec
-from model.controller.HBM4_controller import HBM4Controller
+from model.dram.hbm4_spec import HBM4Spec
+from model.controller.hbm4_controller import HBM4Controller
 
 
 def main():

@@ -28,7 +28,7 @@ from model.dram.power_estimator import (
     create_power_estimator, create_power_estimator_with_config,
     POWER_PRESETS,
 )
-from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
 
 
 class TestPowerSpeedGrades:

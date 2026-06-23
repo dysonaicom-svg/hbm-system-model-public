@@ -50,7 +50,7 @@ from model.dram.channel_timing import (
     TimingParameters,
     ChannelClockDomain,
 )
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 # =============================================================================

@@ -23,7 +23,7 @@ import time
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
-from model.HBM4.power.thermal_model import (
+from model.hbm4.power.thermal_model import (
     HBM4ThermalModel,
     ThrottleLevel,
     PDNVoltageMode,

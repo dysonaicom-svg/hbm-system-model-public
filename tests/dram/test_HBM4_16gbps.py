@@ -14,7 +14,7 @@ Based on:
 """
 
 import pytest
-from model.dram.HBM4_spec import (
+from model.dram.hbm4_spec import (
     HBM4Spec, HBM4_SPEED_GRADES, HBM4_DEFAULT_TIMING,
     create_hbm4_spec_from_speed_grade, create_hbm4_spec_with_timing,
     calculate_bandwidth, calculate_tCK_from_rate
@@ -27,7 +27,7 @@ from model.dram.power_estimator import (
     create_power_estimator, create_power_estimator_with_config,
     CommandType, PowerState
 )
-from model.dram.HBM4_channel_model import HBM4Channel
+from model.dram.hbm4_channel_model import HBM4Channel
 
 
 class TestHBM416GbpsTiming:

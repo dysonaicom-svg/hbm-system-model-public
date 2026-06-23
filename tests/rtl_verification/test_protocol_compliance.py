@@ -44,8 +44,8 @@ RTL_DRAM_DATA_WIDTH = 256
 # Import Python Components
 # =============================================================================
 
-from model.dram.HBM4_channel_model import HBM4Command, HBM4ChannelArray
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_channel_model import HBM4Command, HBM4ChannelArray
+from model.dram.hbm4_spec import HBM4Spec
 from model.controller.controller import HBMController
 from model.controller.config import HBMConfig, HBM4_DEFAULT
 

@@ -23,14 +23,14 @@ import argparse
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
-from model.dram.HBM4_spec import HBM4Spec
-from model.dram.HBM4_channel_model import HBM4ChannelArray, HBM4Channel
+from model.dram.hbm4_spec import HBM4Spec
+from model.dram.hbm4_channel_model import HBM4ChannelArray, HBM4Channel
 from model.dram.dfi_interface import DFI5Interface
 from model.dram.timing import HBM4Timing
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler
 from model.controller.request import HBMRequest
 from model.interconnect.interconnect import (
     CrossbarInterconnect, MeshInterconnect,

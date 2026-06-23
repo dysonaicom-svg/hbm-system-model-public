@@ -22,10 +22,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.dram.HBM4_spec import HBM4Spec
-from model.dram.HBM4_channel_model import HBM4ChannelArray, HBM4Channel
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.dram.hbm4_spec import HBM4Spec
+from model.dram.hbm4_channel_model import HBM4ChannelArray, HBM4Channel
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 
 
 def print_section(title):

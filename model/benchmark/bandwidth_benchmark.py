@@ -18,9 +18,9 @@ from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 import time
 
-from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES, calculate_bandwidth
+from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES, calculate_bandwidth
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade, HBM3Timing
-from model.controller.HBM4_controller import HBM4Controller
+from model.controller.hbm4_controller import HBM4Controller
 from model.controller.request import HBMRequest, HBMResponse
 from .benchmark_config import BandwidthConfig, TestPattern
 

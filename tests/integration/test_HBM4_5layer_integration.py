@@ -23,16 +23,16 @@ import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
-from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
-from model.dram.HBM4_channel_model import (
+from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.hbm4_channel_model import (
     HBM4Channel, HBM4ChannelArray, HBM4Command, HBM4ChannelState
 )
 from model.dram.dfi_interface import DFI5Interface, DFICommand, DFIRequest
 from model.dram.timing import HBM4Timing
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.interconnect.interconnect import (
     CrossbarInterconnect, MeshInterconnect, InterconnectRequest,

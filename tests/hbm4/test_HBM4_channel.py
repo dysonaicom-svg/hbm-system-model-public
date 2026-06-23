@@ -8,11 +8,11 @@ Reference: JEDEC JESD270-4A HBM4 specification
 """
 
 import pytest
-from model.dram.HBM4_channel_model import (
+from model.dram.hbm4_channel_model import (
     HBM4Channel, PseudoChannel, HBM4ChannelState, PseudoChannelState,
     HBM4Command, BankGroup, BankGroupScheduler, HBM4ChannelArray
 )
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade
 
 
@@ -453,7 +453,7 @@ class TestChannelCommandHandling:
 
     def test_issue_command_precharge(self):
         """PRE command must precharge banks"""
-        from model.dram.HBM4_bank_state_machine import HBM4BankTiming
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -500,7 +500,7 @@ class TestChannelCommandHandling:
 
     def test_numeric_command_encoding(self):
         """Numeric command encoding must work"""
-        from model.dram.HBM4_bank_state_machine import HBM4BankTiming
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -868,7 +868,7 @@ class TestCommandScheduling:
 
     def test_can_schedule_read(self):
         """Must be able to schedule read if row open"""
-        from model.dram.HBM4_bank_state_machine import HBM4BankTiming
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -883,7 +883,7 @@ class TestCommandScheduling:
 
     def test_can_schedule_write(self):
         """Must be able to schedule write if row open"""
-        from model.dram.HBM4_bank_state_machine import HBM4BankTiming
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -1028,7 +1028,7 @@ class TestBankGroupReadWriteQueries:
 
     def test_can_read_in_bank_group(self):
         """Must query read capability per bank group"""
-        from model.dram.HBM4_bank_state_machine import HBM4BankTiming
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 
@@ -1046,7 +1046,7 @@ class TestBankGroupReadWriteQueries:
 
     def test_can_write_in_bank_group(self):
         """Must query write capability per bank group"""
-        from model.dram.HBM4_bank_state_machine import HBM4BankTiming
+        from model.dram.hbm4_bank_state_machine import HBM4BankTiming
         spec = HBM4Spec()
         ch = HBM4Channel(0, spec)
 

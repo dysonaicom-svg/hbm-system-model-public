@@ -19,8 +19,8 @@ from collections import defaultdict, deque
 import time
 import math
 
-from model.dram.HBM4_spec import HBM4Spec
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.dram.hbm4_spec import HBM4Spec
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 
 if TYPE_CHECKING:
     from model.controller.request import HBMRequest

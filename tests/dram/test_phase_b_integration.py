@@ -66,7 +66,7 @@ from model.dram.dfi_interface import (
     DFI5FreqChangeState,
     DFIRequest,
 )
-from model.dram.HBM4_spec import HBM4Spec, HBM4_CONFIG
+from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG
 
 
 # =============================================================================
@@ -685,7 +685,7 @@ class TestEndToEndIntegration:
         """Test address decoder with full HBM4 address space"""
         spec = HBM4_CONFIG
 
-        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
         decoder = HBM4AddressDecoder(spec=spec)
 
         # Test address in channel 0
@@ -1102,7 +1102,7 @@ class Test32ChannelHBM4Configuration:
         """Test address decoder with 32-channel addressing"""
         spec = HBM4_CONFIG
 
-        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
         decoder = HBM4AddressDecoder(spec=spec)
 
         # Test addresses across all 32 channels
@@ -1243,7 +1243,7 @@ class TestErrorHandlingEdgeCases:
         """Test handling of invalid addresses"""
         spec = HBM4_CONFIG
 
-        from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+        from model.controller.hbm4_address_decoder import HBM4AddressDecoder
         decoder = HBM4AddressDecoder(spec=spec)
 
         # Very large address should still decode

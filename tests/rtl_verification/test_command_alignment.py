@@ -19,7 +19,7 @@ import pytest
 from typing import List, Tuple
 
 # Import Python components
-from model.dram.HBM4_channel_model import HBM4Command
+from model.dram.hbm4_channel_model import HBM4Command
 
 
 # =============================================================================
@@ -320,7 +320,7 @@ class TestCommandTimingAlignment:
     def test_minimum_command_spacing(self):
         """Verify minimum command spacing is 1 cycle"""
         # Both RTL and Python should issue commands 1 cycle apart
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
         spec = HBM4Spec()
 
         # Burst length should be at least 4 cycles
@@ -328,7 +328,7 @@ class TestCommandTimingAlignment:
 
     def test_command_timing_from_spec(self):
         """Verify command timing values are defined in spec"""
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
 
@@ -416,7 +416,7 @@ class TestDFICompliance:
 
     def test_command_values_match_hbm4_spec(self):
         """Verify commands match HBM4 specification"""
-        from model.dram.HBM4_channel_model import HBM4Command
+        from model.dram.hbm4_channel_model import HBM4Command
 
         # Verify all HBM4 commands are defined
         assert HBM4Command.NOP.value == 0

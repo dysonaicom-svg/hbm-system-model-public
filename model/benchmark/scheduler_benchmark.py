@@ -17,10 +17,10 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 
-from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
 from .benchmark_config import SchedulerConfig, TestPattern
 
 

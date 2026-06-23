@@ -15,12 +15,12 @@ import time
 from collections import defaultdict
 from typing import List
 
-from model.controller.HBM4_qos_scheduler import (
+from model.controller.hbm4_qos_scheduler import (
     HBM4QoSScheduler, QoSLevel, QoSClass, QoSWeight, QoSMonitor,
     TrafficType, TRAFFIC_TYPE_TO_QOS, QueuedRequest, BankConflictTracker
 )
 from model.controller.request import HBMRequest
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class TestQoSLevelConstants:

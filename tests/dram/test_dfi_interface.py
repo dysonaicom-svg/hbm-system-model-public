@@ -23,7 +23,7 @@ from model.dram.dfi_interface import (
     DFIRequestQueueConfig, DFI5RequestQueue, DFI5FreqChangeState,
     DFIStateTransitionError, DFIErrorRecord, DFISignals
 )
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class TestDFICompliance:

@@ -12,7 +12,7 @@ Tests cover:
 """
 
 import pytest
-from model.HBM4.power.thermal_model import (
+from model.hbm4.power.thermal_model import (
     HBM4ThermalModel,
     ThrottleLevel,
     PDNVoltageMode,

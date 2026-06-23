@@ -10,7 +10,7 @@ Tests cover:
 """
 
 import pytest
-from model.HBM4.power.power_estimator import (
+from model.hbm4.power.power_estimator import (
     HBM4PowerEstimator,
     PowerDownMode,
     PowerBreakdown,
@@ -23,7 +23,7 @@ from model.HBM4.power.power_estimator import (
     PowerDownPower,
     create_power_estimator,
 )
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class TestBasicPowerCalculation:

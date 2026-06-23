@@ -24,16 +24,16 @@ from dataclasses import dataclass
 # Add project root to path for PYTHONPATH compatibility
 sys.path.insert(0, '/home/ic/JXTF/HBM')
 
-from model.dram.HBM4_spec import HBM4Spec
-from model.dram.HBM4_channel_model import (
+from model.dram.hbm4_spec import HBM4Spec
+from model.dram.hbm4_channel_model import (
     HBM4Channel, HBM4ChannelArray, HBM4Command, PseudoChannelState
 )
-from model.dram.HBM4_channel_model import HBM4Timing
+from model.dram.hbm4_channel_model import HBM4Timing
 from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
-from model.controller.HBM4_controller import HBM4Controller, ChannelState
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.hbm4_controller import HBM4Controller, ChannelState
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.request import HBMRequest, HBMResponse
 
 

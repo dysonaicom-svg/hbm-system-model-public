@@ -12,12 +12,12 @@ Key HBM4 Timing Parameters (Enhanced):
 """
 
 import pytest
-from model.dram.HBM4_channel_model import (
+from model.dram.hbm4_channel_model import (
     HBM4Channel, PseudoChannel, HBM4ChannelState, PseudoChannelState,
     HBM4ChannelArray, BankGroupScheduler
 )
-from model.dram.HBM4_spec import HBM4Spec
-from model.dram.HBM4_bank_state_machine import (
+from model.dram.hbm4_spec import HBM4Spec
+from model.dram.hbm4_bank_state_machine import (
     HBM4BankState, HBM4BankTiming, TimingViolation
 )
 from model.dram.timing import HBM4Timing

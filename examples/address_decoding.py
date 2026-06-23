@@ -20,8 +20,8 @@ HBM4 uses 48-bit address with fields for:
 Run: python examples/address_decoding.py
 """
 
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.dram.HBM4_spec import HBM4Spec
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.dram.hbm4_spec import HBM4Spec
 
 
 def main():

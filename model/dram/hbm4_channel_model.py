@@ -46,11 +46,11 @@ from collections import defaultdict
 import logging
 import time as time_module
 
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade, HBM4_SPEED_GRADES
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade, HBM4_SPEED_GRADES
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade
 
 # Import the enhanced bank state machine
-from model.dram.HBM4_bank_state_machine import (
+from model.dram.hbm4_bank_state_machine import (
     HBM4BankStateMachine, HBM4BankArray, HBM4BankState, HBM4Command,
     HBM4BankTiming, TimingViolation, create_hbm4_bank_state_machine
 )
@@ -1028,7 +1028,7 @@ class PseudoChannel:
             if bank.can_precharge():
                 bank.precharge()
                 # Check if the precharged bank is now idle
-                from model.dram.HBM4_bank_state_machine import HBM4BankState
+                from model.dram.hbm4_bank_state_machine import HBM4BankState
                 if bank.get_state() == HBM4BankState.CLOSED:
                     self.open_row = -1
                 # Update channel state based on ALL banks

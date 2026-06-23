@@ -14,7 +14,7 @@ __all__ = [
 # Import main entry points for console scripts
 from sim.simulator import run_simulation as simulate
 from sim.benchmark import main as run_benchmark
-from sim.HBM4_unified_simulator import HBM4UnifiedSimulator, main as unified_main
+from sim.hbm4_unified_simulator import HBM4UnifiedSimulator, main as unified_main
 from sim.unified_simulator import run_unified_simulation as unified_sim_main
 from sim.benchmark_suite import PerformanceBenchmarkSuite, main as benchmark_suite_main
 

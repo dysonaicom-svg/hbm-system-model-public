@@ -31,7 +31,7 @@ class TestMBISTControllerCreation:
 
     def test_controller_with_spec(self):
         """MBIST controller with HBM4 spec"""
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
         spec = HBM4Spec()
         controller = MBISTController(spec=spec)
         assert controller.spec == spec
@@ -656,8 +656,8 @@ class TestIntegration:
 
     def test_controller_integration_setup(self):
         """MBIST controller must integrate with channel model"""
-        from model.dram.HBM4_channel_model import HBM4Channel
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_channel_model import HBM4Channel
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
         channel = HBM4Channel(0, spec)
@@ -670,7 +670,7 @@ class TestIntegration:
 
     def test_controller_spec_provided(self):
         """Controller must use provided spec for address decoding"""
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
 

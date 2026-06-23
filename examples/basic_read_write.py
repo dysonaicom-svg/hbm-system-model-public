@@ -17,8 +17,8 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.controller.HBM4_controller import HBM4Controller
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.controller.hbm4_controller import HBM4Controller
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
 
 
 def print_section(title):

@@ -39,12 +39,12 @@ from collections import defaultdict, deque
 import time
 import uuid
 
-from model.dram.HBM4_spec import HBM4Spec, HBM4_CONFIG
+from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG
 from model.dram.dfi_interface import (
     DFI5Interface, DFICommand, DFILowPowerState,
     DFIRequest, DFIResponse as DFIPhyResponse
 )
-from model.dram.HBM4_channel_model import (
+from model.dram.hbm4_channel_model import (
     HBM4ChannelArray, HBM4Channel, HBM4Command,
     ChannelPerformanceStats
 )
@@ -52,11 +52,11 @@ from model.dram.timing import HBM4Timing
 from model.controller.config import HBMConfig
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.queue import ReadQueue, WriteQueue, QueueManager
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import (
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import (
     HBM4QoSScheduler, QoSLevel, TrafficType, BankConflictTracker
 )
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.exceptions import QueueOverflowError
 
 # Configure debug logging for HBM4 controller

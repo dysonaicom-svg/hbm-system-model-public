@@ -27,7 +27,7 @@ from typing import List, Optional, Dict, Any, Tuple, Set
 from collections import deque
 import time
 
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class RefreshMode(Enum):

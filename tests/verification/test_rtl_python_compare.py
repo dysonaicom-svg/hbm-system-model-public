@@ -20,9 +20,9 @@ import struct
 # Import Python model components
 from model.dram.dram_model import DRAMModel, DRAMCommand, DecodedAddress
 from model.dram.timing import HBM3Timing, HBM4Timing, get_timing_for_hbm_version
-from model.dram.HBM4_spec import HBM4Spec
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.dram.hbm4_spec import HBM4Spec
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 
 

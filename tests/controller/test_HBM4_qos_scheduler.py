@@ -5,8 +5,8 @@ Tests the QoS scheduler with 16 priority levels and anti-starvation.
 """
 
 import pytest
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel, QueuedRequest
-from model.dram.HBM4_spec import HBM4Spec
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel, QueuedRequest
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class TestHBM4QoSSchedulerCreation:

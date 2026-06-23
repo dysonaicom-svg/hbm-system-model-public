@@ -24,12 +24,12 @@ import random
 from typing import List, Dict, Any
 from dataclasses import dataclass
 
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
-from model.controller.HBM4_controller import HBM4Controller, HBM4ControllerStats
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
-from model.dram.HBM4_channel_model import HBM4Channel
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.controller.hbm4_controller import HBM4Controller, HBM4ControllerStats
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.dram.hbm4_channel_model import HBM4Channel
 from model.dram.dfi_interface import DFI5Interface, DFIRequest, DFIResponse
 from sim.simulator import (
     TrafficGenerator, TrafficPattern, SimulationConfig, SimulationStats

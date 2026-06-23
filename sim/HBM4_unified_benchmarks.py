@@ -13,7 +13,7 @@ import time
 import statistics
 from typing import List, Dict, Callable, Any
 
-from sim.HBM4_unified_simulator import (
+from sim.hbm4_unified_simulator import (
     HBM4UnifiedSimulator,
     SimulationConfig,
     SimulationMode,

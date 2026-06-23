@@ -16,7 +16,7 @@ HBM4 Key Timing Parameters (12 Gbps optimized):
 """
 
 import pytest
-from model.dram.HBM4_bank_state_machine import (
+from model.dram.hbm4_bank_state_machine import (
     HBM4BankStateMachine, HBM4BankArray, HBM4BankState, HBM4Command,
     HBM4BankTiming, TimingViolation, create_hbm4_bank_state_machine,
     create_hbm4_bank_array
@@ -659,7 +659,7 @@ class TestHBM4BankIntegration:
 
     def test_1024_total_banks_calculation(self):
         """Verify 1024 total banks: 32ch × 2pch × 16bank"""
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
         total = spec.channels * spec.pseudo_channels_per_channel * spec.banks_per_pseudo_channel
@@ -668,7 +668,7 @@ class TestHBM4BankIntegration:
 
     def test_64_pseudo_channels_calculation(self):
         """Verify 64 total pseudo-channels: 32ch × 2pch"""
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
         total_pch = spec.channels * spec.pseudo_channels_per_channel
@@ -677,7 +677,7 @@ class TestHBM4BankIntegration:
 
     def test_512_bank_groups_calculation(self):
         """Verify 512 total bank groups: 64pch × 8bg"""
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
         total_pch = spec.channels * spec.pseudo_channels_per_channel
@@ -691,7 +691,7 @@ class TestHBM4RefreshSchedulerIntegration:
 
     def test_refresh_scheduler_creates_1024_banks(self):
         """Refresh scheduler tracks 1024 banks"""
-        from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler
+        from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler
 
         scheduler = HBM4RefreshScheduler()
 
@@ -699,7 +699,7 @@ class TestHBM4RefreshSchedulerIntegration:
 
     def test_per_bank_refresh_sequence(self):
         """Per-bank refresh cycles through all banks"""
-        from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+        from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 
         scheduler = HBM4RefreshScheduler()
         scheduler.set_mode(RefreshMode.PER_BANK)

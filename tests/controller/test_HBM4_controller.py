@@ -15,10 +15,10 @@ Test coverage:
 
 import pytest
 import time
-from model.dram.HBM4_spec import HBM4Spec, HBM4_SPEED_GRADES
+from model.dram.hbm4_spec import HBM4Spec, HBM4_SPEED_GRADES
 from model.dram.dfi_interface import DFILowPowerState, DFICommand
-from model.controller.HBM4_controller import HBM4Controller, ChannelState
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_controller import HBM4Controller, ChannelState
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
 
 
 class TestHBM4ControllerCreation:
@@ -512,7 +512,7 @@ class TestChannelState:
 
     def test_channel_state_creation(self):
         """Test creating channel state"""
-        from model.controller.HBM4_controller import ChannelState
+        from model.controller.hbm4_controller import ChannelState
         state = ChannelState(channel_id=0)
         assert state.channel_id == 0
         assert state.queue_depth == 0
@@ -700,4 +700,4 @@ class TestHBM4ControllerIntegration:
 
 
 # Import the helper function
-from model.dram.HBM4_spec import create_hbm4_spec_from_speed_grade
+from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade

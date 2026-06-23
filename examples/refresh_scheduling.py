@@ -16,8 +16,8 @@ HBM4 Refresh Modes:
 Run: python examples/refresh_scheduling.py
 """
 
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
-from model.dram.HBM4_spec import HBM4Spec
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.dram.hbm4_spec import HBM4Spec
 
 
 def main():

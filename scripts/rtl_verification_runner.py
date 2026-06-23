@@ -239,7 +239,7 @@ class CommandVerifier:
 
         # Command encoding
         try:
-            from model.dram.HBM4_channel_model import HBM4Command
+            from model.dram.hbm4_channel_model import HBM4Command
             py_commands = {
                 "NOP": HBM4Command.NOP.value,
                 "ACT": HBM4Command.ACT.value,
@@ -443,7 +443,7 @@ class RTLVerificationRunner:
 
         # Import Python modules
         try:
-            from model.dram.HBM4_spec import HBM4Spec
+            from model.dram.hbm4_spec import HBM4Spec
             from model.dram.timing import HBM4Timing
         except ImportError as e:
             print(f"Error importing Python modules: {e}")

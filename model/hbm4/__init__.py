@@ -7,7 +7,7 @@ HBM4 system modeling components including:
 - Thermal: Thermal modeling
 """
 
-from model.HBM4.phy import HBM4TSVPHY, create_tsv_phy
+from model.hbm4.phy import HBM4TSVPHY, create_tsv_phy
 
 __all__ = [
     'HBM4TSVPHY',

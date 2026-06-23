@@ -8,13 +8,13 @@ Based on:
 """
 
 import pytest
-from model.dram.HBM4_spec import (
+from model.dram.hbm4_spec import (
     HBM4Spec, HBM4_CONFIG, HBM4_SPEED_GRADES,
     create_hbm4_spec_from_speed_grade, create_hbm4_spec_with_timing,
     calculate_tCK_from_rate
 )
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade, SPEED_GRADE_TIMING
-from model.dram.HBM4_channel_model import HBM4Channel
+from model.dram.hbm4_channel_model import HBM4Channel
 
 
 class TestHBM4SpecChannels:

@@ -6,8 +6,8 @@ Tests the HBM4-specific address decoder with 32-channel support.
 
 import pytest
 from model.controller.address_decoder import AddressDecoder
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.dram.HBM4_spec import HBM4Spec
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class TestHBM4AddressDecoder:

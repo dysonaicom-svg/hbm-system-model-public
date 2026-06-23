@@ -20,11 +20,11 @@ from dataclasses import dataclass
 import threading
 import concurrent.futures
 
-from model.controller.HBM4_controller import HBM4Controller
-from model.dram.HBM4_spec import HBM4Spec, HBM4_CONFIG
-from model.dram.HBM4_channel_model import HBM4ChannelArray, HBM4Channel
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.hbm4_controller import HBM4Controller
+from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG
+from model.dram.hbm4_channel_model import HBM4ChannelArray, HBM4Channel
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.config import HBMConfig
 
 

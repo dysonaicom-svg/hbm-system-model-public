@@ -6,9 +6,9 @@ Tests HBM4 32-channel support and bandwidth calculations.
 
 import pytest
 
-from model.dram.HBM4_spec import HBM4Spec, HBM4_CONFIG, HBM4_SPEED_GRADES
+from model.dram.hbm4_spec import HBM4Spec, HBM4_CONFIG, HBM4_SPEED_GRADES
 from model.controller.config import HBMConfig
-from model.controller.HBM4_controller import HBM4Controller
+from model.controller.hbm4_controller import HBM4Controller
 from sim.simulator import HBMSimulator, SimulationConfig
 
 
@@ -257,7 +257,7 @@ class TestHBM4AddressMapping:
     def test_hbm4_address_decoder(self):
         """Test HBM4 address decoder"""
         from model.controller.address_decoder import AddressDecoder
-        from model.dram.HBM4_spec import HBM4Spec
+        from model.dram.hbm4_spec import HBM4Spec
 
         spec = HBM4Spec()
         decoder = AddressDecoder(HBMConfig(channels_per_stack=32, io_width=2048))

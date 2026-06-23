@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any
 
 from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT
 from model.dram.timing import HBM3Timing, HBM4Timing, get_timing_for_speed_grade
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
 from sim.simulator import (
     HBMSimulator,
     SimulationConfig,

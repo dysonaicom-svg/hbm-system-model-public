@@ -82,7 +82,7 @@ Based on:
 
 from typing import Dict, List, Optional, Tuple
 from model.controller.address_decoder import AddressDecoder, DecodedAddress
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 from model.controller.config import HBMConfig
 
 

@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Any
 
-from sim.HBM4_unified_simulator import (
+from sim.hbm4_unified_simulator import (
     HBM4UnifiedSimulator,
     SimulationConfig,
     SimulationStats,
@@ -539,7 +539,7 @@ class TestIntegration:
 # Pytest collection helpers
 def test_import():
     """Test that all required modules can be imported"""
-    from sim.HBM4_unified_simulator import (
+    from sim.hbm4_unified_simulator import (
         HBM4UnifiedSimulator,
         SimulationConfig,
         SimulationStats,

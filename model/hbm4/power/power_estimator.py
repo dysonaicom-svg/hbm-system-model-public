@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from enum import Enum
 import math
 
-from model.dram.HBM4_spec import HBM4Spec
+from model.dram.hbm4_spec import HBM4Spec
 
 
 class PowerDownMode(Enum):
@@ -686,7 +686,7 @@ def create_power_estimator(
     Returns:
         Configured HBM4PowerEstimator
     """
-    from model.dram.HBM4_spec import create_hbm4_spec_from_speed_grade
+    from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
 
     spec = create_hbm4_spec_from_speed_grade(speed_grade)
 

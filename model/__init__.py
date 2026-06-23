@@ -6,7 +6,7 @@ HBM4 System Model Package
 Core components for HBM memory system modeling.
 """
 
-from model.HBM4 import *
+from model.hbm4 import *
 
 __version__ = "1.0.0"
 __all__ = [

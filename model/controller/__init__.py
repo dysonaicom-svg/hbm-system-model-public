@@ -17,17 +17,17 @@ Classes:
     - HBMConfig: Controller configuration
 
 Usage:
-    from model.controller.HBM4_controller import HBM4Controller
+    from model.controller.hbm4_controller import HBM4Controller
 
     controller = HBM4Controller()
     controller.submit_request(addr=0x1000, is_read=True)
 """
 
 from model.controller.controller import HBMController
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.queue import RequestQueue, ReadQueue, WriteQueue, QueueManager
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT

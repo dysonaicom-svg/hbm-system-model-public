@@ -16,13 +16,13 @@ import pytest
 import time
 from typing import List, Dict
 
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade, HBM4_SPEED_GRADES
-from model.dram.HBM4_channel_model import HBM4ChannelArray, HBM4Channel
-from model.dram.HBM4_bank_state_machine import HBM4BankStateMachine, HBM4BankTiming
-from model.controller.HBM4_controller import (
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade, HBM4_SPEED_GRADES
+from model.dram.hbm4_channel_model import HBM4ChannelArray, HBM4Channel
+from model.dram.hbm4_bank_state_machine import HBM4BankStateMachine, HBM4BankTiming
+from model.controller.hbm4_controller import (
     HBM4Controller, CommandPipeline, ChannelState, HBM4ControllerStats
 )
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel, TrafficType
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel, TrafficType
 from model.controller.request import HBMRequest, HBMResponse
 from model.dram.timing import HBM4Timing
 

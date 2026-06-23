@@ -27,16 +27,16 @@ from dataclasses import dataclass, field
 from collections import deque
 
 # Import all system components
-from model.dram.HBM4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
-from model.dram.HBM4_channel_model import HBM4Channel, HBM4Command, PseudoChannelState
+from model.dram.hbm4_spec import HBM4Spec, create_hbm4_spec_from_speed_grade
+from model.dram.hbm4_channel_model import HBM4Channel, HBM4Command, PseudoChannelState
 from model.dram.bank_state_machine import BankStateMachine, BankStateEnum
 from model.dram.dfi_interface import DFI5Interface, DFICommand, DFILowPowerState
 from model.dram.timing import HBM4Timing, get_timing_for_speed_grade
 
-from model.controller.HBM4_controller import HBM4Controller
-from model.controller.HBM4_address_decoder import HBM4AddressDecoder, DecodedAddress
-from model.controller.HBM4_qos_scheduler import HBM4QoSScheduler, QoSLevel
-from model.controller.HBM4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.hbm4_controller import HBM4Controller
+from model.controller.hbm4_address_decoder import HBM4AddressDecoder, DecodedAddress
+from model.controller.hbm4_qos_scheduler import HBM4QoSScheduler, QoSLevel
+from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
 from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.queue import QueueManager
 from model.controller.exceptions import (
@@ -344,7 +344,7 @@ class TestControllerLayer:
 
     def test_channel_state_tracking(self):
         """Test per-channel state tracking"""
-        from model.controller.HBM4_controller import ChannelState
+        from model.controller.hbm4_controller import ChannelState
 
         controller = HBM4Controller()
         states = controller._channel_states
@@ -1263,7 +1263,7 @@ class TestRecoveryScenarios:
 
     def test_recovery_after_timing_violation(self):
         """Test system recovery after timing violation"""
-        from model.dram.HBM4_channel_model import HBM4Channel, HBM4Timing
+        from model.dram.hbm4_channel_model import HBM4Channel, HBM4Timing
         spec = HBM4Spec()
         timing = HBM4Timing()
         channel = HBM4Channel(channel_id=0, spec=spec, timing=timing)
@@ -1292,7 +1292,7 @@ class TestRecoveryScenarios:
 
     def test_recovery_after_refresh(self):
         """Test system recovery after refresh"""
-        from model.dram.HBM4_channel_model import HBM4Channel, HBM4Timing
+        from model.dram.hbm4_channel_model import HBM4Channel, HBM4Timing
         spec = HBM4Spec()
         timing = HBM4Timing()
         channel = HBM4Channel(channel_id=0, spec=spec, timing=timing)
