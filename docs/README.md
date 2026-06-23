@@ -1,8 +1,26 @@
 # HBM System Modeling Platform
 
-> **Version**: 2.1.1 | **Status**: Phase 2 Complete | **Tests**: 4,409 Passing
+> **Version**: 2.2.0 | **Status**: Phase G-J Complete | **Tests**: 4,409+ Passing
 > **Branch**: `feat/hbm4-logic-base-die-phase2`
-> **Last Updated**: 2026-06-25
+> **Last Updated**: 2026-06-24
+
+---
+
+## Development Phases
+
+| Phase | Goal | Status |
+|-------|------|--------|
+| 0 | Project Initialization | ✅ **Complete** |
+| A | HBM Controller Model | ✅ **Complete** |
+| B | DRAM Timing Model | ✅ **Complete** |
+| C | PHY Integration | ✅ **Complete** |
+| D | RTL-Python Integration | ✅ **Complete** |
+| E | Documentation & Delivery | ✅ **Complete** |
+| F | Verification & Validation | ✅ **Complete** |
+| G | Logic Base Die Core | ✅ **Complete** |
+| H | Unified Simulator | ✅ **Complete** |
+| I | Performance Optimization | ✅ **Complete** |
+| J | Controller Integration | ✅ **Complete** |
 
 ---
 
@@ -140,19 +158,19 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| Controller Tests | 360+ | Pass |
-| DRAM Tests | 1009+ | Pass |
-| HBM4 Tests | 650+ | Pass |
-| Simulation Tests | 190+ | Pass |
-| Integration Tests | 827+ | Pass |
-| Coverage Tests | 362+ | Pass |
-| Performance Tests | 61+ | Pass |
-| Benchmark Tests | 184+ | Pass |
-| Verification Tests | 62+ | Pass |
-| RTL Tests | 146+ | Pass |
-| Traffic Tests | 117+ | Pass |
-| Interconnect Tests | 129+ | Pass |
-| PHY Tests | 178+ | Pass |
+| Controller Tests | 411+ | ✅ Pass |
+| DRAM Tests | 1009+ | ✅ Pass |
+| HBM4 Tests | 700+ | ✅ Pass |
+| Simulation Tests | 190+ | ✅ Pass |
+| Integration Tests | 827+ | ✅ Pass |
+| Coverage Tests | 362+ | ✅ Pass |
+| Performance Tests | 61+ | ✅ Pass |
+| Benchmark Tests | 200+ | ✅ Pass |
+| Verification Tests | 62+ | ✅ Pass |
+| RTL Tests | 146+ | ✅ Pass |
+| Traffic Tests | 117+ | ✅ Pass |
+| Interconnect Tests | 129+ | ✅ Pass |
+| PHY Tests | 178+ | ✅ Pass |
 | **Total** | **4,409+** | **100% Pass** |
 
 ---
@@ -178,8 +196,6 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
----
-
 ## Key Achievements
 
 - **Complete HBM3/HBM4 modeling** with full controller, DRAM timing, and PHY support
@@ -195,60 +211,7 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
-## Development Phases
-
-| Phase | Goal | Status |
-|-------|------|--------|
-| A | HBM Controller Model | Complete |
-| B | DRAM Timing Model | Complete |
-| C | PHY Integration | Complete |
-| D | RTL-Python Integration | Complete |
-| E | Documentation & Delivery | Complete |
-| F | Verification & Validation | Complete |
-
----
-
-## Code Metrics
-
-| Category | Count | Size |
-|----------|-------|------|
-| Python Files | 85+ | 3.5 MB |
-| RTL Files | 6 | 2.3 MB |
-| Test Files | 120+ | 6.5 MB |
-| Documentation | 52 | 750 KB |
-| **Total** | **1,300+** | **14 MB** |
-
----
-
-## Recent Commits
-
-| Commit | Description |
-|--------|-------------|
-| `10f658d` | sync: update submodules and .gitmodules configuration |
-| `71ad1b9` | docs: update CLAUDE.md with Phase 3 info and test statistics |
-| `99505aa` | docs: update to v2.1.1 - refresh documentation and bump version |
-| `4bedff1` | fix: resolve import errors and update address mapping tests |
-| `2ad6857` | feat: HBM4 Logic Base Die Phase 3 - Performance Optimization and Verification Enhancement |
-
----
-
----
-
-## Development Phases
-
-| Phase | Goal | Status |
-|-------|------|--------|
-| A | HBM Controller Model | Complete |
-| B | DRAM Timing Model | Complete |
-| C | PHY Integration | Complete |
-| D | RTL-Python Integration | Complete |
-| E | Documentation & Delivery | Complete |
-| F | Verification & Validation | Complete |
-| **2** | **Logic Base Die Enhancement** | **Complete** |
-
----
-
-## Logic Base Die Features (Phase 2)
+## Logic Base Die Features (Phase G)
 
 | Feature | Description |
 |---------|-------------|
@@ -257,6 +220,45 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 | Calibration Manager | Comprehensive calibration procedures |
 | Command Buffering | Advanced command scheduling |
 | Channel Timing Context | Independent timing domains |
+
+---
+
+## Phase H: Unified Simulator
+
+| Feature | Status |
+|---------|--------|
+| Python-RTL Co-simulation | ✅ Complete |
+| Performance Benchmark Suite | ✅ Complete |
+| Result Comparison Analysis | ✅ Complete |
+| Visualization Tools | ✅ Complete |
+
+**Key Files:**
+- `sim/rtl_interface.py` - RTL co-simulation interface
+- `sim/benchmark_suite.py` - Performance benchmark suite
+- `sim/result_comparison.py` - Result comparison analysis
+- `sim/visualization/advanced_charts.py` - ASCII visualization
+
+---
+
+## Phase I: Performance Optimization
+
+| Enhancement | Description |
+|-------------|-------------|
+| EnhancedBankGroupScheduler | Optimized bank group scheduling |
+| PseudoChannelStats | Pseudo-channel statistics |
+| ChannelPerformanceStats | Performance metrics collection |
+| Independent Timing Domains | Channel isolation for accurate modeling |
+
+---
+
+## Phase J: Controller Integration
+
+| Component | Description |
+|-----------|-------------|
+| CommandPipeline | 4-stage pipeline for command processing |
+| BankConflictTracker | Bank conflict detection and avoidance |
+| HBM4ChannelArray | 32-channel array integration |
+| Address Decoder | RBC/BCR/CRB mapping schemes |
 
 ---
 
@@ -278,10 +280,22 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 |----------|-------------|
 | [Design Document](design/2026-06-15-hbm-system-model-design.md) | Complete design specification |
 | [Quick Reference](QUICKREF.md) | Command reference |
-| [Phase 2 Plan](plans/2026-06-17-phase3-development-plan.md) | Development plan |
+| [Phase 2-5 Plan](plans/2026-06-17-phase3-development-plan.md) | Development plan |
 | [HBM3 Spec](specs/hbm3_spec.md) | HBM3 parameter reference |
 | [Ramulator2](../research/ramulator2/) | Reference simulator |
 
 ---
 
-*Document generated: 2026-06-25*
+## Recent Commits
+
+| Commit | Description |
+|--------|-------------|
+| `ab9d1f0` | fix: add missing List import and enhance address decoder |
+| `2408575` | docs: Complete final verification report for HBM3 Python vs Ramulator2 comparison |
+| `8f8827e` | fix: correct trace replay timing and add BankState import |
+| `4600e4f` | feat: add HBM3 comparison framework for Ramulator2 validation |
+| `7a3a1d3` | feat: update DRAM models and benchmark suite |
+
+---
+
+*Document generated: 2026-06-24*
