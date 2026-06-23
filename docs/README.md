@@ -1,8 +1,8 @@
 # HBM System Modeling Platform
 
-> **Version**: 2.2 | **Status**: Phase 2 Complete | **Tests**: 4,409 Passing
+> **Version**: 2.1.1 | **Status**: Phase 2 Complete | **Tests**: 4,409 Passing
 > **Branch**: `feat/hbm4-logic-base-die-phase2`
-> **Last Updated**: 2026-06-23
+> **Last Updated**: 2026-06-24
 
 ---
 
@@ -284,4 +284,4 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
-*Document generated: 2026-06-23*
+*Document generated: 2026-06-24*

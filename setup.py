@@ -32,7 +32,7 @@ if req_file.exists():
 
 setup(
     name="hbm4-model",
-    version="1.0.0",
+    version="2.1.1",
     description="HBM4 System Modeling Platform for chip design exploration and verification",
     long_description=long_description,
     long_description_content_type="text/markdown",

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hbm4-model"
-version = "1.0.0"
+version = "2.1.1"
 description = "HBM4 System Modeling Platform for chip design exploration and verification"
 readme = "README.md"
 license = {text = "Apache-2.0"}
