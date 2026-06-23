@@ -1,8 +1,8 @@
 # HBM 系统建模平台 - 项目状态报告
 
-**生成日期**: 2026-06-24
+**生成日期**: 2026-06-25
 **分支**: feat/hbm4-logic-base-die-phase2
-**最新提交**: ab9d1f0 (fix: add missing List import and enhance address decoder)
+**最新提交**: 10f658d (sync: update submodules and .gitmodules configuration)
 **当前版本**: 2.1.1
 
 ---
@@ -357,4 +357,4 @@ python -m build
 
 ---
 
-*报告自动生成于 2026-06-24*
+*报告自动生成于 2026-06-25*

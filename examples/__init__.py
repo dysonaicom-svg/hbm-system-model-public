@@ -26,14 +26,28 @@ from pathlib import Path
 
 # List of available examples
 EXAMPLES = {
+    # Basic
     "basic": "basic_controller.py",
     "address": "address_decoding.py",
+    "multi_channel": "multi_channel.py",
+
+    # Advanced Features
     "qos": "qos_scheduling.py",
+    "qos_priority": "qos_priority.py",
     "refresh": "refresh_scheduling.py",
     "dfi": "dfi_interface.py",
-    "bandwidth": "bandwidth_benchmark.py",
-    "multi_channel": "multi_channel.py",
     "dram_features": "dram_features.py",
+    "advanced": "advanced_features.py",
+
+    # Performance
+    "bandwidth": "bandwidth_benchmark.py",
+    "benchmark": "benchmark_example.py",
+    "performance": "performance_test.py",
+    "simulator": "simulator_example.py",
+
+    # Configuration
+    "config": "configuration_example.py",
+    "logic_base_die": "hbm4_logic_base_die_example.py",
 }
 
 
