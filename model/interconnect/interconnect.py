@@ -1359,3 +1359,206 @@ def create_interconnect(
             routing_mode=routing,
             arbitration_mode=arb,
         )
+
+
+class HBM4AddressTranslator:
+    """HBM4 address translator for interconnect routing
+
+    Translates system addresses to HBM4 stack/channel/bank addresses
+    based on JEDEC JESD270-4A HBM4 specification.
+
+    Attributes:
+        num_stacks: Number of HBM4 stacks
+        channels_per_stack: Channels per stack (32 for HBM4)
+        banks_per_channel: Banks per channel (16 for HBM4)
+        rows_per_bank: Rows per bank (typically 2^16)
+        cols_per_row: Columns per row (typically 256 or 512)
+        bus_width: Data bus width (2048 bits for HBM4)
+        pseudo_channel_mode: Enable pseudo-channel addressing
+    """
+
+    def __init__(
+        self,
+        num_stacks: int = 1,
+        channels_per_stack: int = 32,
+        banks_per_channel: int = 16,
+        rows_per_bank: int = 65536,
+        cols_per_row: int = 256,
+        bus_width: int = 2048 // 8,  # 256 bytes = 2048 bits
+        pseudo_channel_mode: bool = False,
+    ):
+        self.num_stacks = num_stacks
+        self.channels_per_stack = channels_per_stack
+        self.banks_per_channel = banks_per_channel
+        self.rows_per_bank = rows_per_bank
+        self.cols_per_row = cols_per_row
+        self.bus_width = bus_width
+        self.pseudo_channel_mode = pseudo_channel_mode
+
+        # Address field bit widths
+        self.stack_bits = max(1, (num_stacks - 1).bit_length())
+        self.channel_bits = max(1, (channels_per_stack - 1).bit_length())
+        self.bank_bits = max(1, (banks_per_channel - 1).bit_length())
+        self.row_bits = max(1, (rows_per_bank - 1).bit_length())
+        self.col_bits = max(1, (cols_per_row - 1).bit_length())
+
+        # Calculate offset bits (burst size = bus_width)
+        self.offset_bits = max(1, (bus_width - 1).bit_length())
+
+    def translate(self, address: int) -> Dict[str, int]:
+        """Translate a system address to HBM4 address fields
+
+        Args:
+            address: 64-bit system address
+
+        Returns:
+            Dictionary with stack, channel, bank, row, col fields
+        """
+        # Mask for address field
+        addr_mask = (1 << 48) - 1  # Use lower 48 bits
+
+        addr = address & addr_mask
+
+        # Extract fields (from LSB to MSB)
+        offset = addr & ((1 << self.offset_bits) - 1)
+        addr >>= self.offset_bits
+
+        col = addr & ((1 << self.col_bits) - 1)
+        addr >>= self.col_bits
+
+        row = addr & ((1 << self.row_bits) - 1)
+        addr >>= self.row_bits
+
+        bank = addr & ((1 << self.bank_bits) - 1)
+        addr >>= self.bank_bits
+
+        channel = addr & ((1 << self.channel_bits) - 1)
+        addr >>= self.channel_bits
+
+        stack = addr & ((1 << self.stack_bits) - 1)
+
+        return {
+            'stack': stack,
+            'channel': channel,
+            'bank': bank,
+            'row': row,
+            'col': col,
+            'offset': offset,
+        }
+
+    def route_to_stack_channel(self, address: int) -> Tuple[int, int]:
+        """Route address to destination stack and channel
+
+        Args:
+            address: System address
+
+        Returns:
+            Tuple of (stack_id, channel_id)
+        """
+        fields = self.translate(address)
+        return fields['stack'], fields['channel']
+
+
+class InterconnectScheduler:
+    """Interconnect-level scheduler for managing request ordering
+
+    Provides QoS-aware scheduling across the interconnect fabric,
+    supporting priority queuing and fairness mechanisms.
+
+    Attributes:
+        num_queues: Number of priority queues
+        max_queue_depth: Maximum depth per queue
+        scheduling_mode: Round-robin or priority-based
+    """
+
+    def __init__(
+        self,
+        num_queues: int = 16,
+        max_queue_depth: int = 64,
+        scheduling_mode: ArbitrationMode = ArbitrationMode.PRIORITY,
+    ):
+        self.num_queues = num_queues
+        self.max_queue_depth = max_queue_depth
+        self.scheduling_mode = scheduling_mode
+
+        # Initialize priority queues
+        self._queues: List[deque] = [deque() for _ in range(num_queues)]
+        self._queue_depths: List[int] = [0] * num_queues
+
+        # Round-robin pointer
+        self._rr_ptr: int = 0
+
+        # Statistics
+        self.total_scheduled: int = 0
+        self.total_dropped: int = 0
+
+    def enqueue(self, request: InterconnectRequest) -> bool:
+        """Add a request to the scheduler
+
+        Args:
+            request: Request to enqueue
+
+        Returns:
+            True if enqueued successfully, False if dropped
+        """
+        # Map QoS level (0-15) to queue index (0 to num_queues-1)
+        qos = max(0, min(15, request.qos))
+        queue_idx = (qos * self.num_queues) // 16
+
+        # Check queue depth
+        if self._queue_depths[queue_idx] >= self.max_queue_depth:
+            self.total_dropped += 1
+            return False
+
+        self._queues[queue_idx].append(request)
+        self._queue_depths[queue_idx] += 1
+        return True
+
+    def dequeue(self) -> Optional[InterconnectRequest]:
+        """Remove and return the next scheduled request
+
+        Returns:
+            Next request or None if all queues empty
+        """
+        if self.scheduling_mode == ArbitrationMode.PRIORITY:
+            return self._dequeue_priority()
+        else:
+            return self._dequeue_round_robin()
+
+    def _dequeue_priority(self) -> Optional[InterconnectRequest]:
+        """Dequeue using strict priority (highest first)"""
+        for queue_idx in range(self.num_queues - 1, -1, -1):
+            if self._queues[queue_idx]:
+                req = self._queues[queue_idx].popleft()
+                self._queue_depths[queue_idx] -= 1
+                self.total_scheduled += 1
+                return req
+        return None
+
+    def _dequeue_round_robin(self) -> Optional[InterconnectRequest]:
+        """Dequeue using round-robin across all queues"""
+        start_ptr = self._rr_ptr
+        while True:
+            if self._queues[self._rr_ptr]:
+                req = self._queues[self._rr_ptr].popleft()
+                self._queue_depths[self._rr_ptr] -= 1
+                self.total_scheduled += 1
+                self._rr_ptr = (self._rr_ptr + 1) % self.num_queues
+                return req
+
+            self._rr_ptr = (self._rr_ptr + 1) % self.num_queues
+            if self._rr_ptr == start_ptr:
+                return None
+
+    def queue_depth(self, queue_idx: Optional[int] = None) -> int:
+        """Get current queue depth(s)
+
+        Args:
+            queue_idx: Specific queue or None for total
+
+        Returns:
+            Queue depth
+        """
+        if queue_idx is None:
+            return sum(self._queue_depths)
+        return self._queue_depths[queue_idx] if 0 <= queue_idx < self.num_queues else 0

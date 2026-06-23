@@ -372,13 +372,18 @@ class TestHBM4ControllerAddressDecoding:
             assert decoded.pseudo_channel_id == pch
 
     def test_decode_row_bank(self):
-        """Test row and bank decoding"""
+        """Test row and bank decoding with RCBC mapping (default)
+
+        Note: HBM4AddressDecoder uses RCBC mapping by default for better row locality.
+        Row is at bits 16-31 in RCBC mapping, not 17-32 as in RBC legacy.
+        """
         controller = HBM4Controller()
         decoder = HBM4AddressDecoder()
 
-        # For RBC mapping: row at bits 32:17 (16 bits), channel at bits 45:41
+        # For RCBC mapping: row at bits 16:31 (16 bits)
+        # Row bits are at positions 16-31, so row_id = addr >> 16
         row = 0x1000
-        addr = (row << 17) | 0x8  # Row at bits 32:17, 8-byte aligned
+        addr = (row << 16) | 0x8  # Row at bits 16:31, 8-byte aligned
         request_id = controller.submit_request(addr=addr, is_read=True)
         assert request_id is not None
 

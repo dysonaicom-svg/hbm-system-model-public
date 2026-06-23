@@ -58,6 +58,45 @@ class DataPrecision(IntEnum):
     INT4 = 4
 
 
+class QoSLevel(IntEnum):
+    """HBM4 QoS priority levels (0-15)
+
+    Higher values = higher priority.
+    Critical traffic (real-time AI inference) gets highest priority.
+    """
+    CRITICAL = 15    # Real-time/critical - latency-sensitive AI inference
+    HIGH = 12        # High priority - time-sensitive workloads
+    NORMAL = 8       # Normal traffic - general compute
+    LOW = 4          # Background/batch - batch processing
+    IDLE = 0         # Idle/probe - diagnostic traffic
+
+
+class TrafficType(IntEnum):
+    """HBM4 traffic classification types
+
+    Maps application-level traffic types to QoS priorities.
+    """
+    REAL_TIME = 15      # AI inference, latency-critical
+    CRITICAL = 15       # Critical data transfers
+    HIGH_PRIORITY = 12  # Time-sensitive workloads
+    NORMAL = 8          # General compute
+    BACKGROUND = 4      # Batch processing
+    PROBE = 0           # Diagnostic traffic
+    IDLE = 0            # Idle/idle probing
+
+
+# Traffic type to QoS level mapping
+TRAFFIC_TYPE_TO_QOS = {
+    TrafficType.REAL_TIME: QoSLevel.CRITICAL,
+    TrafficType.CRITICAL: QoSLevel.CRITICAL,
+    TrafficType.HIGH_PRIORITY: QoSLevel.HIGH,
+    TrafficType.NORMAL: QoSLevel.NORMAL,
+    TrafficType.BACKGROUND: QoSLevel.LOW,
+    TrafficType.PROBE: QoSLevel.IDLE,
+    TrafficType.IDLE: QoSLevel.IDLE,
+}
+
+
 @dataclass
 class TrafficConfig:
     """Traffic generation configuration
@@ -638,6 +677,191 @@ class SinusoidalPattern(SyntheticPattern):
         return requests
 
 
+class HotspotPattern(SyntheticPattern):
+    """Hotspot traffic pattern (80/20 rule)
+
+    Generates traffic where 80% of requests go to 20% of addresses.
+    Suitable for workloads with locality characteristics.
+
+    Attributes:
+        hotspot_ratio: Fraction of traffic targeting hotspot (default 0.8)
+        hotspot_range: Fraction of address space for hotspots (default 0.2)
+    """
+
+    def __init__(self, hotspot_ratio: float = 0.8, hotspot_range: float = 0.2):
+        """Initialize hotspot pattern
+
+        Args:
+            hotspot_ratio: Fraction of traffic to hotspot (0.0-1.0)
+            hotspot_range: Fraction of address space for hotspots (0.0-1.0)
+        """
+        self.hotspot_ratio = hotspot_ratio
+        self.hotspot_range = hotspot_range
+        self.addr_gen = AddressGenerator()
+
+    def generate_requests(self, config: TrafficConfig, count: int) -> List[HBMRequest]:
+        """Generate hotspot requests"""
+        requests = []
+
+        for _ in range(count):
+            # Determine if this request goes to hotspot
+            if random.random() < self.hotspot_ratio:
+                # Hotspot access - use beginning of address range
+                max_hotspot = int(config.address_range * self.hotspot_range)
+                addr = config.base_address + random.randint(0, max_hotspot)
+            else:
+                # Non-hotspot access - use remaining address range
+                hotspot_end = int(config.address_range * self.hotspot_range)
+                addr = config.base_address + hotspot_end + random.randint(0, config.address_range - hotspot_end)
+
+            request = HBMRequest(
+                addr=addr,
+                length=64,
+                is_read=random.random() < config.read_write_ratio,
+                qos=_sample_qos(config.qos_distribution),
+                burst_length=config.burst_size,
+            )
+            requests.append(request)
+
+        return requests
+
+
+class NeighborPattern(SyntheticPattern):
+    """Neighbor access pattern
+
+    Generates traffic with high spatial locality - accesses tend to
+    be near previously accessed addresses. Suitable for streaming workloads.
+
+    Attributes:
+        locality_radius: How far from current location to jump (in bytes)
+        jump_probability: Probability of jumping vs sequential access
+    """
+
+    def __init__(self, locality_radius: int = 1024, jump_probability: float = 0.1):
+        """Initialize neighbor pattern
+
+        Args:
+            locality_radius: Maximum jump distance in bytes
+            jump_probability: Probability of a random jump (0.0-1.0)
+        """
+        self.locality_radius = locality_radius
+        self.jump_probability = jump_probability
+        self._current_addr = 0
+
+    def generate_requests(self, config: TrafficConfig, count: int) -> List[HBMRequest]:
+        """Generate neighbor requests"""
+        requests = []
+
+        for _ in range(count):
+            # Decide whether to jump or continue sequentially
+            if random.random() < self.jump_probability:
+                # Random jump within locality radius
+                offset = random.randint(-self.locality_radius, self.locality_radius)
+                self._current_addr = max(
+                    config.base_address,
+                    min(config.base_address + config.address_range - 64,
+                        self._current_addr + offset)
+                )
+            else:
+                # Sequential access
+                self._current_addr += config.address_stride
+
+            request = HBMRequest(
+                addr=self._current_addr,
+                length=64,
+                is_read=random.random() < config.read_write_ratio,
+                qos=_sample_qos(config.qos_distribution),
+                burst_length=config.burst_size,
+            )
+            requests.append(request)
+
+        return requests
+
+
+class StridePattern(SyntheticPattern):
+    """Stride access pattern
+
+    Generates traffic with fixed stride between accesses.
+    Suitable for linear algebra workloads (matrix operations).
+
+    Attributes:
+        stride: Fixed stride between accesses in bytes
+    """
+
+    def __init__(self, stride: int = 4096):
+        """Initialize stride pattern
+
+        Args:
+            stride: Stride between accesses in bytes
+        """
+        self.stride = stride
+        self.addr_gen = AddressGenerator()
+
+    def generate_requests(self, config: TrafficConfig, count: int) -> List[HBMRequest]:
+        """Generate stride requests"""
+        requests = []
+
+        for _ in range(count):
+            addr = self.addr_gen.stride_access(1, self.stride)[0]
+
+            request = HBMRequest(
+                addr=addr,
+                length=64,
+                is_read=random.random() < config.read_write_ratio,
+                qos=_sample_qos(config.qos_distribution),
+                burst_length=config.burst_size,
+            )
+            requests.append(request)
+
+        return requests
+
+
+class ChannelInterleavePattern(SyntheticPattern):
+    """Channel interleaving pattern
+
+    Generates traffic that distributes evenly across HBM4 channels
+    for maximum bandwidth utilization.
+
+    Attributes:
+        channels_per_stack: Number of channels to interleave across
+        interleave_factor: Granularity of interleaving (in bytes)
+    """
+
+    def __init__(self, channels_per_stack: int = 32, interleave_factor: int = 64):
+        """Initialize channel interleave pattern
+
+        Args:
+            channels_per_stack: Number of channels to interleave across
+            interleave_factor: Size of each interleaved segment in bytes
+        """
+        self.channels_per_stack = channels_per_stack
+        self.interleave_factor = interleave_factor
+        self._current_channel = 0
+
+    def generate_requests(self, config: TrafficConfig, count: int) -> List[HBMRequest]:
+        """Generate channel-interleaved requests"""
+        requests = []
+
+        for _ in range(count):
+            # Calculate address based on current channel
+            channel_offset = self._current_channel * self.interleave_factor * self.channels_per_stack
+            addr = config.base_address + channel_offset
+
+            request = HBMRequest(
+                addr=addr,
+                length=64,
+                is_read=random.random() < config.read_write_ratio,
+                qos=_sample_qos(config.qos_distribution),
+                burst_length=config.burst_size,
+            )
+            requests.append(request)
+
+            # Round-robin to next channel
+            self._current_channel = (self._current_channel + 1) % self.channels_per_stack
+
+        return requests
+
+
 class TraceReplayPattern(SyntheticPattern):
     """Trace replay pattern
 
@@ -754,6 +978,20 @@ class TrafficGenerator:
             TrafficPattern.SYNTHETIC_RAMP_DOWN: RampPattern(ramp_up=False),
             TrafficPattern.SYNTHETIC_SINUSOIDAL: SinusoidalPattern(),
             TrafficPattern.TRACE_REPLAY: TraceReplayPattern(),
+            TrafficPattern.ADDRESS_PATTERN: HotspotPattern(),  # Use Hotspot as default for ADDRESS_PATTERN
+        }
+
+        # New traffic patterns
+        self._new_patterns: Dict[TrafficPattern, SyntheticPattern] = {
+            TrafficPattern.ADDRESS_PATTERN: HotspotPattern(),
+        }
+
+        # Register additional patterns
+        self._additional_patterns = {
+            'hotspot': HotspotPattern(),
+            'neighbor': NeighborPattern(),
+            'stride': StridePattern(),
+            'channel_interleave': ChannelInterleavePattern(),
         }
 
         # AI training patterns
@@ -1134,3 +1372,127 @@ def create_traffic_generator(
     generator.set_pattern(pattern)
 
     return generator
+
+
+class AddressPatternGeneratorWrapper:
+    """Wrapper for AddressPatternGenerator providing additional convenience methods
+
+    Provides a unified interface for address generation with pattern support
+    and caching capabilities.
+
+    Attributes:
+        config: Traffic configuration
+        pattern: Current address pattern type
+        cache_enabled: Whether to cache generated addresses
+    """
+
+    def __init__(
+        self,
+        config: Optional[TrafficConfig] = None,
+        pattern: str = "sequential",
+        cache_enabled: bool = False,
+    ):
+        """Initialize address pattern generator wrapper
+
+        Args:
+            config: Traffic configuration
+            pattern: Initial pattern type
+            cache_enabled: Enable address caching
+        """
+        self.config = config if config else TrafficConfig()
+        self.pattern = pattern
+        self.cache_enabled = cache_enabled
+        self._cache: List[int] = []
+        self._cache_index = 0
+
+        # Create underlying generator
+        self._generator = AddressPatternGenerator(self.config)
+        self._generator.set_pattern(pattern)
+
+    def set_pattern(self, pattern: str, **kwargs):
+        """Set address pattern
+
+        Args:
+            pattern: Pattern type (sequential, random, stride, custom)
+            **kwargs: Pattern-specific parameters
+        """
+        self.pattern = pattern
+        self._generator.set_pattern(pattern, **kwargs)
+        self._clear_cache()
+
+    def next(self) -> int:
+        """Get next address
+
+        Returns:
+            Next address
+        """
+        if self.cache_enabled and self._cache:
+            if self._cache_index >= len(self._cache):
+                self._cache_index = 0
+            addr = self._cache[self._cache_index]
+            self._cache_index += 1
+            return addr
+
+        return self._generator.next()
+
+    def next_batch(self, count: int) -> List[int]:
+        """Get next batch of addresses
+
+        Args:
+            count: Number of addresses
+
+        Returns:
+            List of addresses
+        """
+        return [self.next() for _ in range(count)]
+
+    def prefill_cache(self, count: int = 1024):
+        """Prefill address cache
+
+        Args:
+            count: Number of addresses to prefetch
+        """
+        if self.cache_enabled:
+            self._cache = self._generator.next_batch(count)
+            self._cache_index = 0
+
+    def _clear_cache(self):
+        """Clear address cache"""
+        self._cache = []
+        self._cache_index = 0
+
+    def reset(self):
+        """Reset generator state"""
+        self._generator.reset()
+        self._clear_cache()
+
+
+def create_address_aware_traffic_generator(
+    pattern: TrafficPattern = TrafficPattern.SYNTHETIC_FIXED_RATE,
+    read_write_ratio: float = 0.7,
+    request_rate: float = 1e6,
+    **kwargs
+) -> Tuple[TrafficGenerator, AddressPatternGeneratorWrapper]:
+    """Create traffic generator with address-aware wrapper
+
+    Args:
+        pattern: Traffic pattern
+        read_write_ratio: Read/write ratio
+        request_rate: Request rate
+        **kwargs: Additional configuration
+
+    Returns:
+        Tuple of (TrafficGenerator, AddressPatternGeneratorWrapper)
+    """
+    config = TrafficConfig(
+        read_write_ratio=read_write_ratio,
+        request_rate=request_rate,
+        **kwargs
+    )
+
+    generator = TrafficGenerator(config)
+    generator.set_pattern(pattern)
+
+    wrapper = AddressPatternGeneratorWrapper(config)
+
+    return generator, wrapper
