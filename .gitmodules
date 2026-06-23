@@ -3,3 +3,21 @@
 	path = public_release
 	url = https://github.com/dysonaicom-svg/hbm-system-model-public.git
 	update = rebase
+
+[submodule "research/reference_models/DRAMSys"]
+	active = true
+	path = research/reference_models/DRAMSys
+	url = https://github.com/tukl-msd/DRAMSys.git
+	update = rebase
+
+[submodule "research/reference_models/ramulator"]
+	active = true
+	path = research/reference_models/ramulator
+	url = https://github.com/CMU-SAFARI/ramulator.git
+	update = rebase
+
+[submodule "research/reference_models/ramulator2"]
+	active = true
+	path = research/reference_models/ramulator2
+	url = https://github.com/CMU-SAFARI/ramulator2.git
+	update = rebase
