@@ -138,6 +138,9 @@ class SimulationStats:
     # Peak bandwidth for efficiency calculation (GB/s)
     _peak_bandwidth: float = field(default=0.0, repr=False)
 
+    # Clock period for bandwidth calculation (from config, default HBM3)
+    _tCK_ns: float = field(default=0.78125, repr=False)
+
     # Queue monitoring
     peak_queue_depth: int = 0
     reject_count: int = 0
@@ -168,8 +171,8 @@ class SimulationStats:
             return 0.0
         # HBM3 burst length 32 bytes, each request 4 bursts = 128 bytes per request
         bytes_transferred = self.completed_requests * 128
-        # tCK = 781.25 ps = 0.78125 ns per cycle
-        tCK_ns = 0.78125
+        # Use configurable tCK from HBM config
+        tCK_ns = self._tCK_ns
         total_ns = self.total_cycles * tCK_ns
         # Bandwidth = bytes / seconds = bytes / (ns * 1e-9) / 1e9 = GB/s
         return bytes_transferred / total_ns
@@ -185,7 +188,7 @@ class SimulationStats:
             return 0.0
         # Each DRAM operation transfers 64 bytes (one pseudo-channel burst)
         bytes_transferred = (self.total_dram_reads + self.total_dram_writes) * 64
-        tCK_ns = 0.78125
+        tCK_ns = self._tCK_ns
         total_ns = self.total_cycles * tCK_ns
         return bytes_transferred / total_ns
 
@@ -222,7 +225,7 @@ class SimulationStats:
 
         # Effective throughput considers that requests complete over time
         # based on the pipelined nature of DRAM operations
-        tCK_ns = 0.78125
+        tCK_ns = self._tCK_ns
         total_ns = total_cycles * tCK_ns
 
         # Use completed requests but account for pipelining
@@ -632,8 +635,10 @@ class HBMSimulator:
         self.stats.per_channel_stats = {
             i: ChannelStats(channel_id=i) for i in range(total_channels)
         }
-        # Set peak bandwidth for efficiency calculation
+        # Set peak bandwidth and clock period for efficiency calculation
         self.stats._peak_bandwidth = sim_config.hbm_config.calc_bandwidth_total()
+        # Use timing.tCK_ps from config (handles both HBM3 and HBM4 correctly)
+        self.stats._tCK_ns = sim_config.hbm_config.timing.tCK_ps / 1000.0
 
         # Simulation state
         self.current_cycle = 0
