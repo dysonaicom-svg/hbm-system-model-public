@@ -2218,6 +2218,19 @@ class HBM4ChannelArray:
         for ch in self.channels:
             ch.tick()
 
+    def fast_forward(self, cycles: int) -> None:
+        """Fast-forward through idle cycles without processing
+
+        This is an optimization for simulations where the memory is idle.
+        It simply updates the cycle counters without processing each channel.
+
+        Args:
+            cycles: Number of cycles to advance
+        """
+        self.current_cycle += cycles
+        # Don't update per-channel state since we're idle
+        # Any code checking state should use tick() instead
+
     def validate_all_timing(self) -> List[TimingViolation]:
         """Validate timing for all channels
 
