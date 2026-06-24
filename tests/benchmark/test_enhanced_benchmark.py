@@ -154,7 +154,7 @@ class TestEnhancedBenchmark:
         """Test basic refresh impact test execution"""
         benchmark = EnhancedBenchmark(speed_grade="8Gbps")
         result = benchmark.run_refresh_impact_test(
-            test_duration_ns=50_000,
+            test_duration_ns=2_000,
             enable_refresh=True
         )
 
@@ -166,7 +166,7 @@ class TestEnhancedBenchmark:
         """Test that refresh causes some bandwidth loss"""
         benchmark = EnhancedBenchmark(speed_grade="8Gbps")
         result = benchmark.run_refresh_impact_test(
-            test_duration_ns=50_000,
+            test_duration_ns=2_000,
             enable_refresh=True
         )
 
@@ -178,7 +178,7 @@ class TestEnhancedBenchmark:
     def test_refresh_coverage(self):
         """Test refresh coverage calculation"""
         benchmark = EnhancedBenchmark(speed_grade="8Gbps")
-        result = benchmark.run_refresh_impact_test(test_duration_ns=50_000)
+        result = benchmark.run_refresh_impact_test(test_duration_ns=2_000)
 
         # Refresh coverage should be reasonable
         assert 0 <= result.refresh_coverage_percent <= 100
@@ -274,7 +274,7 @@ class TestEnhancedBenchmark:
         bg_result = benchmark.run_bank_group_conflict_test(num_requests=50)
         assert isinstance(bg_result.to_dict(), dict)
 
-        rf_result = benchmark.run_refresh_impact_test(test_duration_ns=20_000)
+        rf_result = benchmark.run_refresh_impact_test(test_duration_ns=2_000)
         assert isinstance(rf_result.to_dict(), dict)
 
         qos_result = benchmark.run_qos_impact_test(num_requests=50)

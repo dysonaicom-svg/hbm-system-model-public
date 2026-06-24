@@ -48,6 +48,16 @@ class TrafficPattern(IntEnum):
     TRACE_REPLAY = 30              # Replay from recorded trace
     ADDRESS_PATTERN = 31            # Custom address pattern
 
+    # Pattern aliases for compatibility (mapped to address_pattern module patterns)
+    PATTERN_SEQUENTIAL = 40        # Alias for sequential pattern
+    PATTERN_RANDOM = 41            # Alias for random pattern
+    PATTERN_STRIDE_1KB = 42        # Alias for 1KB stride
+    PATTERN_STRIDE_4KB = 43        # Alias for 4KB stride
+    PATTERN_STRIDE_64KB = 44       # Alias for 64KB stride
+    PATTERN_HOTSPOT = 45           # Alias for hotspot pattern
+    PATTERN_NEIGHBOR = 46          # Alias for neighbor pattern
+    PATTERN_CHANNEL_INTERLEAVE = 47 # Alias for channel interleave
+
 
 class DataPrecision(IntEnum):
     """Data precision types for mixed precision inference"""
@@ -143,6 +153,26 @@ class TrafficConfig:
     channels: int = 32
     pseudo_channels: int = 64
     banks_per_channel: int = 16
+
+    # Bandwidth throttling configuration
+    enable_throttling: bool = False
+    max_bandwidth_gbps: float = 100.0
+
+    def __post_init__(self):
+        """Validate configuration"""
+        # Validate read_write_ratio
+        if not 0.0 <= self.read_write_ratio <= 1.0:
+            raise ValueError(f"read_write_ratio must be between 0.0 and 1.0, got {self.read_write_ratio}")
+
+        # Validate channels
+        if self.channels <= 0:
+            raise ValueError(f"channels must be positive, got {self.channels}")
+        if self.channels > 64:  # HBM4 max channels
+            raise ValueError(f"channels exceeds HBM4 maximum of 64, got {self.channels}")
+
+        # Validate bandwidth
+        if self.max_bandwidth_gbps < 0:
+            raise ValueError(f"max_bandwidth_gbps must be non-negative, got {self.max_bandwidth_gbps}")
 
 
 @dataclass
@@ -837,15 +867,20 @@ class ChannelInterleavePattern(SyntheticPattern):
         self.channels_per_stack = channels_per_stack
         self.interleave_factor = interleave_factor
         self._current_channel = 0
+        self._current_addr = 0
 
     def generate_requests(self, config: TrafficConfig, count: int) -> List[HBMRequest]:
         """Generate channel-interleaved requests"""
         requests = []
 
         for _ in range(count):
-            # Calculate address based on current channel
-            channel_offset = self._current_channel * self.interleave_factor * self.channels_per_stack
-            addr = config.base_address + channel_offset
+            # Calculate channel offset using round-robin
+            channel_offset = self._current_channel * (config.address_range // self.channels_per_stack)
+
+            # Calculate address with proper channel distribution
+            # Use interleaved addressing: address = base + channel_offset + intra_channel_offset
+            intra_offset = self._current_addr % self.interleave_factor
+            addr = config.base_address + channel_offset + intra_offset
 
             request = HBMRequest(
                 addr=addr,
@@ -858,6 +893,7 @@ class ChannelInterleavePattern(SyntheticPattern):
 
             # Round-robin to next channel
             self._current_channel = (self._current_channel + 1) % self.channels_per_stack
+            self._current_addr += 1
 
         return requests
 
@@ -962,6 +998,12 @@ class TrafficGenerator:
         self.config = config if config else TrafficConfig()
         self.hbm_spec = HBM4Spec()
 
+        # Bandwidth throttling configuration
+        self._throttle_enabled = False
+        self._max_bandwidth_gbps = 100.0
+        self._bytes_generated = 0
+        self._generation_start_time = time.time()
+
         # Initialize address generator
         self.addr_gen = AddressGenerator(
             base_address=self.config.base_address,
@@ -978,7 +1020,16 @@ class TrafficGenerator:
             TrafficPattern.SYNTHETIC_RAMP_DOWN: RampPattern(ramp_up=False),
             TrafficPattern.SYNTHETIC_SINUSOIDAL: SinusoidalPattern(),
             TrafficPattern.TRACE_REPLAY: TraceReplayPattern(),
-            TrafficPattern.ADDRESS_PATTERN: HotspotPattern(),  # Use Hotspot as default for ADDRESS_PATTERN
+            TrafficPattern.ADDRESS_PATTERN: HotspotPattern(),
+            # Pattern aliases
+            TrafficPattern.PATTERN_SEQUENTIAL: FixedRatePattern(),  # Uses sequential address generation
+            TrafficPattern.PATTERN_RANDOM: RandomPattern(),
+            TrafficPattern.PATTERN_STRIDE_1KB: StridePattern(stride=1024),
+            TrafficPattern.PATTERN_STRIDE_4KB: StridePattern(stride=4096),
+            TrafficPattern.PATTERN_STRIDE_64KB: StridePattern(stride=65536),
+            TrafficPattern.PATTERN_HOTSPOT: HotspotPattern(),
+            TrafficPattern.PATTERN_NEIGHBOR: NeighborPattern(),
+            TrafficPattern.PATTERN_CHANNEL_INTERLEAVE: ChannelInterleavePattern(),
         }
 
         # New traffic patterns
@@ -1015,6 +1066,7 @@ class TrafficGenerator:
             'write_requests': 0,
             'requests_by_qos': {i: 0 for i in range(16)},
             'pattern_switches': 0,
+            'requests_by_channel': {i: 0 for i in range(32)},
         }
 
         # Current pattern
@@ -1036,16 +1088,23 @@ class TrafficGenerator:
                 self._current_pattern = pattern
                 self._stats['pattern_switches'] += 1
 
-    def generate(self, count: int = 1, pattern: Optional[TrafficPattern] = None) -> List[HBMRequest]:
+    def generate(self, count: int = 1, pattern: Optional[TrafficPattern] = None, timestamp: Optional[float] = None) -> List[HBMRequest]:
         """Generate traffic requests
 
         Args:
             count: Number of requests to generate
             pattern: Optional pattern override
+            timestamp: Optional timestamp for requests
 
         Returns:
             List of HBMRequest objects
+
+        Raises:
+            ValueError: If count is zero or negative
         """
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}")
+
         with self._lock:
             p = pattern if pattern else self._current_pattern
 
@@ -1062,10 +1121,31 @@ class TrafficGenerator:
                 # Default to fixed rate
                 requests = self._patterns[TrafficPattern.SYNTHETIC_FIXED_RATE].generate_requests(self.config, count)
 
+            # Apply timestamp if provided
+            if timestamp is not None:
+                for req in requests:
+                    req.arrival_time = timestamp
+
             # Update statistics
             self._update_stats(requests)
 
             return requests
+
+    def enable_bandwidth_throttle(self, max_bandwidth_gbps: float):
+        """Enable bandwidth throttling
+
+        Args:
+            max_bandwidth_gbps: Maximum bandwidth in GB/s
+        """
+        self._throttle_enabled = True
+        self._max_bandwidth_gbps = max_bandwidth_gbps
+        self.config.enable_throttling = True
+        self.config.max_bandwidth_gbps = max_bandwidth_gbps
+
+    def disable_bandwidth_throttle(self):
+        """Disable bandwidth throttling"""
+        self._throttle_enabled = False
+        self.config.enable_throttling = False
 
     def generate_stream(self, pattern: TrafficPattern = TrafficPattern.SYNTHETIC_FIXED_RATE,
                        batch_size: int = 32) -> Iterator[List[HBMRequest]]:
@@ -1090,6 +1170,10 @@ class TrafficGenerator:
         """
         self._stats['total_requests'] += len(requests)
 
+        # Track bytes generated (64 bytes per request default)
+        bytes_this_batch = sum(req.length for req in requests)
+        self._bytes_generated += bytes_this_batch
+
         for req in requests:
             if req.is_read:
                 self._stats['read_requests'] += 1
@@ -1097,6 +1181,12 @@ class TrafficGenerator:
                 self._stats['write_requests'] += 1
 
             self._stats['requests_by_qos'][req.qos] = self._stats['requests_by_qos'].get(req.qos, 0) + 1
+
+            # Track channel distribution
+            # Extract channel from address (HBM4 channel bits at position 2-6)
+            channel = (req.addr >> 2) & 0x1F  # 5 bits for 32 channels
+            if channel < 32:
+                self._stats['requests_by_channel'][channel] = self._stats['requests_by_channel'].get(channel, 0) + 1
 
     def get_stats(self) -> Dict:
         """Get traffic statistics
@@ -1115,6 +1205,13 @@ class TrafficGenerator:
                 stats['read_ratio'] = 0.0
                 stats['write_ratio'] = 0.0
 
+            # Add bytes generated
+            stats['bytes_generated'] = self._bytes_generated
+
+            # Add channel distribution if available
+            if hasattr(self, '_channel_distribution'):
+                stats['requests_by_channel'] = self._channel_distribution
+
             return stats
 
     def reset_stats(self):
@@ -1126,18 +1223,22 @@ class TrafficGenerator:
                 'write_requests': 0,
                 'requests_by_qos': {i: 0 for i in range(16)},
                 'pattern_switches': 0,
+                'requests_by_channel': {i: 0 for i in range(32)},
             }
+            self._bytes_generated = 0
 
     def reset(self):
         """Reset generator state"""
         with self._lock:
             self.addr_gen.reset()
+            self._bytes_generated = 0
             self._stats = {
                 'total_requests': 0,
                 'read_requests': 0,
                 'write_requests': 0,
                 'requests_by_qos': {i: 0 for i in range(16)},
                 'pattern_switches': 0,
+                'requests_by_channel': {i: 0 for i in range(32)},
             }
             self._last_pattern = self._current_pattern
 

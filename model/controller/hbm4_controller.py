@@ -737,6 +737,44 @@ class HBM4Controller:
 
         return responses
 
+    def advance_to_time(self, target_time_ns: int) -> List[HBMResponse]:
+        """Efficiently advance simulation to target time
+
+        This method optimizes the common case where there are no pending requests
+        or refresh operations. It can fast-forward through idle cycles without
+        calling the expensive full tick() method for each cycle.
+
+        Args:
+            target_time_ns: Target simulation time in nanoseconds
+
+        Returns:
+            List of all completed responses during the advancement
+        """
+        all_responses = []
+
+        while self.current_time_ns < target_time_ns:
+            # Check if we can skip ahead
+            # Only skip if no pending requests and no refresh pending
+            has_pending = bool(self._pending_requests)
+            refresh_pending = self.refresh_scheduler and self.refresh_scheduler.can_refresh()
+
+            if not has_pending and not refresh_pending:
+                # Calculate how far we can skip
+                cycles_to_skip = min(1000, target_time_ns - self.current_time_ns)
+
+                # Fast path: update time using fast_forward
+                self._cycle_count += cycles_to_skip
+                self.current_time_ns += cycles_to_skip
+
+                # Use fast_forward for channel model (no per-channel processing)
+                self.channel_model.fast_forward(cycles_to_skip)
+            else:
+                # There are pending operations, must tick one at a time
+                responses = self.tick()
+                all_responses.extend(responses)
+
+        return all_responses
+
     def _handle_refresh(self) -> Optional[HBMResponse]:
         """Handle refresh scheduling and execute on channel model
 
