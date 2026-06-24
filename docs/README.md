@@ -1,8 +1,24 @@
 # HBM System Modeling Platform
 
-> **Version**: 2.2.0 | **Status**: Phase G-J Complete | **Tests**: 4,409+ Passing
+> **Version**: 2.4.0 | **Status**: All Phases Complete | **Tests**: 4,409+ Passing
 > **Branch**: `feat/hbm4-logic-base-die-phase2`
 > **Last Updated**: 2026-06-24
+
+---
+
+## v2.4.0 Release Notes (2026-06-24)
+
+### New Features
+- **Phase 5 Complete**: HBM4 Controller Integration
+  - Command Pipeline (4-stage pipeline)
+  - Bank Conflict Tracker
+  - HBM4ChannelArray (32-channel integration)
+  - Address Decoder (RBC/BCR/CRB mapping schemes)
+- **140 new test cases** added (73 Controller + 67 Address Decoder)
+- **Bug fixes**: BCR/CRB mapping issues, row locality analysis
+
+### All Phases Complete
+Phase 0-5 and A-J all completed, marking the first production release.
 
 ---
 
@@ -21,6 +37,7 @@
 | H | Unified Simulator | ✅ **Complete** |
 | I | Performance Optimization | ✅ **Complete** |
 | J | Controller Integration | ✅ **Complete** |
+| **5** | **HBM4 Controller Integration** | ✅ **Complete** |
 
 ---
 
@@ -158,7 +175,7 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| Controller Tests | 411+ | ✅ Pass |
+| Controller Tests | 484+ | ✅ Pass |
 | DRAM Tests | 1009+ | ✅ Pass |
 | HBM4 Tests | 700+ | ✅ Pass |
 | Simulation Tests | 190+ | ✅ Pass |
@@ -208,6 +225,8 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 - **Logic Base Die integration** with per-channel independence
 - **PAM3 encoding support** for HBM4 signal integrity
 - **Public release package** ready for distribution
+- **Phase 5 Complete**: Command pipeline and address decoder fully integrated
+- **140 new test cases** for controller and address decoder validation
 
 ---
 
@@ -262,6 +281,37 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
+## Phase 5: HBM4 Controller Integration
+
+### Controller Integration Features
+
+| Component | Description |
+|-----------|-------------|
+| CommandPipeline | 4-stage command processing pipeline |
+| BankConflictTracker | Real-time bank conflict detection |
+| HBM4ChannelArray | 32-channel unified management |
+| End-to-End Verification | Complete integration testing |
+
+### Address Decoder Features
+
+| Feature | Description |
+|---------|-------------|
+| RBC Mapping | Row-Bank-Column organization |
+| BCR Mapping | Bank-Column-Row optimization |
+| CRB Mapping | Column-Row-Bank access |
+| Row Locality Analysis | Bank hit rate optimization |
+| Channel Distribution | 32-channel load balancing |
+
+### Key Test Coverage
+
+| Category | Tests Added |
+|----------|-------------|
+| Controller Integration | 73 tests |
+| Address Decoder | 67 tests |
+| **Total New Tests** | **140 tests** |
+
+---
+
 ## Code Metrics
 
 | Category | Count | Size |
@@ -271,6 +321,16 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 | Test Files | 120+ | 7+ MB |
 | Documentation | 52+ | 800+ KB |
 | **Total** | **1,400+** | **16+ MB** |
+
+### Version History
+
+| Version | Date | Status |
+|---------|------|--------|
+| v2.4.0 | 2026-06-24 | **Latest** - Phase 5 Complete |
+| v2.3.0 | 2026-06-20 | Phase 4 Complete |
+| v2.2.0 | 2026-06-17 | Phase 3 Complete |
+| v2.1.0 | 2026-06-15 | Phase 2 Complete |
+| v2.0.0 | 2026-06-10 | Initial HBM4 Release |
 
 ---
 
