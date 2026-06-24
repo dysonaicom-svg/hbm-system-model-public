@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict, Callable
 from enum import Enum
 import warnings
-from scipy import stats
+from scipy import stats, special
 
 
 class EyeMeasurementType(Enum):
@@ -421,7 +421,7 @@ class EyeDiagramAnalyzer:
         if method == "bathtub":
             # Simplified bathtub model
             Q = snr_db / (20 * np.log10(np.e))
-            ber = 0.5 * (1 - np.math.erf(Q / np.sqrt(2)))
+            ber = 0.5 * (1 - special.erf(Q / np.sqrt(2)))
             return max(min(ber, 1.0), 1e-20)
 
         elif method == "gaussian":
