@@ -2278,6 +2278,9 @@ class DFI5Interface:
                 f"Invalid LP transition from {self.lp_state.name} to {state.name}"
             )
 
+        # Record history if state is actually changing
+        if state != self.lp_state:
+            self.lp_state_history.append((self._cycle, state))
         self.lp_state = state
         self._stats["lp_transitions"] += 1
         return True
