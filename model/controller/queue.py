@@ -403,6 +403,7 @@ class RequestQueue:
     def __iter__(self):
         """使队列可迭代"""
         with self._lock:
+            # Copy to avoid holding lock during iteration
             return iter(list(self._queue))
 
     def __len__(self):
