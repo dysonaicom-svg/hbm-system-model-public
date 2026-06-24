@@ -12,6 +12,7 @@ Key HBM4 Timing Parameters (Enhanced):
 """
 
 import pytest
+import random
 from model.dram.hbm4_channel_model import (
     HBM4Channel, PseudoChannel, HBM4ChannelState, PseudoChannelState,
     HBM4ChannelArray, BankGroupScheduler
@@ -680,6 +681,399 @@ class TestHBM4RefreshIntegration:
         # Issue all-bank refresh
         result = ch.issue_command('REFab', pseudo_channel=0, bank=0, row=0)
         assert result is True
+
+
+class TestMultiChannelCoordination:
+    """Test multi-channel coordination across HBM4 channels"""
+
+    def test_32_channel_array_creation(self):
+        """32-channel array must be created successfully"""
+        array = HBM4ChannelArray()
+
+        assert array.num_channels == 32
+        assert array.total_banks == 1024
+
+    def test_all_channels_tick_together(self):
+        """All channels must advance together on tick()"""
+        array = HBM4ChannelArray()
+
+        initial_cycles = [ch.current_cycle for ch in array.channels]
+
+        array.tick()
+
+        for i, ch in enumerate(array.channels):
+            assert ch.current_cycle == initial_cycles[i] + 1
+
+    def test_global_reset_synchronizes_all_channels(self):
+        """reset_all() must synchronize all channels"""
+        array = HBM4ChannelArray()
+
+        # Advance some cycles
+        for _ in range(100):
+            array.tick()
+
+        # Reset all
+        array.reset_all()
+
+        # All should be at cycle 0
+        for ch in array.channels:
+            assert ch.current_cycle == 0
+
+    def test_concurrent_activation_timing(self):
+        """Concurrent activations across channels must respect timing"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        # Activate in multiple channels simultaneously
+        for ch_id in range(8):
+            ch = array.channels[ch_id]
+            result = ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+            assert result is True
+
+        # Advance past tRCD
+        for _ in range(timing.tRCD + 1):
+            array.tick()
+
+        # Reads should now succeed
+        for ch_id in range(8):
+            ch = array.channels[ch_id]
+            result = ch.issue_command('RD', pseudo_channel=0, bank=0,
+                                     row=100, col=0)
+            assert result is True
+
+    def test_cross_channel_refresh_coordination(self):
+        """Refresh commands must coordinate across channels"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        # Precharge all banks in first channel
+        ch = array.channels[0]
+        ch.issue_command('PREA', pseudo_channel=0, bank=0, row=0)
+        ch.issue_command('PREA', pseudo_channel=1, bank=0, row=0)
+
+        for _ in range(timing.tRP + 1):
+            array.tick()
+
+        # Issue all-bank refresh
+        result = ch.issue_command('REFab', pseudo_channel=0, bank=0, row=0)
+        assert result is True
+
+    def test_aggregate_bandwidth_calculation(self):
+        """Aggregate bandwidth must be calculated correctly"""
+        array = HBM4ChannelArray()
+
+        # 32 channels * 64 GB/s per channel = 2048 GB/s
+        assert abs(array.total_bandwidth_gbs - 2048.0) < 1.0
+
+    def test_system_performance_summary(self):
+        """System performance summary must report all channels"""
+        array = HBM4ChannelArray()
+
+        summary = array.get_system_performance_summary()
+
+        assert 'total_activations' in summary
+        assert 'total_reads' in summary
+        assert 'total_writes' in summary
+        assert 'peak_bandwidth_gbs' in summary
+
+    def test_concurrent_reads_across_channels(self):
+        """Concurrent reads across all channels must work"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        # Activate rows in all channels
+        for ch_id in range(32):
+            ch = array.channels[ch_id]
+            ch.issue_command('ACT', pseudo_channel=0, bank=0, row=ch_id)
+
+        # Advance past tRCD
+        for _ in range(timing.tRCD + 1):
+            array.tick()
+
+        # Read from all channels
+        success_count = 0
+        for ch_id in range(32):
+            ch = array.channels[ch_id]
+            result = ch.issue_command('RD', pseudo_channel=0, bank=0,
+                                     row=ch_id, col=0)
+            if result:
+                success_count += 1
+
+        assert success_count == 32
+
+    def test_burst_traffic_all_channels(self):
+        """Burst traffic to all channels must work"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        # Burst activate to all channels
+        for ch_id in range(32):
+            ch = array.channels[ch_id]
+            for pch_id in range(2):
+                for bank_id in range(4):
+                    ch.issue_command('ACT', pseudo_channel=pch_id,
+                                   bank=bank_id, row=ch_id * 100 + bank_id)
+
+        # Advance past tRCD
+        for _ in range(timing.tRCD + 1):
+            array.tick()
+
+        # Read from all channels
+        for ch_id in range(32):
+            ch = array.channels[ch_id]
+            for pch_id in range(2):
+                result = ch.issue_command('RD', pseudo_channel=pch_id,
+                                    bank=0, row=ch_id * 100, col=0)
+                assert result is True
+
+    def test_faw_tracking_per_channel(self):
+        """FAW window must be tracked per pseudo-channel"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        ch = array.channels[0]
+        scheduler = ch.get_scheduler(0)
+
+        # Test FAW behavior: max 4 activations in nFAW (16) cycles window
+        # Issue ACTs to same BG with proper tRRDS timing (3 cycles)
+        current_cycle = 0
+        successful_acts = 0
+        for i in range(5):
+            can_issue = scheduler.can_issue_act(pseudo_channel=0, bank_group=0,
+                                               current_cycle=current_cycle)
+            if can_issue:
+                scheduler.record_act(pseudo_channel=0, bank_group=0, current_cycle=current_cycle)
+                successful_acts += 1
+            # Advance by tRRDS for same BG
+            current_cycle += timing.tRRDS
+
+        # Should have exactly 4 successful ACTs within FAW window
+        assert successful_acts == 4
+
+        # After advancing past nFAW, should be able to ACT again
+        current_cycle = 20  # Past nFAW (16 cycles)
+        can_issue = scheduler.can_issue_act(pseudo_channel=0, bank_group=0,
+                                          current_cycle=current_cycle)
+        assert can_issue is True
+
+    def test_bg_timing_same_channel(self):
+        """Bank group timing must work on same channel"""
+        array = HBM4ChannelArray()
+        timing = HBM4Timing()
+
+        ch = array.channels[0]
+        scheduler = ch.get_scheduler(0)
+
+        # Issue ACT to BG 0
+        assert scheduler.can_issue_act(pseudo_channel=0, bank_group=0, current_cycle=0)
+        scheduler.record_act(pseudo_channel=0, bank_group=0, current_cycle=0)
+
+        # Immediate ACT to same BG - should fail (tRRDS not met)
+        assert not scheduler.can_issue_act(pseudo_channel=0, bank_group=0, current_cycle=1)
+
+        # After nRRDL, ACT to different BG should succeed
+        assert scheduler.can_issue_act(pseudo_channel=0, bank_group=1,
+                                    current_cycle=timing.nRRDL)
+
+    def test_pseudo_channel_states_independent(self):
+        """Pseudo-channel states must be independent"""
+        array = HBM4ChannelArray()
+
+        ch = array.channels[0]
+        pc0 = ch.pseudo_channels[0]
+        pc1 = ch.pseudo_channels[1]
+
+        # Activate row in PC0
+        pc0.activate_row(100, bank_id=0)
+
+        # PC0 should be ACTIVE
+        assert pc0.state == PseudoChannelState.ACTIVE
+
+        # PC1 should still be IDLE
+        assert pc1.state == PseudoChannelState.IDLE
+
+    def test_column_commands_independent_pseudo_channels(self):
+        """Column commands must work independently on pseudo-channels"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        ch = array.channels[0]
+
+        # Activate in both pseudo-channels
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+        ch.issue_command('ACT', pseudo_channel=1, bank=0, row=200)
+
+        # Advance past tRCD
+        for _ in range(timing.tRCD + 1):
+            ch.tick()
+
+        # Read from both
+        result0 = ch.issue_command('RD', pseudo_channel=0, bank=0, row=100, col=0)
+        result1 = ch.issue_command('RD', pseudo_channel=1, bank=1, row=200, col=0)
+
+        assert result0 is True
+        assert result1 is True
+
+
+class TestMultiChannelLoadBalancing:
+    """Test load balancing across channels"""
+
+    def test_channel_selector_distributes_uniformly(self):
+        """Channel selector must distribute load uniformly"""
+        from model.multi_channel import ChannelSelector
+
+        selector = ChannelSelector(num_channels=32, strategy=ChannelSelector.ROUND_ROBIN)
+
+        # Generate 3200 requests (100 per channel)
+        for i in range(3200):
+            ch = selector.select_channel(addr=i * 64, length=64)
+            selector.record_request(ch)
+
+        loads = selector.get_channel_load()
+        load_values = list(loads.values())
+
+        # Each channel should have approximately 100 requests
+        avg = sum(load_values) / len(load_values)
+        max_deviation = max(abs(v - avg) for v in load_values)
+
+        assert max_deviation <= avg * 0.15  # 15% max deviation
+
+    def test_queue_aware_selector_balances_load(self):
+        """Queue-aware selector must balance load"""
+        from model.multi_channel import QueueAwareChannelSelector, calculate_jains_fairness_index
+
+        selector = QueueAwareChannelSelector(
+            num_channels=32,
+            strategy="queue_aware",
+            enable_adaptive=True
+        )
+
+        # Simulate uneven queue depths
+        depths = {i: (i % 10) * 2 for i in range(32)}
+        selector.update_pending_depths(depths)
+
+        # Select channels multiple times
+        for _ in range(100):
+            ch = selector.select_channel(addr=random.randint(0, 100000))
+            selector.record_request(ch)
+
+        loads = selector.get_channel_load()
+        load_values = list(loads.values())
+        jains = calculate_jains_fairness_index(load_values)
+
+        assert jains > 0.7  # Good fairness
+
+    def test_round_robin_strategy(self):
+        """Round-robin strategy must cycle through channels"""
+        from model.multi_channel import ChannelSelector
+
+        selector = ChannelSelector(num_channels=32, strategy=ChannelSelector.ROUND_ROBIN)
+
+        selected = []
+        for i in range(64):
+            ch = selector.select_channel(addr=i * 64, length=64)
+            selected.append(ch)
+
+        # Should cycle evenly
+        for ch in range(32):
+            count = selected.count(ch)
+            assert count == 2  # 64 / 32 = 2
+
+    def test_hash_strategy_deterministic(self):
+        """Hash strategy must be deterministic"""
+        from model.multi_channel import ChannelSelector
+
+        selector = ChannelSelector(num_channels=32, strategy=ChannelSelector.HASH)
+
+        addresses = [1000, 2000, 3000, 4000, 5000]
+
+        # Same address should always select same channel
+        for addr in addresses:
+            ch1 = selector.select_channel(addr=addr, length=64)
+            ch2 = selector.select_channel(addr=addr, length=64)
+            assert ch1 == ch2
+
+
+class TestMultiChannelStress:
+    """Stress tests for multi-channel operation"""
+
+    def test_1000_cycles_stress(self):
+        """System must handle 1000 cycles of continuous operation"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        for cycle in range(1000):
+            # Activate random banks across random channels
+            for ch_id in range(min(cycle % 8 + 1, 32)):
+                ch = array.channels[ch_id]
+                ch.issue_command('ACT', pseudo_channel=0, bank=cycle % 16,
+                               row=cycle * 100)
+
+            # Advance time
+            for _ in range(timing.tRCD + 1):
+                array.tick()
+
+        # System should still be operational
+        summary = array.get_system_state_summary()
+        assert summary['num_channels'] == 32
+
+    def test_random_access_pattern(self):
+        """Random access pattern across channels must work"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        random.seed(42)  # Deterministic
+
+        # Generate random requests
+        for _ in range(500):
+            ch_id = random.randint(0, 31)
+            pch_id = random.randint(0, 1)
+            bank_id = random.randint(0, 15)
+            row = random.randint(0, 65535)
+
+            ch = array.channels[ch_id]
+            ch.issue_command('ACT', pseudo_channel=pch_id, bank=bank_id, row=row)
+
+            # Advance time
+            for _ in range(timing.tRCD + 1):
+                array.tick()
+
+        # System should be operational
+        summary = array.get_system_performance_summary()
+        assert summary['total_activations'] > 0
+
+    def test_reset_channel_recovers(self):
+        """Channel must recover after reset"""
+        array = HBM4ChannelArray()
+        timing = HBM4BankTiming()
+
+        ch = array.channels[0]
+
+        # Perform some operations
+        ch.issue_command('ACT', pseudo_channel=0, bank=0, row=100)
+
+        # Advance past tRAS + tRP to complete the operation
+        for _ in range(timing.tRAS + timing.tRP + 1):
+            ch.tick()
+
+        # Reset
+        ch.reset()
+
+        # Should be able to operate again after reset
+        result = ch.issue_command('ACT', pseudo_channel=0, bank=0, row=200)
+        assert result is True
+
+    def test_boundary_channel_indices(self):
+        """Boundary channel indices must work"""
+        array = HBM4ChannelArray()
+
+        # First channel
+        ch0 = array.channels[0]
+        assert ch0.channel_id == 0
+
+        # Last channel
+        ch31 = array.channels[31]
+        assert ch31.channel_id == 31
 
 
 if __name__ == '__main__':

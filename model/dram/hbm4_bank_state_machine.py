@@ -134,9 +134,12 @@ class HBM4BankTiming:
     tFAW: int = 16   # Four-activate window
 
     # Turnaround timing
-    tWTRS: int = 4  # Write to read (same BG)
+    tWTRS: int = 4   # Write to read (same BG)
     tWTRL: int = 5   # Write to read (different BG)
     tRTW: int = 4    # Read to write
+
+    # CAS-to-CAS delay
+    tCCD: int = 4    # CAS-to-CAS delay (column command spacing)
 
     # Refresh timing
     tRFC: int = 180  # Refresh cycle time
