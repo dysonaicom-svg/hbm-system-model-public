@@ -754,7 +754,6 @@ class TestUnifiedSimulatorHBM4:
 
         assert stats.total_cycles > 0
         assert stats.pam3_symbols_encoded >= 0
-    assert SimulationMode is not None
 
 
 if __name__ == '__main__':
