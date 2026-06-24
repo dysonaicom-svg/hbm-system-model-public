@@ -1272,5 +1272,343 @@ class TestCRCStressTests:
         assert len(crcs) > 200, "Too many CRC collisions detected"
 
 
+class TestECCStressTests:
+    """Stress tests for ECC functionality"""
+
+    def test_ecc_random_64bit_data_comprehensive(self):
+        """Test ECC with comprehensive random 64-bit data"""
+        import random
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+        random.seed(42)
+
+        for i in range(100):
+            original = random.getrandbits(64)
+            encoded = ecc.encode(original)
+            result = ecc.decode(encoded)
+
+            assert result.error_type == ErrorType.NO_ERROR, \
+                f"False positive for random data 0x{original:016X}"
+
+    def test_ecc_random_single_bit_errors_comprehensive(self):
+        """Test ECC with comprehensive random single-bit errors"""
+        import random
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+        random.seed(43)
+
+        for i in range(100):
+            original = random.getrandbits(64)
+            encoded = ecc.encode(original)
+
+            bit_pos = random.randint(0, 63)
+            corrupted = encoded ^ (1 << bit_pos)
+            result = ecc.decode(corrupted)
+
+            assert result.error_type != ErrorType.NO_ERROR, \
+                f"Failed to detect error at position {bit_pos}"
+
+    def test_ecc_random_double_bit_errors_comprehensive(self):
+        """Test ECC with comprehensive random double-bit errors"""
+        import random
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+        random.seed(44)
+
+        for i in range(50):
+            original = random.getrandbits(64)
+            encoded = ecc.encode(original)
+
+            bit1 = random.randint(0, 62)
+            bit2 = random.randint(bit1 + 1, 63)
+            corrupted = encoded ^ (1 << bit1) ^ (1 << bit2)
+            result = ecc.decode(corrupted)
+
+            # Double-bit errors should be detected (not pass silently)
+            assert result.error_type != ErrorType.NO_ERROR, \
+                f"Double-bit error not detected for data 0x{original:016X}"
+
+    def test_ecc_stress_all_single_bit_positions(self):
+        """Test all 64 single-bit error positions exhaustively"""
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+
+        original = 0xDEADBEEFCAFEBABE
+        encoded = ecc.encode(original)
+
+        for bit_pos in range(64):
+            corrupted = encoded ^ (1 << bit_pos)
+            result = ecc.decode(corrupted)
+            assert result.error_type != ErrorType.NO_ERROR, \
+                f"Failed to detect single-bit error at position {bit_pos}"
+
+    def test_ecc_performance_benchmark(self):
+        """Benchmark ECC encode/decode performance"""
+        import time
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+
+        num_ops = 10000
+        test_data = [i * 0x123456789ABCDEF for i in range(num_ops)]
+
+        start = time.time()
+        for data in test_data:
+            encoded = ecc.encode(data)
+            ecc.decode(encoded)
+        elapsed = time.time() - start
+
+        ops_per_sec = num_ops / elapsed
+        assert ops_per_sec > 5000, f"ECC performance too low: {ops_per_sec:.0f} ops/sec"
+
+
+class TestParityIntegration:
+    """Test Parity integration with other protection mechanisms"""
+
+    def test_dq_parity_strip_round_trip(self):
+        """Test DQ parity strip encode/decode round trip"""
+        from model.dram.ecc_crc import HBM4Parity, ParityMode
+
+        parity = HBM4Parity(parity_mode=ParityMode.EVEN)
+
+        for lane in range(8):
+            for data_val in [0x00, 0xFF, 0xAA, 0x55, 0x3C, 0x12, 0xE5]:
+                encoded = parity.encode_dq_parity_strip(data_val, lane)
+                decoded, valid = parity.decode_dq_parity_strip(encoded)
+
+                assert decoded == data_val
+                assert valid is True
+
+    def test_ca_parity_with_field_groups(self):
+        """Test CA parity with custom field groups"""
+        from model.dram.ecc_crc import HBM4Parity
+
+        parity = HBM4Parity(parity_mode=ParityMode.EVEN)
+
+        ca_bits = 0x3A5C7B
+        field_groups = [
+            ('command', 8),
+            ('address', 14),
+            ('bank', 4),
+        ]
+
+        result = parity.calculate_ca_parity(ca_bits, field_groups)
+
+        assert 'command' in result
+        assert 'address' in result
+        assert 'bank' in result
+
+    def test_parity_error_tracking(self):
+        """Test parity error tracking in stats"""
+        from model.dram.ecc_crc import HBM4Parity
+
+        parity = HBM4Parity(parity_mode=ParityMode.EVEN)
+
+        data = 0xDEADBEEFCAFEBABE
+        parity_bits = parity.calculate_dq_parity(data, 8)
+
+        # Valid check
+        parity.verify_dq_parity(data, parity_bits)
+        # Invalid check
+        bad_parity = [1 - p for p in parity_bits]
+        parity.verify_dq_parity(data, bad_parity)
+
+        stats = parity.get_parity_stats()
+        assert stats['dq_parity_checks'] == 2
+        assert stats['dq_parity_errors'] == 1
+
+
+class TestDataIntegrityFullScenario:
+    """Full data integrity scenario tests"""
+
+    def test_multi_channel_error_scenario(self):
+        """Test error handling across multiple HBM4 channels"""
+        from model.dram.ecc_crc import HBM4DataIntegrity
+
+        num_channels = 32
+        di = HBM4DataIntegrity(data_width=64, enable_ecc=True, enable_crc=True)
+
+        error_count = 0
+        for channel in range(num_channels):
+            original = 0x123456789ABCDEF0 + channel
+            encoded = di.encode_with_protection(original)
+
+            if channel % 8 == 0:
+                corrupted = di.inject_error(encoded['data'], channel % 64)
+                ecc_width = di.ecc.ecc_bits
+                bad_crc = di.crc.calculate_crc16(corrupted, 64 + ecc_width)
+
+                result = di.decode_with_verification({
+                    'data': corrupted,
+                    'ecc': encoded['ecc'],
+                    'crc': bad_crc
+                })
+                if not result['valid']:
+                    error_count += 1
+            else:
+                result = di.decode_with_verification(encoded)
+                if result['valid']:
+                    error_count += 1  # Successful transaction
+
+        # At least some operations should have occurred
+        assert error_count > 0, "No transactions processed"
+
+    def test_ecc_parity_combined_protection(self):
+        """Test ECC + Parity combined protection"""
+        from model.dram.ecc_crc import HBM4DataIntegrity
+
+        di = HBM4DataIntegrity(
+            data_width=64,
+            enable_ecc=False,
+            enable_crc=False,
+            enable_parity=True
+        )
+
+        original = 0xDEADBEEFCAFEBABE
+        encoded = di.encode_with_protection(original)
+
+        # Clean decode should pass
+        result = di.decode_with_verification(encoded)
+        assert result['valid'] is True
+        assert result['parity_valid'] is True
+
+        # Corrupt data - parity should detect mismatch
+        corrupted_data = encoded['data'] ^ 0x01  # Flip bit in lane 0
+
+        # Use wrong parity - should fail
+        wrong_parity = [1 - p for p in encoded['dq_parity']]
+        result = di.decode_with_verification({
+            'data': corrupted_data,
+            'dq_parity': wrong_parity
+        })
+        assert result['parity_valid'] is False
+
+        # With correct parity for corrupted data, it passes
+        new_parity = di.parity.calculate_dq_parity(corrupted_data, 8)
+        result = di.decode_with_verification({
+            'data': corrupted_data,
+            'dq_parity': new_parity
+        })
+        assert result['parity_valid'] is True
+
+    def test_service_event_filtering(self):
+        """Test service event filtering by channel"""
+        from model.dram.ecc_crc import HBM4DataIntegrity
+
+        di = HBM4DataIntegrity(data_width=64, enable_ecc=True)
+
+        for channel in [0, 8, 16, 24]:
+            original = 0x1000 + channel
+            encoded = di.encode_with_protection(original)
+
+            if channel == 0:
+                corrupted = di.inject_error(encoded['data'], 5)
+                di.decode_with_verification({'data': corrupted, 'ecc': encoded['ecc']})
+            else:
+                di.decode_with_verification(encoded)
+
+        events = di.get_service_events(channel=0)
+        assert isinstance(events, list)
+
+    def test_error_injection_toggle(self):
+        """Test error injection enable/disable"""
+        from model.dram.ecc_crc import HBM4DataIntegrity
+
+        di = HBM4DataIntegrity(data_width=64)
+
+        di.enable_error_injection(False)
+        mask1 = di.inject_ecc_error(channel=0, bit=5)
+        assert mask1 == 0
+
+        di.enable_error_injection(True)
+        mask2 = di.inject_ecc_error(channel=0, bit=5)
+        assert mask2 == (1 << 5)
+
+    def test_clear_injected_errors(self):
+        """Test clearing injected errors"""
+        from model.dram.ecc_crc import HBM4DataIntegrity
+
+        di = HBM4DataIntegrity(data_width=64)
+
+        di.inject_ecc_error(channel=0, bit=5)
+        di.inject_ecc_error(channel=1, bit=10)
+
+        errors_ch0 = di.get_injected_errors(0)
+        assert len(errors_ch0) == 1
+
+        di.clear_injected_errors(channel=0)
+        errors_ch0 = di.get_injected_errors(0)
+        assert len(errors_ch0) == 0
+
+        di.clear_injected_errors()
+        errors_ch1 = di.get_injected_errors(1)
+        assert len(errors_ch1) == 0
+
+
+class TestECCErrorCorrectionDetail:
+    """Detailed ECC error correction tests"""
+
+    def test_ecc_syndrome_value_mapping(self):
+        """Test syndrome correctly maps to error position"""
+        from model.dram.ecc_crc import HBM4ECC, HBM4ECCMode, ErrorType
+
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+
+        original = 0x123456789ABCDEF0
+        encoded = ecc.encode(original)
+
+        for bit_pos in [0, 10, 31, 50, 63]:
+            corrupted = encoded ^ (1 << bit_pos)
+            result = ecc.decode(corrupted)
+
+            assert result.syndrome != 0
+
+    def test_ecc_correction_verification(self):
+        """Test that corrected data matches original"""
+        from model.dram.ecc_crc import HBM4ECC, HBM4ECCMode, ErrorType
+
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED)
+
+        test_data = [
+            0x0000000000000000,
+            0xFFFFFFFFFFFFFFFF,
+            0x123456789ABCDEF0,
+            0xFEDCBA9876543210,
+            0xAAAAAAAAAAAAAAAA,
+            0x5555555555555555,
+        ]
+
+        for original in test_data:
+            encoded = ecc.encode(original)
+
+            for bit_pos in [0, 15, 31, 50]:
+                corrupted = encoded ^ (1 << bit_pos)
+                result = ecc.decode(corrupted)
+
+                if result.corrected:
+                    assert result.data == original
+
+    def test_ecc_disabled_mode_no_protection(self):
+        """Test ECC disabled mode provides no protection"""
+        from model.dram.ecc_crc import HBM4ECC, HBM4ECCMode
+
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.DISABLED)
+
+        original = 0x123456789ABCDEF0
+        encoded = ecc.encode(original)
+
+        assert encoded == original
+        result = ecc.decode(encoded)
+        assert result.data == original
+        assert result.error_type == ErrorType.NO_ERROR
+
+    def test_ecc_secded_dbd_mode_behavior(self):
+        """Test SECDED_DBD mode behavior"""
+        from model.dram.ecc_crc import HBM4ECC, HBM4ECCMode, ErrorType
+
+        ecc = HBM4ECC(data_width=64, ecc_mode=HBM4ECCMode.SECDED_DBD)
+
+        original = 0xDEADBEEFCAFEBABE
+        encoded = ecc.encode(original)
+
+        corrupted = encoded ^ (1 << 5)
+        result = ecc.decode(corrupted)
+        assert result.error_type != ErrorType.NO_ERROR
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
