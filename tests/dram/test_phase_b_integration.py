@@ -866,16 +866,17 @@ class TestEndToEndIntegration:
         success = dfi.enter_freq_change()
         assert success
 
-        # Process cycles for FC
-        for _ in range(50):
+        # Process cycles for FC - wait until FC_ACTIVE state
+        # FC_ENTERING takes 2 cycles (tFC_ENTER), then transitions to FC_ACTIVE
+        for _ in range(3):
             dfi.tick()
 
-        # Exit frequency change
+        # Exit frequency change while in FC_ACTIVE state (before auto-completion)
         success = dfi.exit_freq_change()
-        assert success
+        assert success, f"exit_freq_change() failed, state is {dfi._fc_state.name}"
 
-        # Process remaining cycles
-        for _ in range(50):
+        # Process remaining cycles for FC exit sequence
+        for _ in range(20):
             dfi.tick()
 
         # Should be complete

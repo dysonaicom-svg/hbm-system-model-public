@@ -521,39 +521,66 @@ class LoopbackController:
         """Execute loopback test for current position"""
         ch = self.status.current_channel
         lane = self.status.current_lane
-        
-        # Skip disabled channels/lanes
-        while not self._is_channel_enabled(ch) or not self._is_lane_enabled(ch, lane):
-            self._advance_position()
-            ch = self.status.current_channel
-            lane = self.status.current_lane
-            if self.status.bits_transmitted >= self.config.test_length:
-                return
-        
+
+        # Check if we've transmitted enough bits
+        if self.status.bits_transmitted >= self.config.test_length:
+            return
+
+        # Use bit mask for efficient channel/lane lookup
+        # Find the next enabled channel starting from current
+        max_attempts = self.num_channels * self.num_lanes
+        attempts = 0
+        enabled_position_found = False
+
+        while attempts < max_attempts:
+            # Check if this position is enabled using bit masks
+            ch_bit = (self.config.channel_mask >> ch) & 1
+            lane_bit = (self.config.lane_mask >> lane) & 1
+
+            if ch_bit and lane_bit:
+                # This position is enabled, process it
+                enabled_position_found = True
+                break
+
+            # Advance to next position
+            attempts += 1
+            lane = (lane + 1) % self.num_lanes
+            if lane == 0:
+                ch = (ch + 1) % self.num_channels
+
+        # Handle edge case: no enabled channels/lanes
+        if not enabled_position_found:
+            # Complete immediately if no positions are enabled
+            self.status.state = LoopbackState.VERIFY
+            return
+
         # Generate expected data
         gen = self._generators.get(ch)
         if gen:
             expected_bit = gen.next()
             self._expected_data[ch].append(expected_bit)
-            
+
             # Simulate received data (with possible errors)
             received_bit = expected_bit
-            
+
             # Inject errors if enabled
             if self.config.enable_error_injection:
                 if random.random() < self.config.error_injection_rate:
                     received_bit ^= 1  # Flip bit
                     self.status.total_errors += 1
                     self._record_error(ch, lane)
-            
+
             self._received_data[ch].append(received_bit)
-            
+
             # Update counters
             self.status.bits_transmitted += 1
             self.status.bits_received += 1
-        
+
         # Advance to next position
-        self._advance_position()
+        lane = (lane + 1) % self.num_lanes
+        if lane == 0:
+            self.status.current_channel = (ch + 1) % self.num_channels
+        self.status.current_lane = lane
     
     def _advance_position(self):
         """Advance to next channel/lane position"""
