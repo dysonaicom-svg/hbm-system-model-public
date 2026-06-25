@@ -51,6 +51,30 @@ from sim.rtl_interface import (
     create_rtl_interface,
 )
 
+# gem5 Co-simulation interface
+try:
+    from sim.interconnect.gem5_bridge import (
+        Gem5Bridge,
+        BridgeConfig,
+        create_bridge as create_gem5_bridge,
+    )
+    from sim.interconnect.gem5_types import (
+        Gem5Request,
+        Gem5Response,
+        Gem5CommandType,
+        create_read_request,
+        create_write_request,
+    )
+    GEM5_AVAILABLE = True
+except ImportError:
+    GEM5_AVAILABLE = False
+    Gem5Bridge = None
+    BridgeConfig = None
+    create_gem5_bridge = None
+    Gem5Request = None
+    Gem5Response = None
+    Gem5CommandType = None
+
 
 class SimulationMode(Enum):
     """仿真模式"""
@@ -118,6 +142,14 @@ class SimulationStats:
     rtl_mismatched: int = 0
     rtl_max_latency_diff: int = 0
     rtl_avg_latency_diff: float = 0.0
+
+    # gem5 Co-simulation statistics
+    gem5_requests: int = 0
+    gem5_responses: int = 0
+    gem5_reads: int = 0
+    gem5_writes: int = 0
+    gem5_avg_latency: float = 0.0
+    gem5_total_latency: int = 0
 
     @property
     def rtl_match_rate(self) -> float:
@@ -208,6 +240,11 @@ class HBM4UnifiedSimulator:
         self.cosim_enabled = False
         self._current_cycle = 0
 
+        # ========== gem5 Co-simulation ==========
+        self.gem5_bridge: Optional[Gem5Bridge] = None
+        self.gem5_enabled = False
+        self.gem5_cache_line_size = 64
+
         # 初始化通道统计
         for ch in range(self.config.num_channels):
             self.stats.channel_stats[ch] = {
@@ -246,6 +283,11 @@ class HBM4UnifiedSimulator:
 
         self.power.tick()
 
+        # Advance gem5 bridge if enabled
+        if self.gem5_enabled and self.gem5_bridge:
+            self.gem5_bridge.sync()
+
+        self._current_cycle += 1
         self.stats.total_cycles += 1
 
     def process_command(
@@ -350,6 +392,15 @@ class HBM4UnifiedSimulator:
                 'enabled': self.cosim_enabled,
                 'transactions': self.stats.rtl_transactions if hasattr(self.stats, 'rtl_transactions') else 0,
             },
+            # gem5 Co-simulation
+            'gem5_cosim': {
+                'enabled': self.gem5_enabled,
+                'requests': self.stats.gem5_requests,
+                'responses': self.stats.gem5_responses,
+                'reads': self.stats.gem5_reads,
+                'writes': self.stats.gem5_writes,
+                'avg_latency': self.stats.gem5_avg_latency,
+            },
         }
 
     # ========== RTL Co-simulation Methods ==========
@@ -394,6 +445,154 @@ class HBM4UnifiedSimulator:
         self.result_comparator = None
         self.cosim_enabled = False
         print("[HBM4UnifiedSim] RTL cosimulation disabled")
+
+    # ========== gem5 Co-simulation Methods ==========
+
+    def enable_gem5_cosimulation(
+        self,
+        gem5_home: Optional[str] = None,
+        cache_line_size: int = 64,
+        default_latency: int = 10,
+    ):
+        """启用 gem5 协同仿真
+
+        Args:
+            gem5_home: gem5 安装路径
+            cache_line_size: 缓存行大小 (64 or 128 bytes)
+            default_latency: 默认延迟周期数
+        """
+        if not GEM5_AVAILABLE:
+            print("[HBM4UnifiedSim] gem5 bridge not available, using mock mode")
+            use_mock = True
+        else:
+            use_mock = (gem5_home is None)
+
+        config = BridgeConfig(
+            gem5_home=gem5_home,
+            default_latency=default_latency,
+            cache_line_size=cache_line_size,
+            enable_cache_line_handling=True,
+        )
+        self.gem5_bridge = create_gem5_bridge(
+            gem5_home=gem5_home,
+            use_mock=use_mock,
+            spec=self.spec,
+        )
+        # create_gem5_bridge already connects in mock mode
+        if not use_mock:
+            self.gem5_bridge.connect_to_gem5()
+        self.gem5_enabled = True
+        self.gem5_cache_line_size = cache_line_size
+
+        print(f"[HBM4UnifiedSim] gem5 cosimulation enabled (mock={use_mock}, cache_line={cache_line_size})")
+
+    def disable_gem5_cosimulation(self):
+        """禁用 gem5 协同仿真"""
+        if self.gem5_bridge:
+            self.gem5_bridge.disconnect()
+        self.gem5_bridge = None
+        self.gem5_enabled = False
+        print("[HBM4UnifiedSim] gem5 cosimulation disabled")
+
+    def send_gem5_request(
+        self,
+        addr: int,
+        size: int = 64,
+        is_write: bool = False,
+        data: Optional[List[int]] = None,
+        qos: int = 8,
+    ) -> Optional[int]:
+        """通过 gem5 桥接发送内存请求
+
+        Args:
+            addr: 目标地址
+            size: 请求大小 (bytes)
+            is_write: 是否为写请求
+            data: 写数据
+            qos: QoS 优先级 (0-15)
+
+        Returns:
+            请求 ID
+        """
+        if not self.gem5_enabled or not self.gem5_bridge:
+            return None
+
+        req_id = self.gem5_bridge.send_request(
+            addr=addr,
+            size=size,
+            is_write=is_write,
+            data=data,
+            qos=qos,
+        )
+
+        if req_id is not None:
+            self.stats.gem5_requests += 1
+            if is_write:
+                self.stats.gem5_writes += 1
+            else:
+                self.stats.gem5_reads += 1
+
+        return req_id
+
+    def recv_gem5_response(
+        self,
+        req_id: Optional[int] = None,
+        timeout_cycles: int = 10000,
+    ) -> Optional[Gem5Response]:
+        """接收 gem5 响应
+
+        Args:
+            req_id: 特定请求 ID
+            timeout_cycles: 超时周期数
+
+        Returns:
+            响应对象
+        """
+        if not self.gem5_enabled or not self.gem5_bridge:
+            return None
+
+        resp = self.gem5_bridge.recv_response(
+            req_id=req_id,
+            timeout_cycles=timeout_cycles,
+        )
+
+        if resp is not None:
+            self.stats.gem5_responses += 1
+            self.stats.gem5_total_latency += resp.latency
+            self.stats.gem5_avg_latency = (
+                self.stats.gem5_total_latency / max(1, self.stats.gem5_responses)
+            )
+
+        return resp
+
+    def gem5_read(
+        self,
+        addr: int,
+        size: int = 64,
+        qos: int = 8,
+    ) -> Optional[List[int]]:
+        """便捷方法：读内存"""
+        if not self.gem5_enabled:
+            return None
+        return self.gem5_bridge.read(addr=addr, size=size, qos=qos)
+
+    def gem5_write(
+        self,
+        addr: int,
+        data: List[int],
+        size: int = 64,
+        qos: int = 8,
+    ) -> bool:
+        """便捷方法：写内存"""
+        if not self.gem5_enabled:
+            return False
+        return self.gem5_bridge.write(addr=addr, data=data, size=size, qos=qos)
+
+    def get_gem5_stats(self) -> Dict[str, Any]:
+        """获取 gem5 统计信息"""
+        if not self.gem5_bridge:
+            return {}
+        return self.gem5_bridge.get_stats()
 
     def run(self) -> SimulationStats:
         """
@@ -568,6 +767,34 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        '--gem5',
+        action='store_true',
+        help='启用 gem5 协同仿真 (mock 模式)'
+    )
+
+    parser.add_argument(
+        '--gem5-home',
+        type=str,
+        default=None,
+        help='gem5 安装路径'
+    )
+
+    parser.add_argument(
+        '--gem5-cache-line',
+        type=int,
+        default=64,
+        choices=[64, 128],
+        help='gem5 缓存行大小 (默认: 64)'
+    )
+
+    parser.add_argument(
+        '--gem5-latency',
+        type=int,
+        default=10,
+        help='gem5 默认延迟周期 (默认: 10)'
+    )
+
+    parser.add_argument(
         '--verbose', '-v',
         action='store_true',
         help='详细输出'
@@ -594,6 +821,14 @@ def main():
     print(f"Mode: {config.mode.name}, Channels: {config.num_channels}")
     print("-" * 50)
 
+    # 启用 gem5 协同仿真
+    if args.gem5:
+        simulator.enable_gem5_cosimulation(
+            gem5_home=args.gem5_home,
+            cache_line_size=args.gem5_cache_line,
+            default_latency=args.gem5_latency,
+        )
+
     # 运行仿真
     stats = simulator.run()
 
@@ -616,6 +851,14 @@ def main():
                       f"(ACT={ch_stats['activations']}, "
                       f"RD={ch_stats['reads']}, "
                       f"WR={ch_stats['writes']})")
+
+    # 打印 gem5 协同仿真统计
+    if simulator.gem5_enabled:
+        print("\ngem5 Co-simulation Statistics:")
+        print(f"  Requests: {stats.gem5_requests}")
+        print(f"  Responses: {stats.gem5_responses}")
+        print(f"  Reads: {stats.gem5_reads}, Writes: {stats.gem5_writes}")
+        print(f"  Avg Latency: {stats.gem5_avg_latency:.2f} cycles")
 
     return 0
 
