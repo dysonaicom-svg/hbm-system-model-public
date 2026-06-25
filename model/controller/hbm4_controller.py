@@ -719,15 +719,22 @@ class HBM4Controller:
                     f"bank={refresh_response.bank_id}"
                 )
 
-        # Handle per-channel scheduling
+        # ponytail: batch processing for idle channels - process up to 4 requests per channel
+        # This optimization allows multiple independent banks in a pseudo-channel to be serviced
+        # in the same cycle when they don't conflict
         for ch_id in range(self.spec.channels):
-            response = self._schedule_channel(ch_id)
-            if response:
-                responses.append(response)
-                _logger.debug(
-                    f"Request completed: id={response.request_id}, "
-                    f"ch={response.channel_id}, latency={response.latency}ns"
-                )
+            # Try to schedule multiple requests for this channel
+            for _ in range(4):  # Max 4 commands per channel per cycle
+                response = self._schedule_channel(ch_id)
+                if response:
+                    responses.append(response)
+                    _logger.debug(
+                        f"Request completed: id={response.request_id}, "
+                        f"ch={response.channel_id}, latency={response.latency}ns"
+                    )
+                else:
+                    # No more requests for this channel this cycle
+                    break
 
         # Advance channel model
         self.channel_model.tick()
@@ -828,13 +835,10 @@ class HBM4Controller:
         """
         channel_state = self._channel_states[channel_id]
 
-        # Get requests for this channel
-        read_queue = self.queue_manager.read_queue
-        write_queue = self.queue_manager.write_queue
-
-        # Filter requests for this channel
-        ch_reads = [r for r in read_queue if r.channel_id == channel_id]
-        ch_writes = [r for r in write_queue if r.channel_id == channel_id]
+        # Use optimized O(k) channel-indexed lookup instead of O(n) filtering
+        # where k = requests for this channel, n = total requests in queue
+        ch_reads = self.queue_manager.get_reads_for_channel(channel_id)
+        ch_writes = self.queue_manager.get_writes_for_channel(channel_id)
 
         if not ch_reads and not ch_writes:
             return None
@@ -895,11 +899,11 @@ class HBM4Controller:
         self.stats.total_latency_ns += latency
         self.stats.total_bandwidth_bytes += selected.length
 
-        # Remove from queue using QueueManager convenience methods
+        # Remove from queue using QueueManager convenience methods with indexed removal
         if selected.is_read:
-            self.queue_manager.remove_read(selected.request_id)
+            self.queue_manager.remove_read(selected.request_id, selected.channel_id)
         else:
-            self.queue_manager.remove_write(selected.request_id)
+            self.queue_manager.remove_write(selected.request_id, selected.channel_id)
 
         # Update channel state
         channel_state.queue_depth = max(0, channel_state.queue_depth - 1)

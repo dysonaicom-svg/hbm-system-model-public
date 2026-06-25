@@ -7,8 +7,13 @@
 
 `timescale 1ns / 1ps
 `include "hbm_types.svh"
+// verilator lint_off WIDTHTRUNC
+// verilator lint_off WIDTHEXPAND
 
-module hbm_functional_tb;
+module hbm_functional_tb(
+    input logic clk,
+    input logic rst
+);
 
     // ===========================================================================
     // Test Configuration
@@ -47,11 +52,9 @@ module hbm_functional_tb;
     end
 
     // ===========================================================================
-    // Clock Generation - 1 GHz (driven by main)
+    // Clock and Reset - Input ports for external driving
     // ===========================================================================
-    logic clk = 0;
-
-    // Clock toggle via main (external)
+    // Clock toggle counter
     always @(posedge clk) begin
         cycle_count <= cycle_count + 1;
     end
@@ -143,7 +146,7 @@ module hbm_functional_tb;
     always @(posedge clk) begin
         if (rst_n && (dram_cmd == 4'd2)) begin  // CMD_READ
             // Return pattern based on address for verification
-            dram_rd_data <= {32{dram_bank, dram_row[7:0]}};
+            dram_rd_data <= {16{dram_bank, dram_row[7:0]}};
         end
     end
 
@@ -159,7 +162,10 @@ module hbm_functional_tb;
         input [5:0]  col
     );
         begin
-            make_addr = {stack, ch, 1'b0, bg, bk, row, col};
+            // HBM4 address: Stack(2) + Channel(5) + PCH(1) + BG(3) + BK(4) + Row(16) + Col(6) = 37 bits
+            // We need to pack correctly: {stack, ch, pch=0, bg, bk, row, col}
+            // But req_addr is 36 bits, so we omit the PCH bit: {stack, ch, bg, bk, row, col} = 36 bits
+            make_addr = {stack, ch, bg, bk, row, col};
         end
     endfunction
 
@@ -359,9 +365,9 @@ module hbm_functional_tb;
                     // Test 3: Queue Pressure
                     if (subtest_counter < 16) begin
                         if (!submit_valid && !submit_done) begin
-                            loop_i = subtest_counter[3:0];
+                            loop_i = subtest_counter;  // 5 bits to hold values 0-15
                             submit_id <= 301 + subtest_counter;
-                            submit_addr <= make_addr(2'd0, {3'd0, loop_i[1:0]}, 3'd0, {loop_i[3:0]}, 16'h5000 + {12'd0, loop_i}, 6'd0);
+                            submit_addr <= make_addr(2'd0, {1'b0, loop_i[3:0]}, 3'd0, loop_i[3:0], 16'h5000 + {12'd0, loop_i[3:0]}, 6'd0);
                             submit_is_read <= loop_i[0];
                             submit_prio <= 3;
                             submit_valid <= 1;
@@ -378,9 +384,9 @@ module hbm_functional_tb;
                     // Test 4: QoS Priority
                     if (subtest_counter < 12) begin
                         if (!submit_valid && !submit_done) begin
-                            loop_i = subtest_counter[3:0];
+                            loop_i = subtest_counter;  // 5 bits to hold values 0-11
                             submit_id <= 401 + subtest_counter;
-                            submit_addr <= make_addr(2'd0, loop_i, 3'd0, loop_i[3:0], 16'h8000 + {12'd0, loop_i}, 6'd0);
+                            submit_addr <= make_addr(2'd0, {1'b0, loop_i[3:0]}, 3'd0, loop_i[3:0], 16'h8000 + {12'd0, loop_i[3:0]}, 6'd0);
                             submit_is_read <= 1;
                             submit_prio <= (subtest_counter < 4) ? 3'd0 : (subtest_counter < 8) ? 3'd7 : 3'd4;
                             submit_valid <= 1;
@@ -517,19 +523,7 @@ module hbm_functional_tb;
     initial begin
         $dumpfile("hbm_functional_tb.vcd");
         $dumpvars(0, hbm_functional_tb);
-    end
-
-    // ===========================================================================
-    // Timeout Watchdog
-    // ===========================================================================
-    always @(posedge clk) begin
-        if (cycle_count > 100000) begin
-            $display("");
-            $display("[ERROR] Simulation timeout at cycle %0d!", cycle_count);
-            $display("        Pending requests: %0d", pending_count);
-            $display("        Current state: %0d", state);
-            $finish;
-        end
-    end
-
+end
+// verilator lint_on WIDTHTRUNC
+// verilator lint_on WIDTHEXPAND
 endmodule

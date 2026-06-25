@@ -963,51 +963,119 @@ class HBM4QueueManager:
 @dataclass
 class QueueManager:
     """队列管理器
-    
+
     管理读/写队列和调度决策。
+    优化版本：包含通道索引以避免 O(n) 过滤。
     """
     read_queue: ReadQueue
     write_queue: WriteQueue
-    
+
+    # ponytail: channel-based indexing for O(1) lookup instead of O(n) filtering
+    _read_by_channel: Dict[int, List[HBMRequest]] = field(default_factory=dict)
+    _write_by_channel: Dict[int, List[HBMRequest]] = field(default_factory=dict)
+    _num_channels: int = 32
+
     @classmethod
-    def create(cls, queue_depth: int = 32) -> "QueueManager":
+    def create(cls, queue_depth: int = 32, num_channels: int = 32) -> "QueueManager":
         """创建队列管理器
-        
+
         Args:
             queue_depth: 队列深度
-            
+            num_channels: 通道数 (默认 32 for HBM4)
+
         Returns:
             QueueManager 实例
         """
         return cls(
             read_queue=ReadQueue(max_depth=queue_depth),
             write_queue=WriteQueue(max_depth=queue_depth),
+            _read_by_channel={ch: [] for ch in range(num_channels)},
+            _write_by_channel={ch: [] for ch in range(num_channels)},
+            _num_channels=num_channels,
         )
-    
+
     def push_read(self, request: HBMRequest, timeout: float = 0.0) -> bool:
         """入队读请求"""
-        return self.read_queue.push(request, timeout)
+        success = self.read_queue.push(request, timeout)
+        if success:
+            # Update channel index - O(1)
+            ch = request.channel_id
+            if 0 <= ch < self._num_channels and ch in self._read_by_channel:
+                self._read_by_channel[ch].append(request)
+            else:
+                # Expand index if channel is out of range
+                while ch >= self._num_channels:
+                    max_ch = self._num_channels
+                    self._num_channels = max_ch + 32
+                    for i in range(max_ch, self._num_channels):
+                        self._read_by_channel[i] = []
+                        self._write_by_channel[i] = []
+                self._read_by_channel[ch].append(request)
+        return success
 
     def push_write(self, request: HBMRequest, timeout: float = 0.0) -> bool:
         """入队写请求"""
-        return self.write_queue.push(request, timeout)
+        success = self.write_queue.push(request, timeout)
+        if success:
+            # Update channel index - O(1)
+            ch = request.channel_id
+            if 0 <= ch < self._num_channels and ch in self._write_by_channel:
+                self._write_by_channel[ch].append(request)
+            else:
+                # Expand index if channel is out of range
+                while ch >= self._num_channels:
+                    max_ch = self._num_channels
+                    self._num_channels = max_ch + 32
+                    for i in range(max_ch, self._num_channels):
+                        self._read_by_channel[i] = []
+                        self._write_by_channel[i] = []
+                self._write_by_channel[ch].append(request)
+        return success
 
-    def remove_read(self, request_id: int) -> bool:
+    def remove_read(self, request_id: int, channel_id: Optional[int] = None) -> bool:
         """从读队列移除请求"""
+        # Try indexed removal first if channel_id is provided - O(1)
+        if channel_id is not None and 0 <= channel_id < self._num_channels:
+            idx_list = self._read_by_channel.get(channel_id, [])
+            for i, req in enumerate(idx_list):
+                if req.request_id == request_id:
+                    del idx_list[i]
+                    return self.read_queue.remove(request_id)
+        # Fall back to full queue scan - O(n)
         return self.read_queue.remove(request_id)
 
-    def remove_write(self, request_id: int) -> bool:
+    def remove_write(self, request_id: int, channel_id: Optional[int] = None) -> bool:
         """从写队列移除请求"""
+        # Try indexed removal first if channel_id is provided - O(1)
+        if channel_id is not None and 0 <= channel_id < self._num_channels:
+            idx_list = self._write_by_channel.get(channel_id, [])
+            for i, req in enumerate(idx_list):
+                if req.request_id == request_id:
+                    del idx_list[i]
+                    return self.write_queue.remove(request_id)
+        # Fall back to full queue scan - O(n)
         return self.write_queue.remove(request_id)
+
+    def get_reads_for_channel(self, channel_id: int) -> List[HBMRequest]:
+        """获取指定通道的所有读请求 - O(k) where k = requests for that channel"""
+        if 0 <= channel_id < self._num_channels:
+            return self._read_by_channel.get(channel_id, [])
+        return [r for r in self.read_queue if r.channel_id == channel_id]
+
+    def get_writes_for_channel(self, channel_id: int) -> List[HBMRequest]:
+        """获取指定通道的所有写请求 - O(k) where k = requests for that channel"""
+        if 0 <= channel_id < self._num_channels:
+            return self._write_by_channel.get(channel_id, [])
+        return [r for r in self.write_queue if r.channel_id == channel_id]
 
     def total_size(self) -> int:
         """总队列大小"""
         return self.read_queue.size() + self.write_queue.size()
-    
+
     def is_full(self) -> bool:
         """检查是否任一队列已满"""
         return self.read_queue.is_full() or self.write_queue.is_full()
-    
+
     def get_stats(self) -> dict:
         """获取所有队列统计"""
         return {

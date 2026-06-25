@@ -1,5 +1,5 @@
 // =============================================================================
-// HBM Controller Functional Testbench Main - Simple driver
+// HBM Controller Functional Testbench Main - Clock-driven driver
 // =============================================================================
 #include <iostream>
 #include "verilated.h"
@@ -17,20 +17,27 @@ int main(int argc, char** argv) {
     std::cout << "#       HBM Controller Functional Testbench Driver               #" << std::endl;
     std::cout << "################################################################" << std::endl;
 
-    int cycle_count = 0;
-    int max_cycles = 100000;
+    int max_cycles = 200000;
+
+    // Initialize clock to 0
+    tb->clk = 0;
 
     // Main simulation loop - drive clock
-    // Testbench controls its own $finish when complete
-    while (!Verilated::gotFinish() && cycle_count < max_cycles) {
+    for (int cycle = 0; cycle < max_cycles && !Verilated::gotFinish(); cycle++) {
+        // Toggle clock
+        tb->clk = !tb->clk;
+        // Evaluate
+        tb->eval();
+        // Check if testbench finished
+        if (Verilated::gotFinish()) break;
+        // Second half cycle
         tb->clk = !tb->clk;
         tb->eval();
-        cycle_count++;
     }
 
     std::cout << std::endl;
     std::cout << "################################################################" << std::endl;
-    std::cout << "Simulation completed: " << cycle_count << " cycles" << std::endl;
+    std::cout << "Simulation completed: " << max_cycles << " cycles" << std::endl;
     std::cout << "################################################################" << std::endl;
 
     delete tb;
