@@ -18,6 +18,11 @@ import subprocess
 import threading
 import time
 import json
+import struct
+import socket
+import select
+import fcntl
+import errno
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple, Callable
 from enum import Enum
@@ -141,8 +146,13 @@ class RTLInterface:
 
         # RTL仿真进程 (如果启用)
         self.rtl_process: Optional[subprocess.Popen] = None
-        self.rtl_socket = None  # IPC socket for RTL communication
+        self.rtl_socket: Optional[socket.socket] = None
         self.rtl_ready = False
+        self.rtl_fifo_out: Optional[str] = None  # FIFO输出路径
+        self.rtl_fifo_in: Optional[str] = None   # FIFO输入路径
+
+        # 波形控制
+        self._waveform_enabled = False
 
         # 回调函数
         self.on_transaction_complete: Optional[Callable] = None
@@ -281,11 +291,41 @@ class RTLInterface:
         return tid
 
     def _send_to_rtl(self, trans: RTLTransaction):
-        """发送事务到RTL仿真器"""
-        # 格式化为RTL可读格式
+        """发送事务到RTL仿真器
+
+        使用socket通信或文件方式与RTL仿真器交换数据。
+        支持以下通信模式:
+        1. Socket模式: 通过TCP socket与Verilator通信
+        2. 文件模式: 通过FIFO文件交换JSON消息
+        """
         msg = json.dumps(trans.to_dict())
-        # TODO: 实现实际的RTL通信
-        logger.debug(f"Sent to RTL: {msg}")
+        logger.debug(f"Sending to RTL: {msg}")
+
+        # Socket通信模式
+        if self.rtl_socket:
+            try:
+                # 发送消息长度 (4字节网络序)
+                msg_bytes = msg.encode('utf-8')
+                header = struct.pack('!I', len(msg_bytes))
+                self.rtl_socket.sendall(header + msg_bytes)
+                logger.debug(f"Sent {len(msg_bytes)} bytes to RTL via socket")
+            except (socket.error, BrokenPipeError) as e:
+                logger.error(f"Socket send failed: {e}")
+                self.rtl_ready = False
+
+        # 文件模式 (通过FIFO)
+        elif self.rtl_fifo_out:
+            try:
+                with open(self.rtl_fifo_out, 'w') as f:
+                    f.write(msg + '\n')
+                    f.flush()
+                logger.debug(f"Sent to RTL via FIFO: {self.rtl_fifo_out}")
+            except IOError as e:
+                logger.error(f"FIFO send failed: {e}")
+
+        # 默认: 仅记录 (脱机模式)
+        else:
+            logger.debug(f"RTL offline mode: transaction {trans.id} queued for later sync")
 
     def receive_from_rtl(self, message: str):
         """接收来自RTL的消息"""
@@ -419,14 +459,148 @@ class RTLInterface:
         """
         self.config.dump_waveform = True
         self.waveform_path = path or "./rtl/waves.vcd"
+        self._waveform_enabled = True
         logger.info(f"Waveform dump enabled: {self.waveform_path}")
 
-        # TODO: 发送命令到RTL仿真器启用波形
+        # 发送命令到RTL仿真器启用波形
+        if self.rtl_socket and self.rtl_ready:
+            self._send_waveform_command("enable", self.waveform_path)
+        elif self.rtl_fifo_out:
+            self._send_waveform_command("enable", self.waveform_path)
+        else:
+            logger.debug("Waveform command queued (RTL not connected)")
 
     def disable_waveform_dump(self):
         """禁用波形Dump"""
         self.config.dump_waveform = False
+        self._waveform_enabled = False
         logger.info("Waveform dump disabled")
+
+        # 通知RTL停止波形Dump
+        if self.rtl_socket and self.rtl_ready:
+            self._send_waveform_command("disable", None)
+        elif self.rtl_fifo_out:
+            self._send_waveform_command("disable", None)
+
+    def _send_waveform_command(self, action: str, path: Optional[str]):
+        """发送波形控制命令到RTL
+
+        Args:
+            action: "enable" 或 "disable"
+            path: 波形文件路径 (仅enable时需要)
+        """
+        cmd = {
+            'type': 'waveform_control',
+            'action': action,
+            'path': path,
+            'timestamp_ns': time.time_ns() / 1e9,
+        }
+        msg = json.dumps(cmd)
+        logger.info(f"Sending waveform {action} command to RTL: {path or ''}")
+
+        if self.rtl_socket:
+            try:
+                msg_bytes = msg.encode('utf-8')
+                header = struct.pack('!I', len(msg_bytes))
+                self.rtl_socket.sendall(header + msg_bytes)
+            except (socket.error, BrokenPipeError) as e:
+                logger.error(f"Failed to send waveform command: {e}")
+
+        if self.rtl_fifo_out:
+            try:
+                with open(self.rtl_fifo_out, 'w') as f:
+                    f.write(msg + '\n')
+                    f.flush()
+            except IOError as e:
+                logger.error(f"Failed to send waveform command via FIFO: {e}")
+
+    def connect_via_socket(self, host: str = "localhost", port: int = 8765) -> bool:
+        """通过Socket连接到RTL仿真器
+
+        Args:
+            host: RTL仿真器主机
+            port: 端口号
+
+        Returns:
+            是否成功连接
+        """
+        try:
+            self.rtl_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.rtl_socket.settimeout(5.0)
+            self.rtl_socket.connect((host, port))
+            self.rtl_socket.settimeout(None)
+            self.rtl_ready = True
+            logger.info(f"Connected to RTL at {host}:{port}")
+            return True
+        except socket.error as e:
+            logger.error(f"Failed to connect to RTL at {host}:{port}: {e}")
+            self.rtl_socket = None
+            return False
+
+    def setup_fifo_communication(self, fifo_dir: str = "/tmp/hbm_rtl") -> bool:
+        """设置FIFO通信通道
+
+        创建命名的FIFO管道用于与RTL通信。
+        需要RTL端也使用相同的FIFO路径。
+
+        Args:
+            fifo_dir: FIFO文件目录
+
+        Returns:
+            是否成功创建
+        """
+        os.makedirs(fifo_dir, exist_ok=True)
+        self.rtl_fifo_out = os.path.join(fifo_dir, "python_to_rtl")
+        self.rtl_fifo_in = os.path.join(fifo_dir, "rtl_to_python")
+
+        # 创建FIFO (如果不存在)
+        for fifo_path in [self.rtl_fifo_out, self.rtl_fifo_in]:
+            if not os.path.exists(fifo_path):
+                try:
+                    os.mkfifo(fifo_path)
+                    logger.info(f"Created FIFO: {fifo_path}")
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        logger.error(f"Failed to create FIFO {fifo_path}: {e}")
+                        return False
+
+        logger.info(f"FIFO communication setup: {fifo_dir}")
+        return True
+
+    def receive_from_rtl_socket(self, timeout: float = 1.0) -> Optional[Dict[str, Any]]:
+        """从RTL socket接收响应
+
+        Args:
+            timeout: 超时时间(秒)
+
+        Returns:
+            解析后的消息字典,超时返回None
+        """
+        if not self.rtl_socket:
+            return None
+
+        try:
+            # 读取4字节长度头
+            self.rtl_socket.settimeout(timeout)
+            header = b''
+            while len(header) < 4:
+                header += self.rtl_socket.recv(4 - len(header))
+
+            msg_len = struct.unpack('!I', header)[0]
+
+            # 读取消息体
+            msg_bytes = b''
+            while len(msg_bytes) < msg_len:
+                msg_bytes += self.rtl_socket.recv(msg_len - len(msg_bytes))
+
+            self.rtl_socket.settimeout(None)
+            return json.loads(msg_bytes.decode('utf-8'))
+
+        except socket.timeout:
+            return None
+        except (socket.error, json.JSONDecodeError) as e:
+            logger.error(f"Failed to receive from RTL: {e}")
+            return None
 
     def start_rtl_simulation(self) -> bool:
         """启动RTL仿真进程

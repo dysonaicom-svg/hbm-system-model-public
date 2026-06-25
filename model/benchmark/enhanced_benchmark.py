@@ -497,20 +497,19 @@ class EnhancedBenchmark:
         result.channels_active = len([ch for ch, count in channel_requests.items() if count > 0])
         result.total_requests = total_requests
 
-        # Peak per-channel bandwidth: 2048 bits/transfer * 8 GT/s / 8 = 2048 GB/s per 32 channels = 64 GB/s per channel
-        peak_per_channel_gbs = self.spec.bandwidth_gbs / 32
-        result.peak_bandwidth_gbs = peak_per_channel_gbs * result.channels_active
+        # Total system peak bandwidth: 2048 GB/s @ 8 Gbps
+        result.peak_bandwidth_gbs = self.spec.bandwidth_gbs
 
         # Calculate effective bandwidth based on transaction completion rate
         # Each request = 64 bytes (1 FLINE)
         # Bandwidth = requests * 64 bytes / elapsed time
+        # Note: bytes/ns equals GB/s (1 GB = 1e9 bytes, 1 ns = 1e-9 s)
         if elapsed_ns > 0:
-            # Convert: bytes/ns to GB/s (1 GB = 1e9 bytes, 1s = 1e9 ns)
-            result.measured_bandwidth_gbs = (bytes_transferred / elapsed_ns)
+            result.measured_bandwidth_gbs = bytes_transferred / elapsed_ns
         else:
             result.measured_bandwidth_gbs = 0
 
-        # Efficiency relative to per-channel peak
+        # Efficiency relative to total system peak bandwidth
         if result.peak_bandwidth_gbs > 0:
             result.bandwidth_efficiency_percent = min(100, result.measured_bandwidth_gbs / result.peak_bandwidth_gbs * 100)
         else:
@@ -636,9 +635,10 @@ class EnhancedBenchmark:
 
         # Calculate effective bandwidth based on completed transactions
         # Each request = 64 bytes
+        # Note: bytes/ns equals GB/s (1 GB = 1e9 bytes, 1 ns = 1e-9 s)
         if elapsed_ns > 0:
-            result.read_bandwidth_gbs = (read_bytes / elapsed_ns)
-            result.write_bandwidth_gbs = (write_bytes / elapsed_ns)
+            result.read_bandwidth_gbs = read_bytes / elapsed_ns
+            result.write_bandwidth_gbs = write_bytes / elapsed_ns
             result.total_bandwidth_gbs = result.read_bandwidth_gbs + result.write_bandwidth_gbs
         else:
             result.read_bandwidth_gbs = 0
@@ -655,10 +655,9 @@ class EnhancedBenchmark:
 
         result.turnaround_count = turnaround_count
 
-        # Efficiency is actual vs theoretical peak (per-channel)
-        peak_per_channel = self.spec.bandwidth_gbs / 32
-        if peak_per_channel > 0:
-            result.bandwidth_efficiency_percent = min(100, result.total_bandwidth_gbs / peak_per_channel * 100)
+        # Efficiency relative to total system peak bandwidth
+        if self.spec.bandwidth_gbs > 0:
+            result.bandwidth_efficiency_percent = min(100, result.total_bandwidth_gbs / self.spec.bandwidth_gbs * 100)
         else:
             result.bandwidth_efficiency_percent = 0
         result.test_duration_ns = elapsed_ns
