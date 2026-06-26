@@ -1096,6 +1096,7 @@ class HBMSimulator:
         """Schedule the next request from queues, excluding specific channels
 
         This enables parallel scheduling across multiple channels.
+        Optimized for O(1) scheduling by checking queue heads first.
 
         Args:
             exclude_channels: Set of (channel_id, pseudo_channel_id) tuples to skip
@@ -1103,24 +1104,29 @@ class HBMSimulator:
         Returns:
             Next scheduled request or None if no requests available
         """
-        # Check both read and write queues
+        # ponytail: Check queue heads first (most likely to be schedulable)
+        # This is O(1) per queue instead of O(n) for full iteration
         for queue in [self.controller.queue_manager.read_queue,
                       self.controller.queue_manager.write_queue]:
-            for req in queue._queue:
+            # Fast path: check queue head first
+            if queue._queue:
+                head = queue._queue[0]
+                ch_key = (head.channel_id, head.pseudo_channel_id)
+                if ch_key not in exclude_channels:
+                    # Mark scheduled and pop from queue
+                    head.mark_scheduled(self.current_cycle)
+                    queue._queue.popleft()
+                    return head
+
+        # Slow path: full queue scan (only if head is excluded)
+        for queue in [self.controller.queue_manager.read_queue,
+                      self.controller.queue_manager.write_queue]:
+            for i, req in enumerate(queue._queue):
                 ch_key = (req.channel_id, req.pseudo_channel_id)
                 if ch_key not in exclude_channels:
-                    # Check if bank is available
-                    bank_key = (req.channel_id, req.pseudo_channel_id, req.bank_id)
-                    bank_state = self.controller.bank_states.get(bank_key)
-
-                    # Skip if bank is busy
-                    if bank_state and not bank_state.is_open:
-                        # Bank is either idle or has a different row open
-                        pass  # Will be handled by command sequencer
-
-                    # Found a request for an unscheduled channel
+                    # Mark scheduled and remove from queue
                     req.mark_scheduled(self.current_cycle)
-                    queue.remove(req.request_id)
+                    queue._queue.remove(req)  # O(n) but rare case
                     return req
 
         return None

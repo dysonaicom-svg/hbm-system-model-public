@@ -783,6 +783,156 @@ def create_layered_thermal_model(
     )
 
 
+# DVFS Integration for Thermal Model
+
+def get_dvfs_thermal_impact(
+    dvfs_state_power_ma: float,
+    voltage_mv: float,
+    frequency_gtps: float,
+    thermal_theta: float = 0.5,
+) -> Dict:
+    """Calculate thermal impact of DVFS state
+
+    Args:
+        dvfs_state_power_ma: Power in mA for current DVFS state
+        voltage_mv: Core voltage in mV
+        frequency_gtps: Data rate in GT/s
+        thermal_theta: Thermal resistance in C/W
+
+    Returns:
+        Dictionary with thermal impact metrics
+    """
+    # Power in watts
+    power_w = dvfs_state_power_ma / 1000.0
+
+    # Temperature rise
+    delta_t = power_w * thermal_theta
+
+    # DVFS efficiency factor
+    v_ratio = voltage_mv / 1000.0
+    efficiency = (frequency_gtps / 16.0) * (v_ratio ** 2)
+
+    return {
+        'power_w': power_w,
+        'temperature_rise_c': delta_t,
+        'efficiency_factor': efficiency,
+        'thermal_resistance': thermal_theta,
+    }
+
+
+def create_thermal_dvfs_integration(
+    thermal_model: LayeredThermalModel,
+    dvfs_controller,
+) -> 'ThermalDVFSIntegration':
+    """Create thermal-DVFS integration helper
+
+    Args:
+        thermal_model: Thermal model instance
+        dvfs_controller: DVFS controller instance
+
+    Returns:
+        ThermalDVFSIntegration instance
+    """
+    return ThermalDVFSIntegration(thermal_model, dvfs_controller)
+
+
+class ThermalDVFSIntegration:
+    """Integration helper for thermal and DVFS models
+
+    Provides bidirectional communication between thermal and DVFS:
+    - Thermal readings trigger DVFS throttling
+    - DVFS state changes affect thermal model
+    """
+
+    def __init__(
+        self,
+        thermal_model: LayeredThermalModel,
+        dvfs_controller,
+    ):
+        """Initialize thermal-DVFS integration
+
+        Args:
+            thermal_model: LayeredThermalModel instance
+            dvfs_controller: DVFSController instance
+        """
+        self.thermal = thermal_model
+        self.dvfs = dvfs_controller
+
+    def update_thermal_to_dvfs(self) -> None:
+        """Read thermal model and update DVFS controller"""
+        max_layer, max_temp = self.thermal.get_max_temperature()
+        self.dvfs.set_thermal_reading('max', max_temp)
+        self.dvfs.set_thermal_reading(max_layer.value, max_temp)
+
+    def update_dvfs_to_thermal(self, time_ns: int) -> None:
+        """Update thermal model based on DVFS state"""
+        ps = self.dvfs.get_current_power_state()
+        power_ma = ps.power_ma
+
+        # Apply power to all layers
+        for layer in self.thermal.layers:
+            self.thermal.update_layer_power(layer, power_ma / 32)
+
+    def sync_cycle(self, cycles: int, time_ns: int) -> None:
+        """Synchronize both models for a simulation cycle
+
+        Args:
+            cycles: Number of cycles
+            time_ns: Current time in ns
+        """
+        # Update DVFS based on thermal
+        self.update_thermal_to_dvfs()
+        self.dvfs.advance_cycle(cycles)
+
+        # Update thermal based on DVFS
+        self.update_dvfs_to_thermal(time_ns)
+        self.thermal.simulate_step(time_ns)
+
+    def get_power_state_summary(self) -> Dict:
+        """Get combined power/thermal summary
+
+        Returns:
+            Dictionary with combined metrics
+        """
+        dvfs_state = self.dvfs.get_current_power_state()
+        max_layer, max_temp = self.thermal.get_max_temperature()
+
+        return {
+            'dvfs_state': self.dvfs.get_current_state().value,
+            'frequency_gtps': dvfs_state.frequency_gtps,
+            'voltage_mv': dvfs_state.voltage_mv,
+            'power_ma': dvfs_state.power_ma,
+            'thermal_max_c': max_temp,
+            'thermal_layer': max_layer.value,
+            'ambient_c': self.thermal.ambient_temp_c,
+        }
+
+
+def create_thermal_dvfs_integration(
+    ambient_temp_c: float = 45.0,
+    num_channels: int = 32,
+    initial_dvfs_state: 'DVFSState' = None,
+) -> Tuple[LayeredThermalModel, 'DVFSController', ThermalDVFSIntegration]:
+    """Create fully integrated thermal and DVFS models
+
+    Args:
+        ambient_temp_c: Ambient temperature
+        num_channels: Number of HBM channels
+        initial_dvfs_state: Initial DVFS state
+
+    Returns:
+        Tuple of (thermal_model, dvfs_controller, integration)
+    """
+    from model.dram.dvfs_controller import DVFSController, DVFSState
+
+    thermal = create_layered_thermal_model(ambient_temp_c, num_channels)
+    dvfs_state = initial_dvfs_state or DVFSState.P0
+    dvfs = DVFSController(num_channels=num_channels, initial_state=dvfs_state)
+    integration = ThermalDVFSIntegration(thermal, dvfs)
+
+    return thermal, dvfs, integration
+
+
 def create_hbm4_thermal_model(
     warning_threshold_c: float = 85.0,
     throttle_threshold_c: float = 95.0,

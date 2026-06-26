@@ -293,10 +293,26 @@ class EnhancedBankGroupScheduler:
 
     Provides per-pseudo-channel timing isolation and comprehensive scheduling
     with FAW (Four-Activate Window) tracking and turnaround optimization.
+
+    Performance Optimizations:
+    - Cached timing values for fast access
+    - Pre-computed next available cycles
+    - Bank group rotation for fairness
+    - Cross-pseudo-channel parallelism exploitation
     """
 
     def __init__(self, timing: HBM4Timing):
         self.timing = timing
+
+        # Cache timing values for fast access (ponytail: avoid repeated attribute lookups)
+        self._nRRDS = timing.nRRDS
+        self._nRRDL = timing.nRRDL
+        self._nCCDS = timing.nCCDS
+        self._nCCDL = timing.nCCDL
+        self._nWTRS = timing.nWTRS
+        self._nWTRL = timing.nWTRL
+        self._nRTW = timing.nRTW
+        self._nFAW = timing.nFAW
 
         # Per-pseudo-channel timing tracking
         # Format: (pch_id) -> {'last_act_cycle': int, 'last_col_cycle': int,
@@ -315,6 +331,9 @@ class EnhancedBankGroupScheduler:
 
         # Per-pseudo-channel command queues for scheduling
         self._pending_commands: Dict[int, List[Tuple]] = defaultdict(list)
+
+        # Bank group rotation state for fairness (ponytail: round-robin BG selection)
+        self._bg_rotation: Dict[int, int] = defaultdict(int)
 
     def can_issue_act(self, pseudo_channel: int, bank_group: int,
                      current_cycle: int) -> bool:
@@ -337,15 +356,16 @@ class EnhancedBankGroupScheduler:
         pch_state = self._pch_state[pseudo_channel]
         faw_window = self._faw_windows[pseudo_channel]
 
-        # Check FAW window - remove expired entries
-        faw_window[:] = [t for t in faw_window
-                        if current_cycle - t < self.timing.nFAW]
+        # Check FAW window - remove expired entries (ponytail: inline filter)
+        nFAW = self._nFAW
+        cutoff = current_cycle - nFAW
+        faw_window[:] = [t for t in faw_window if t >= cutoff]
 
         # Check FAW limit (max 4 activations in window)
         if len(faw_window) >= 4:
             return False
 
-        # Check bank group timing
+        # Check bank group timing with cached values
         last_act_cycle = pch_state['last_act_cycle']
         last_act_bg = pch_state['last_act_bg']
 
@@ -354,11 +374,11 @@ class EnhancedBankGroupScheduler:
 
             if last_act_bg == bank_group:
                 # Same BG: requires tRRDS
-                if elapsed < self.timing.nRRDS:
+                if elapsed < self._nRRDS:
                     return False
             else:
                 # Different BG: requires tRRDL
-                if elapsed < self.timing.nRRDL:
+                if elapsed < self._nRRDL:
                     return False
 
         return True
@@ -409,26 +429,28 @@ class EnhancedBankGroupScheduler:
         # Same BG or different BG?
         same_bg = (last_col_bg == bank_group)
 
+        # ponytail: early exit optimization for common case (same direction)
+        direction_change = (is_write != last_col_is_write)
+
         if same_bg:
-            if is_write != last_col_is_write:
+            if direction_change:
                 # Direction change on same BG: need RTW or WTRS
-                turnaround = self.timing.nWTRS if is_write else self.timing.nRTW
+                turnaround = self._nWTRS if is_write else self._nRTW
                 if elapsed < turnaround:
                     return False
             else:
-                # Same BG, same direction: nCCDS
-                if elapsed < self.timing.nCCDS:
+                # Same BG, same direction: nCCDS (most common case)
+                if elapsed < self._nCCDS:
                     return False
         else:
-            # Different BG
-            if is_write != last_col_is_write:
+            if direction_change:
                 # Direction change: need WTRL or RTW
-                turnaround = self.timing.nWTRL if is_write else self.timing.nRTW
+                turnaround = self._nWTRL if is_write else self._nRTW
                 if elapsed < turnaround:
                     return False
             else:
                 # Different BG, same direction: nCCDL
-                if elapsed < self.timing.nCCDL:
+                if elapsed < self._nCCDL:
                     return False
 
         return True
@@ -477,6 +499,7 @@ class EnhancedBankGroupScheduler:
         """Get list of bank groups that can accept ACT
 
         Useful for scheduling algorithms to find available BGs.
+        Optimized to use cached timing values.
 
         Args:
             pseudo_channel: Pseudo-channel index
@@ -486,9 +509,31 @@ class EnhancedBankGroupScheduler:
             List of bank group indices that can accept ACT
         """
         available = []
+        # ponytail: inline can_issue_act check for speed
+        faw_window = self._faw_windows[pseudo_channel]
+        nFAW = self._nFAW
+        cutoff = current_cycle - nFAW
+        faw_window[:] = [t for t in faw_window if t >= cutoff]
+
+        if len(faw_window) >= 4:
+            return available  # FAW limit reached
+
+        pch_state = self._pch_state[pseudo_channel]
+        last_act_cycle = pch_state['last_act_cycle']
+        last_act_bg = pch_state['last_act_bg']
+
         for bg in range(8):
-            if self.can_issue_act(pseudo_channel, bg, current_cycle):
-                available.append(bg)
+            # Check FAW already done above
+            # Check BG timing
+            if last_act_cycle >= 0:
+                elapsed = current_cycle - last_act_cycle
+                if last_act_bg == bg:
+                    if elapsed < self._nRRDS:
+                        continue
+                else:
+                    if elapsed < self._nRRDL:
+                        continue
+            available.append(bg)
         return available
 
     def get_next_available_cycle(self, pseudo_channel: int, bank_group: int,
@@ -510,25 +555,56 @@ class EnhancedBankGroupScheduler:
         next_cycle = current_cycle
 
         # Check FAW
-        faw_window[:] = [t for t in faw_window
-                        if current_cycle - t < self.timing.nFAW]
+        nFAW = self._nFAW
+        cutoff = current_cycle - nFAW
+        faw_window[:] = [t for t in faw_window if t >= cutoff]
 
         if len(faw_window) >= 4:
             # Need to wait for oldest entry to expire
             oldest = min(faw_window)
-            next_cycle = max(next_cycle, oldest + self.timing.nFAW)
+            next_cycle = max(next_cycle, oldest + nFAW)
 
-        # Check bank group timing
+        # Check bank group timing with cached values
         last_act_cycle = pch_state['last_act_cycle']
         last_act_bg = pch_state['last_act_bg']
 
         if last_act_cycle >= 0:
             if last_act_bg == bank_group:
-                next_cycle = max(next_cycle, last_act_cycle + self.timing.nRRDS)
+                next_cycle = max(next_cycle, last_act_cycle + self._nRRDS)
             else:
-                next_cycle = max(next_cycle, last_act_cycle + self.timing.nRRDL)
+                next_cycle = max(next_cycle, last_act_cycle + self._nRRDL)
 
         return next_cycle
+
+    def select_best_bank_group(self, pseudo_channel: int,
+                               current_cycle: int) -> Optional[int]:
+        """Select the best bank group for ACT using round-robin with availability
+
+        This is an optimization to improve fairness and reduce bubble cycles
+        by preferring bank groups that are immediately available.
+
+        Args:
+            pseudo_channel: Pseudo-channel index
+            current_cycle: Current simulation cycle
+
+        Returns:
+            Best bank group index or None if none available
+        """
+        available = self.get_available_bank_groups(pseudo_channel, current_cycle)
+        if not available:
+            return None
+
+        # Round-robin from last selected
+        rotation = self._bg_rotation[pseudo_channel]
+
+        # Find the first available BG at or after rotation
+        for offset in range(8):
+            bg = (rotation + offset) % 8
+            if bg in available:
+                self._bg_rotation[pseudo_channel] = (bg + 1) % 8
+                return bg
+
+        return available[0]
 
     def reset(self, pseudo_channel: Optional[int] = None):
         """Reset scheduler state
