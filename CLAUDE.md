@@ -219,14 +219,13 @@ cd rtl && verilator --cc --trace hbm_controller.sv hbm_types.svh
 
 ## Performance Benchmarks
 
-| Pattern | Completed | Avg Latency | Throughput | Row Hit Rate |
-|---------|-----------|-------------|------------|--------------|
-| Sequential | 19,256 | 12.93 cycles | ~164 GB/s | 62.5% |
-| Stride (4KB) | 19,240 | 12.66 cycles | ~82 GB/s | 0% |
-| Random | 19,132 | 29.89 cycles | ~82 GB/s | 0% |
-| Hotspot | 19,147 | 29.25 cycles | ~82 GB/s | 0% |
+| Pattern | Completed | Avg Latency | Row Hit Rate |
+|---------|-----------|-------------|--------------|
+| Sequential | 64,506 | 9.83 cycles | 62.5% |
+| Random | 76,858 | 29.94 cycles | 0% |
+| Hotspot | 76,790 | 27.83 cycles | 10% |
 
-*Peak Bandwidth: 4.096 TB/s (HBM4 @ 16 GT/s) | Achieved: ~164 GB/s (single channel)*
+*Peak Bandwidth: 4.096 TB/s (HBM4 @ 16 GT/s) | Achieved: ~160 GB/s (16 channels)*
 
 ## CI/CD Status
 

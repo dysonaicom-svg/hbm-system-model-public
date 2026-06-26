@@ -196,20 +196,19 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ### Achieved Performance
 
-| Pattern | Throughput | Avg Latency | Row Hit Rate |
-|---------|------------|-------------|--------------|
-| Sequential | ~164 GB/s | 12.93 cycles | 62.5% |
-| Stride (4KB) | ~82 GB/s | 12.66 cycles | 0% |
-| Random | ~82 GB/s | 29.89 cycles | 0% |
-| Hotspot | ~82 GB/s | 29.25 cycles | 0% |
+| Pattern | Avg Latency | Row Hit Rate |
+|---------|-------------|--------------|
+| Sequential | 9.83 cycles | 62.5% |
+| Random | 29.94 cycles | 0% |
+| Hotspot | 27.83 cycles | 10% |
 
 ### Theoretical Bandwidth
 
 | Configuration | Bandwidth |
 |---------------|-----------|
 | HBM4 Single Channel | 64-128 GB/s |
+| HBM4 16 Channels | 1.024 TB/s |
 | HBM4 32 Channels | 2.048 TB/s |
-| HBM4 8 Stacks | 16.4 TB/s |
 
 ---
 
