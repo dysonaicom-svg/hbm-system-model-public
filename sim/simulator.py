@@ -293,11 +293,12 @@ class SimulationStats:
 
 
 class TrafficGenerator:
-    """Traffic Generator - Optimized with row locality support"""
+    """Traffic Generator - Optimized with row locality support and multi-channel support"""
 
-    __slots__ = ('config', 'current_addr', 'hot_bank', 'hot_bank_group', 'hot_row', 'hot_base', '_random')
+    __slots__ = ('config', 'current_addr', 'hot_bank', 'hot_bank_group', 'hot_row', 'hot_base', '_random',
+                 'channel_selector', '_channel_round_robin')
 
-    def __init__(self, config: SimulationConfig):
+    def __init__(self, config: SimulationConfig, channel_selector=None):
         self.config = config
         self.current_addr = 0
         self.hot_bank = 0
@@ -305,37 +306,58 @@ class TrafficGenerator:
         self.hot_bank_group = 0
         self.hot_base = 0
         self._random = random.Random(config.seed)
+        self.channel_selector = channel_selector
+        self._channel_round_robin = 0
 
     def _compute_valid_address_range(self) -> int:
         """Compute address range that fits within HBM channel addressing
 
+        For HBM RBC mapping (used by default), the address layout is:
+        - Bits [2:0]: offset (3 bits)
+        - Bits [15:3]: column (13 bits)
+        - Bits [33:16]: row (18 bits)
+        - Bits [38:34]: bank (5 bits for 32 banks)
+        - Bits [41:39]: bank group (3 bits)
+        - Bits [45:42]: channel (4 bits for 16 channels, 5 bits for 32 channels)
+        - Bits [47:46]: stack (2 bits for 4 stacks)
+
         Returns min of configured address_range and valid HBM address space
         to prevent addresses from exceeding channel capacity.
+
+        CRITICAL: The address space must be large enough that channel bits
+        actually vary across the range, otherwise all traffic goes to one channel.
         """
         hbm_cfg = self.config.hbm_config
         total_channels = hbm_cfg.stack_count * hbm_cfg.channels_per_stack
 
-        # Calculate minimum bits needed for channel addressing
-        # Channel bits must be able to select any valid channel
+        # Calculate channel bits based on total channels
         channel_bits = max(1, (total_channels - 1).bit_length())
 
-        # Compute how many bits we need based on dynamic address mapping
-        # This matches the _get_default_mapping in address_decoder.py
+        # Stack bits (0 if only 1 stack)
         stack_bits = max(0, (hbm_cfg.stack_count - 1).bit_length())
-        pc_bits = max(1, (hbm_cfg.pseudo_channels_per_channel - 1).bit_length())
-        bg_bits = max(1, (hbm_cfg.bank_groups_per_channel - 1).bit_length())
-        total_banks = hbm_cfg.banks_per_pseudo_channel * hbm_cfg.pseudo_channels_per_channel
-        bank_bits = max(1, (total_banks - 1).bit_length())
 
-        # Row bits (18) + col bits (13) + offset bits (3) + all address fields
-        # offset(3) + col(13) + row(18) + bank + bg + pc + channel + stack
-        min_bits = 3 + 13 + 18 + bank_bits + bg_bits + pc_bits + channel_bits + stack_bits
+        # Calculate total address bits for HBM RBC mapping
+        # offset(3) + col(13) + row(18) + bank(5) + bg(3) + pc(1) + channel + stack
+        total_bits = 3 + 13 + 18 + 5 + 3 + 1 + channel_bits + stack_bits
 
-        # Compute max address that fits in min_bits
-        max_valid_addr = 1 << min_bits
+        # Compute max valid address with proper channel bit positioning
+        # Channel must be at bits [45:42] or higher to match HBM addressing
+        # For 16 channels (4 bits): channel at bits [45:42]
+        # For 32 channels (5 bits): channel at bits [45:41]
+        # We ensure minimum 46 bits so channel is in the high bits
+        min_total_bits = max(total_bits, 46)  # At least 46 bits for proper channel placement
+
+        max_valid_addr = 1 << min_total_bits
 
         # Return the smaller of configured range and valid range
-        return min(self.config.address_range, max_valid_addr)
+        # But also ensure we don't return a range where channel bits would all be 0
+        effective_range = min(self.config.address_range, max_valid_addr)
+
+        # Sanity check: if effective_range is too small, increase it to ensure channel variation
+        if effective_range < (1 << 42):  # Need at least 42 bits for channel to vary
+            effective_range = 1 << 42
+
+        return effective_range
 
     def generate(self) -> List[HBMRequest]:
         """Generate request batch (legacy single-request mode)
@@ -453,7 +475,21 @@ class TrafficGenerator:
 
         # Generate read or write request
         is_read = self._random.random() < self.config.read_ratio
-        return HBMRequest(addr=addr, length=self.config.burst_size, is_read=is_read)
+
+        # Select channel using channel_selector or round-robin fallback
+        if self.channel_selector is not None:
+            channel_id = self.channel_selector.select_channel(addr, self.config.burst_size)
+            self.channel_selector.record_request(channel_id)
+        else:
+            # Fallback: round-robin channel selection
+            hbm_cfg = self.config.hbm_config
+            total_channels = hbm_cfg.stack_count * hbm_cfg.channels_per_stack
+            channel_id = self._channel_round_robin % total_channels
+            self._channel_round_robin += 1
+
+        req = HBMRequest(addr=addr, length=self.config.burst_size, is_read=is_read,
+                         channel_id=channel_id)
+        return req
 
     def generate_batch(self, batch_size: int) -> List[HBMRequest]:
         """Generate batch of requests efficiently
@@ -571,8 +607,8 @@ class HBMSimulator:
         self.tCK_ns = self.tCK_ps / 1000.0
 
         # Get number of channels from config
-        num_channels = sim_config.hbm_config.channels_per_stack
-        total_channels = sim_config.hbm_config.stack_count * num_channels
+        total_channels = sim_config.hbm_config.stack_count * sim_config.hbm_config.channels_per_stack
+        num_channels = total_channels  # Use total channels for proper distribution
 
         # Create DRAM model
         self.dram = DRAMModel(
@@ -597,13 +633,10 @@ class HBMSimulator:
         self.pipeline = CommandPipeline()
 
         # Create multi-channel support components
-        # Use address-based routing for sequential patterns to preserve row locality
-        # Use ADAPTIVE for other patterns where load balancing is more important
-        if sim_config.traffic_pattern == TrafficPattern.SEQUENTIAL:
-            # Use address-based routing to preserve row locality
-            channel_strategy = ChannelSelector.ADDR_BASED
-        else:
-            channel_strategy = ChannelSelector.ADAPTIVE
+        # Use ADAPTIVE strategy for all patterns to ensure proper channel distribution
+        # ADDR_BASED only works well when addresses span the full HBM address space
+        # with channel bits in the high address bits
+        channel_strategy = ChannelSelector.ADAPTIVE
         self.channel_selector = ChannelSelector(
             num_channels=num_channels,
             strategy=channel_strategy

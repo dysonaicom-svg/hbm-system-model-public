@@ -107,14 +107,15 @@ class TestTrafficGenerator:
     def test_random_traffic(self):
         config = SimulationConfig(
             traffic_pattern=TrafficPattern.RANDOM,
-            address_range=0x1000,
+            address_range=1 << 42,  # 42 bits for proper channel distribution
             seed=42
         )
         gen = TrafficGenerator(config)
         requests = gen.generate()
         # 请求率 0.5，可能为空
         for req in requests:
-            assert req.addr < 0x1000
+            # Address should be within the valid HBM address range
+            assert req.addr < (1 << 42)
             assert req.length > 0
 
     def test_sequential_traffic(self):

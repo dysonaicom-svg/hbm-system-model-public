@@ -334,7 +334,11 @@ class CommandSequencer:
 
         # Row miss: must precharge if row is open, then activate new row
         # Check if we need to precharge first
-        need_precharge = bank_state.row_open or bank_state.is_active
+        # ponytail: skip precharge if bank is truly idle (not active at all)
+        need_precharge = bank_state.row_open  # Only precharge if row is open, not if just "is_active"
+        bank_is_idle = bank_state.state == BankStateEnum.IDLE or (
+            not bank_state.row_open and not bank_state.is_active
+        )
 
         if need_precharge:
             # Precharge the currently open row
