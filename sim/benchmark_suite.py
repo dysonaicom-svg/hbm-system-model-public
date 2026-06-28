@@ -23,11 +23,81 @@ import json
 import statistics
 import random
 import sys
+import cProfile
+import pstats
+from io import StringIO
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
+
+
+def profile_benchmark(func):
+    """Decorator: Performance profiling for benchmark functions"""
+    def wrapper(*args, **kwargs):
+        profiler = cProfile.Profile()
+        profiler.enable()
+        result = func(*args, **kwargs)
+        profiler.disable()
+
+        s = StringIO()
+        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+        ps.print_stats(20)
+        print(s.getvalue())
+        return result
+    return wrapper
+
+
+def get_top_bottlenecks(profiler_stats: pstats.Stats, top_n: int = 5) -> List[Dict[str, Any]]:
+    """Extract top bottlenecks from profiler stats
+
+    Args:
+        profiler_stats: pstats.Stats object after profiling
+        top_n: Number of top bottlenecks to return
+
+    Returns:
+        List of bottleneck dicts with function, time_percent, and priority
+    """
+    bottlenecks = []
+    total_time = 0.0
+
+    # Collect all stats
+    stats_list = []
+    for func, (cc, nc, tt, ct, callers) in profiler_stats.stats.items():
+        stats_list.append({
+            'function': pstats.func_std_string(func),
+            'cumulative_time': ct,
+            'total_time': tt,
+            'calls': nc,
+        })
+        total_time += ct
+
+    # Sort by cumulative time descending
+    stats_list.sort(key=lambda x: x['cumulative_time'], reverse=True)
+
+    # Take top N and calculate percentages
+    for i, stat in enumerate(stats_list[:top_n]):
+        pct = (stat['cumulative_time'] / total_time * 100) if total_time > 0 else 0
+        # Priority: P0 for >20%, P1 for >10%, P2 for >5%, P3 for rest
+        if pct > 20:
+            priority = "P0"
+        elif pct > 10:
+            priority = "P1"
+        elif pct > 5:
+            priority = "P2"
+        else:
+            priority = "P3"
+
+        bottlenecks.append({
+            'function': stat['function'],
+            'time_percent': f"{pct:.1f}%",
+            'priority': priority,
+            'cumulative_time_s': stat['cumulative_time'],
+            'total_calls': stat['calls'],
+        })
+
+    return bottlenecks
 
 
 class BenchmarkCategory(Enum):
@@ -871,6 +941,68 @@ class PerformanceBenchmarkSuite:
         return result
 
     # ============================================================
+    # Profiling Support
+    # ============================================================
+    def run_with_profiling(self) -> Tuple[BenchmarkSuiteStats, List[Dict[str, Any]]]:
+        """Run benchmarks with cProfile profiling
+
+        Returns:
+            Tuple of (benchmark stats, top bottlenecks)
+        """
+        self.print_header("HBM Unified Simulator - Performance Benchmark with Profiling")
+
+        print(f"\nMode: {'Quick' if self.quick_mode else 'Full'}")
+        print(f"Iterations: {self.iterations}")
+        print(f"Random Seed: {self.seed}")
+
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+        # Run all benchmarks
+        stats = self.run_all()
+
+        profiler.disable()
+
+        # Print profiling summary
+        print("\n" + "=" * 70)
+        print("  Profiling Summary (Top 20 Functions)")
+        print("=" * 70)
+
+        s = StringIO()
+        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+        ps.print_stats(20)
+        print(s.getvalue())
+
+        # Extract bottlenecks
+        bottlenecks = get_top_bottlenecks(ps, top_n=5)
+
+        return stats, bottlenecks
+
+    def analyze_bottlenecks(self) -> List[Dict[str, Any]]:
+        """Run detailed bottleneck analysis on all benchmarks
+
+        Returns:
+            List of identified bottlenecks with priorities
+        """
+        self.print_header("Bottleneck Analysis")
+
+        print("\nRunning benchmarks with detailed profiling...")
+
+        stats, bottlenecks = self.run_with_profiling()
+
+        # Print bottleneck summary
+        print("\n" + "=" * 70)
+        print("  Top 5 Bottlenecks Identified")
+        print("=" * 70)
+
+        for i, b in enumerate(bottlenecks, 1):
+            print(f"\n{i}. {b['function']}")
+            print(f"   Time: {b['time_percent']} | Priority: {b['priority']}")
+            print(f"   Cumulative Time: {b['cumulative_time_s']:.4f}s | Calls: {b['total_calls']}")
+
+        return bottlenecks
+
+    # ============================================================
     # Run All Benchmarks
     # ============================================================
     def run_all(self) -> BenchmarkSuiteStats:
@@ -1044,6 +1176,18 @@ def create_parser() -> argparse.ArgumentParser:
         help='随机种子 (默认: 42)'
     )
 
+    parser.add_argument(
+        '--profile', '-p',
+        action='store_true',
+        help='启用性能分析 (cProfile)'
+    )
+
+    parser.add_argument(
+        '--analyze-bottlenecks',
+        action='store_true',
+        help='运行瓶颈分析并输出Top 5'
+    )
+
     return parser
 
 
@@ -1061,7 +1205,17 @@ def main():
     )
 
     # 运行基准测试
-    if args.categories:
+    if args.analyze_bottlenecks:
+        print("Running bottleneck analysis...")
+        bottlenecks = suite.analyze_bottlenecks()
+        # Store bottlenecks for report generation
+        return 0 if suite.stats.passed == suite.stats.total_benchmarks else 1
+
+    elif args.profile:
+        print("Running benchmarks with profiling...")
+        stats, bottlenecks = suite.run_with_profiling()
+        # Store bottlenecks for report generation
+    elif args.categories:
         print(f"Running selected categories: {args.categories}")
         # TODO: 实现分类过滤
     else:
