@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-06-28T17:46:19.146249",
+  "tool_version": "1.0.0",
+  "status": "PASS",
+  "rtl_file": "rtl/hbm_types.svh",
+  "python_file": "model/dram/hbm4_spec.py",
+  "signals_compared": 94,
+  "discrepancies_count": 0,
+  "warnings_count": 0,
+  "discrepancies": [],
+  "alignment_summary": {
+    "rtl_signals_parsed": 43,
+    "python_constants_parsed": 51,
+    "python_timing_parsed": 11,
+    "config_match": 0,
+    "timing_match": 0,
+    "address_match": 0,
+    "command_match": 0
+  }
+}
