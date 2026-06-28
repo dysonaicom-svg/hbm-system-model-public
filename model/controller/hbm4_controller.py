@@ -57,6 +57,7 @@ from model.controller.hbm4_qos_scheduler import (
     HBM4QoSScheduler, QoSLevel, TrafficType, BankConflictTracker
 )
 from model.controller.hbm4_refresh_scheduler import HBM4RefreshScheduler, RefreshMode
+from model.controller.prefetch_engine import PrefetchEngine, PrefetchPolicy
 from model.controller.exceptions import QueueOverflowError
 
 # Configure debug logging for HBM4 controller
@@ -244,6 +245,7 @@ class HBM4Controller:
         enable_refresh: bool = True,
         enable_dfi: bool = True,
         enable_pipeline: bool = True,
+        enable_prefetch: bool = False,  # Disabled by default for backward compatibility
     ):
         """Initialize HBM4 Controller
 
@@ -264,6 +266,7 @@ class HBM4Controller:
         self._enable_refresh = enable_refresh
         self._enable_dfi = enable_dfi
         self._enable_pipeline = enable_pipeline
+        self._enable_prefetch = enable_prefetch  # Store prefetch flag
 
         # Initialize HBM4-specific address decoder
         self.decoder = HBM4AddressDecoder(spec=self.spec)
@@ -300,6 +303,9 @@ class HBM4Controller:
             self._pipeline = CommandPipeline(num_stages=4, pipeline_depth=32)
         else:
             self._pipeline = None
+
+        # Initialize prefetch engine
+        self.prefetch_engine = PrefetchEngine(history_size=2048)
 
         # Bank conflict tracker for request coalescing
         self._bank_tracker = BankConflictTracker(
@@ -350,6 +356,7 @@ class HBM4Controller:
         is_read: bool,
         qos_level: int = 8,
         size_bytes: int = 64,
+        _is_prefetch: bool = False,  # Internal flag to prevent prefetch recursion
     ) -> Optional[str]:
         """Submit a request to the controller
 
@@ -396,6 +403,13 @@ class HBM4Controller:
 
         # Track request
         self._pending_requests[request.request_id] = request
+
+        # Record access for prefetch engine (always, for pattern analysis)
+        self.prefetch_engine.record_access(addr, size_bytes)
+
+        # Generate prefetch requests only if enabled
+        if self._enable_prefetch and not _is_prefetch:
+            self._submit_prefetch_requests(addr)
 
         # Generate DFI command if DFI is enabled
         if self.dfi:
@@ -458,6 +472,34 @@ class HBM4Controller:
             f"cmd={cmd_type}, ch={request.channel_id}, "
             f"pch={request.pseudo_channel_id}, row={request.row_id}"
         )
+
+    def _submit_prefetch_requests(self, current_addr: int):
+        """Submit prefetch requests based on current access pattern
+
+        Args:
+            current_addr: Current address being accessed
+        """
+        if self.prefetch_engine.policy == PrefetchPolicy.NONE:
+            return
+
+        prefetch_reqs = self.prefetch_engine.get_prefetch_requests(current_addr, num_requests=4)
+        for prefetch in prefetch_reqs:
+            # Skip low-confidence correlation prefetches
+            if self.prefetch_engine.policy == PrefetchPolicy.CORRELATION and prefetch.confidence < 0.5:
+                continue
+
+            # Create prefetch request with high priority (use internal flag to prevent recursion)
+            prefetch_id = self.submit_request(
+                addr=prefetch.address,
+                is_read=True,  # Prefetches are typically reads
+                qos_level=1,   # Low QoS for prefetch
+                size_bytes=prefetch.size,
+                _is_prefetch=True,  # Prevent further prefetch recursion
+            )
+            if prefetch_id:
+                self.prefetch_engine.prefetch_requests_issued += 1
+                _logger.debug(f"Prefetch submitted: addr=0x{prefetch.address:x}, "
+                             f"policy={prefetch.policy}, confidence={prefetch.confidence:.2f}")
 
     def _can_issue_to_bank(
         self,
