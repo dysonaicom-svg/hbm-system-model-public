@@ -21,6 +21,7 @@ import math
 
 from model.dram.hbm4_spec import HBM4Spec
 from model.controller.hbm4_address_decoder import HBM4AddressDecoder
+from model.controller.bank_state_cache import BankStateCache
 
 if TYPE_CHECKING:
     from model.controller.request import HBMRequest
@@ -598,6 +599,9 @@ class HBM4QoSScheduler:
             num_bank_groups=self.config.bank_groups_per_channel,
             num_banks=self.config.banks_per_pseudo_channel
         )
+
+        # Bank state cache for efficient lookups
+        self._bank_state_cache = BankStateCache(max_size=2048)
 
         # QoS class configuration
         self._qos_classes: Dict[int, QoSClass] = {}
@@ -1256,3 +1260,45 @@ class HBM4QoSScheduler:
             open_row = self._bank_tracker.get_open_row(channel, pseudo_channel, bg, bank)
             return open_row != row
         return False
+
+    def check_bank_available(self, channel: int, bank: int, cycle: int) -> bool:
+        """Check if bank is available using cache.
+
+        Uses BankStateCache for faster lookups when same bank is queried repeatedly.
+
+        Args:
+            channel: Channel ID
+            bank: Bank ID
+            cycle: Current simulation cycle
+
+        Returns:
+            True if bank is available (IDLE)
+        """
+        # Pseudo-channel defaults to 0 for simple lookups
+        cached = self._bank_state_cache.get(channel, 0, bank)
+        if cached:
+            return cached[0] == "IDLE"
+
+        # Cache miss - query tracker and update cache
+        state_dict = self._bank_tracker.get_bank_state(channel, 0, 0, bank)
+        is_idle = state_dict.get('open_row', -1) < 0  # IDLE if no row open
+        state = "IDLE" if is_idle else "ACTIVE"
+        self._bank_state_cache.set(channel, 0, bank, state, cycle)
+        return is_idle
+
+    def invalidate_bank_cache(self, channel: int, bank: int):
+        """Invalidate cache entry for a bank after state change.
+
+        Args:
+            channel: Channel ID
+            bank: Bank ID
+        """
+        self._bank_state_cache.invalidate(channel, 0, bank)
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get bank state cache statistics.
+
+        Returns:
+            Dict with cache hits, misses, hit_rate, size
+        """
+        return self._bank_state_cache.get_stats()
