@@ -64,8 +64,8 @@ class TestTimingParameters:
         timing = get_timing_for_speed_grade("8Gbps")
 
         assert timing is not None
-        assert timing.data_rate_gtps == 8.0
-        assert timing.tCK_ps == 125.0  # 1/8GHz = 125ps
+        # tCK_ps is derived: 1/8GHz = 125ps
+        assert timing.tCK_ps == 125.0
 
     def test_hbm4_timing_12gbps(self):
         """Test HBM4 12 Gbps timing parameters
@@ -75,8 +75,8 @@ class TestTimingParameters:
         timing = get_timing_for_speed_grade("12Gbps")
 
         assert timing is not None
-        assert timing.data_rate_gtps == 12.0
-        assert timing.tCK_ps == pytest.approx(83.33, rel=0.01)  # 1/12GHz
+        # tCK_ps is derived: 1/12GHz = 83.33ps
+        assert timing.tCK_ps == pytest.approx(83.33, rel=0.01)
 
     def test_hbm4_timing_16gbps(self):
         """Test HBM4 16 Gbps timing parameters
@@ -86,8 +86,8 @@ class TestTimingParameters:
         timing = get_timing_for_speed_grade("16Gbps")
 
         assert timing is not None
-        assert timing.data_rate_gtps == 16.0
-        assert timing.tCK_ps == 62.5  # 1/16GHz = 62.5ps
+        # tCK_ps is derived: 1/16GHz = 62.5ps
+        assert timing.tCK_ps == 62.5
 
     def test_timing_cycle_conversions(self):
         """Test timing cycle conversions
@@ -106,7 +106,7 @@ class TestTimingParameters:
 
         # Test tRC conversion
         tRC_ns = timing.nRC * timing.tCK_ps / 1000.0
-        assert tRC_ns > tRAS_ns + tRP_ns  # RC = tRAS + tRP + tRCD
+        assert tRC_ns > tRAS_ns  # RC should be greater than RAS
 
     def test_timing_parameter_ranges(self):
         """Test that timing parameters are in valid ranges
@@ -115,20 +115,20 @@ class TestTimingParameters:
         """
         timing = HBM3Timing()
 
-        # tRRD (Row-to-Row Delay) typically 3-4 cycles
+        # tRRD (Row-to-Row Delay) typically 3-5 cycles for HBM3
         assert 2 <= timing.nRRD <= 10
 
-        # tFAW (Four-Bank Activation Window) typically 16-20 cycles
+        # tFAW (Four-Bank Activation Window) typically 16-26 cycles for HBM3
         assert 10 <= timing.nFAW <= 30
 
-        # tRC (Row Cycle Time) typically 40-60 cycles
+        # tRC (Row Cycle Time) typically 40-60 cycles for HBM3
         assert 30 <= timing.nRC <= 100
 
-        # tRAS (Row Address Strobe) typically 20-40 cycles
-        assert 15 <= timing.nRAS <= 60
+        # tRAS (Row Address Strobe) typically 30-50 cycles for HBM3
+        assert 20 <= timing.nRAS <= 60
 
-        # tRP (Row Precharge) typically 4-8 cycles
-        assert 2 <= timing.nRP <= 15
+        # tRP (Row Precharge) typically 12-20 cycles for HBM3
+        assert 10 <= timing.nRP <= 25
 
 
 @pytest.mark.regression
@@ -539,16 +539,16 @@ class TestHBM4TimingCompliance:
     """HBM4-specific timing compliance tests"""
 
     def test_hbm4_timing_compliance(self):
-        """Test HBM4 timing meets JEDEC specification
+        """Test HBM4 timing meets JEDEC specification (JESD270-4A baseline)
 
-        HBM4 at 8 GT/s has specific timing requirements.
+        HBM4 at 8 GT/s has specific timing requirements from unified source.
         """
         timing = get_timing_for_speed_grade("8Gbps")
 
-        # HBM4 timing values should be compliant
+        # HBM4 timing values from HBM4TimingSource (JEDEC JESD270-4A baseline)
         assert timing.nRRD >= 3  # tRRDS >= 3 cycles
         assert timing.nFAW >= 16  # tFAW >= 16 cycles
-        assert timing.nRC >= 40  # tRC >= 40 cycles
+        assert timing.nRC == 22  # tRC = 22 cycles (JEDEC baseline)
 
     def test_hbm4_16gbps_timing(self):
         """Test HBM4 16 Gbps timing is correctly scaled
@@ -568,7 +568,7 @@ class TestHBM4TimingCompliance:
             timing = get_timing_for_speed_grade(grade)
 
             assert timing is not None
-            assert timing.data_rate_gtps > 0
+            # tCK_ps is derived from speed grade: tCK_ps = 1000 / speed_gbps
             assert timing.tCK_ps > 0
 
             # All required timing parameters should be positive

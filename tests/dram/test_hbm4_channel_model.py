@@ -383,25 +383,25 @@ class TestHBM4BankStateTransitions:
 class TestHBM4TimingCompliance:
     """Test HBM4 timing parameter compliance using enhanced timing"""
 
-    def test_enhanced_timing_tRCD_is_12_cycles(self):
-        """tRCD must be 12 cycles in enhanced bank timing"""
+    def test_enhanced_timing_tRCD_is_8_cycles(self):
+        """tRCD is 8 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRCD == 12
+        assert timing.tRCD == 8
 
-    def test_enhanced_timing_tRP_is_12_cycles(self):
-        """tRP must be 12 cycles in enhanced bank timing"""
+    def test_enhanced_timing_tRP_is_8_cycles(self):
+        """tRP is 8 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRP == 12
+        assert timing.tRP == 8
 
-    def test_enhanced_timing_tRAS_is_28_cycles(self):
-        """tRAS must be 28 cycles in enhanced bank timing"""
+    def test_enhanced_timing_tRAS_is_20_cycles(self):
+        """tRAS is 20 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRAS == 28
+        assert timing.tRAS == 20
 
-    def test_enhanced_timing_tRC_is_40_cycles(self):
-        """tRC must be 40 cycles in enhanced bank timing"""
+    def test_enhanced_timing_tRC_is_22_cycles(self):
+        """tRC is 22 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRC == 40
+        assert timing.tRC == 22
 
     def test_activation_timing_with_enhanced_banks(self):
         """Verify activation follows tRCD timing with enhanced banks"""

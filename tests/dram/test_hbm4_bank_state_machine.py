@@ -114,12 +114,13 @@ class TestHBM4BankInitialization:
         """Verify default timing parameters"""
         timing = HBM4BankTiming()
 
-        assert timing.tRCD == 12
-        assert timing.tRP == 12
-        assert timing.tRAS == 28
-        assert timing.tRC == 40
+        # Values from HBM4TimingSource (JEDEC JESD270-4A baseline)
+        assert timing.tRCD == 8
+        assert timing.tRP == 8
+        assert timing.tRAS == 20
+        assert timing.tRC == 22
         assert timing.tCL == 8
-        assert timing.tCWL == 4
+        assert timing.tCWL == 3
 
 
 # =============================================================================
@@ -814,9 +815,9 @@ class TestHBM4TRCDConstraint:
         assert bank.can_write()
 
     def test_tRCD_timing_value(self):
-        """Verify tRCD is 12 cycles"""
+        """Verify tRCD is 8 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRCD == 12
+        assert timing.tRCD == 8
 
 
 # =============================================================================
@@ -861,9 +862,9 @@ class TestHBM4TRASConstraint:
         assert success is True
 
     def test_tRAS_timing_value(self):
-        """Verify tRAS is 28 cycles"""
+        """Verify tRAS is 20 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRAS == 28
+        assert timing.tRAS == 20
 
 
 # =============================================================================
@@ -899,9 +900,9 @@ class TestHBM4TRPConstraint:
         assert bank.complete_precharge()
 
     def test_tRP_timing_value(self):
-        """Verify tRP is 12 cycles"""
+        """Verify tRP is 8 cycles (JEDEC JESD270-4A baseline)"""
         timing = HBM4BankTiming()
-        assert timing.tRP == 12
+        assert timing.tRP == 8
 
 
 # =============================================================================
@@ -1920,14 +1921,14 @@ class TestHBM4JEDECCompliance:
     """Test JEDEC specification compliance"""
 
     def test_jedec_timing_parameters(self):
-        """Verify JEDEC-compliant timing parameters"""
+        """Verify JEDEC-compliant timing parameters (JESD270-4A baseline)"""
         timing = HBM4BankTiming()
 
-        # JEDEC HBM4 timing values (cycles @ 8 GT/s)
-        assert timing.tRCD >= 12  # Minimum
-        assert timing.tRP >= 12    # Minimum
-        assert timing.tRAS >= 28   # Minimum
-        assert timing.tRC >= 40    # Minimum
+        # JEDEC HBM4 timing values (cycles @ 8 GT/s) - from HBM4TimingSource
+        assert timing.tRCD == 8   # JEDEC baseline
+        assert timing.tRP == 8     # JEDEC baseline
+        assert timing.tRAS == 20   # JEDEC baseline
+        assert timing.tRC == 22    # JEDEC baseline
 
     def test_jedec_column_timing(self):
         """Verify JEDEC column timing"""

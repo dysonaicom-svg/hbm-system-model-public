@@ -17,6 +17,9 @@ Key differences from HBM3:
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
+# Import unified timing source - single source of truth for all timing parameters
+from model.dram.timing import HBM4TimingSource, HBM4_TIMING
+
 
 @dataclass
 class HBM4Spec:
@@ -78,29 +81,30 @@ class HBM4Spec:
     # === Timing Parameters (cycles @ tCK) ===
     # Based on JEDEC JESD270-4A HBM4 specification
     # For 8 GT/s DDR: tCK = 1000/8 = 125 ps (not 1250 ps!)
+    # Note: All timing values sourced from HBM4TimingSource for consistency
     tCK_ps: float = 125.0                    # Clock period in ps (125ps = 8 GHz)
-    nBL: int = 4                          # Burst length
-    nCL: int = 8                          # CAS latency
-    nRCDRD: int = 8                       # RAS to CAS delay (read)
-    nRCDWR: int = 8                       # RAS to CAS delay (write)
-    nRP: int = 8                          # Precharge command period
-    nRAS: int = 20                        # Row active time
-    nRC: int = 22                         # Row cycle time
-    nWR: int = 8                          # Write recovery
-    nRTPS: int = 2                        # Read to precharge
-    nRTPL: int = 3                        # Read to precharge (last data)
-    nCWL: int = 3                         # CAS write latency
-    nCCDS: int = 2                        # Column command delay (same bank group)
-    nCCDL: int = 3                        # Column command delay (different bank group)
-    nRRDS: int = 3                        # RAS to RAS delay (same bank group)
-    nRRDL: int = 4                        # RAS to RAS delay (different bank group)
-    nWTRS: int = 4                        # Write to read turnaround (same bank group)
-    nWTRL: int = 5                        # Write to read turnaround (different bank group)
-    nRTW: int = 4                         # Read to write turnaround
-    nFAW: int = 16                        # Four-activate window
-    nRFC: int = 180                       # Refresh command duration
-    nREFI: int = 3900                     # Refresh interval
-    nRREFD: int = 8                       # Per-bank refresh interval
+    nBL: int = HBM4_TIMING.nBL              # Burst length
+    nCL: int = HBM4_TIMING.nCL              # CAS latency
+    nRCDRD: int = HBM4_TIMING.nRCDRD        # RAS to CAS delay (read)
+    nRCDWR: int = HBM4_TIMING.nRCDWR        # RAS to CAS delay (write)
+    nRP: int = HBM4_TIMING.nRP              # Precharge command period
+    nRAS: int = HBM4_TIMING.nRAS            # Row active time
+    nRC: int = HBM4_TIMING.nRC              # Row cycle time
+    nWR: int = HBM4_TIMING.nWR              # Write recovery
+    nRTPS: int = HBM4_TIMING.nRTPS          # Read to precharge
+    nRTPL: int = HBM4_TIMING.nRTPL          # Read to precharge (last data)
+    nCWL: int = HBM4_TIMING.nCWL             # CAS write latency
+    nCCDS: int = HBM4_TIMING.nCCDS          # Column command delay (same bank group)
+    nCCDL: int = HBM4_TIMING.nCCDL          # Column command delay (different bank group)
+    nRRDS: int = HBM4_TIMING.nRRDS          # RAS to RAS delay (same bank group)
+    nRRDL: int = HBM4_TIMING.nRRDL          # RAS to RAS delay (different bank group)
+    nWTRS: int = HBM4_TIMING.nWTRS          # Write to read turnaround (same bank group)
+    nWTRL: int = HBM4_TIMING.nWTRL          # Write to read turnaround (different bank group)
+    nRTW: int = HBM4_TIMING.nRTW            # Read to write turnaround
+    nFAW: int = HBM4_TIMING.nFAW            # Four-activate window
+    nRFC: int = HBM4_TIMING.nRFC            # Refresh command duration
+    nREFI: int = HBM4_TIMING.nREFI          # Refresh interval
+    nRREFD: int = HBM4_TIMING.nRREFD        # Per-bank refresh interval
 
     # === Address Bit Fields ===
     # Based on DRAMSys HBM2 address mapping, extended for HBM4
@@ -166,18 +170,19 @@ HBM4_CONFIG = HBM4Spec()
 # Default timing values aligned with RTL hbm_types.svh HBM4_TIMING_DEFAULT
 # Values in clock cycles @ 8 GT/s DDR (tCK = 125 ps)
 # Reference: JEDEC JESD270-4A HBM4 specification
+# Note: All values sourced from HBM4TimingSource for consistency
 HBM4_DEFAULT_TIMING = {
-    'tRCD': 8,    # RAS to CAS delay
-    'tRP': 8,     # Row precharge time
-    'tRAS': 20,   # Row active time
-    'tRC': 22,    # Row cycle time
-    'tCCD': 4,    # CAS-to-CAS delay
-    'tRRD': 4,    # Row-to-row delay
-    'tFAW': 16,   # Four-activate window
-    'tRFC': 180,  # Refresh cycle time
-    'tREFI': 3900,# Refresh interval
-    'tCL': 8,     # CAS latency
-    'tCWL': 3,    # CAS write latency
+    'tRCD': HBM4_TIMING.nRCD,     # RAS to CAS delay
+    'tRP': HBM4_TIMING.nRP,       # Row precharge time
+    'tRAS': HBM4_TIMING.nRAS,     # Row active time
+    'tRC': HBM4_TIMING.nRC,       # Row cycle time
+    'tCCD': HBM4_TIMING.nCCD,     # CAS-to-CAS delay
+    'tRRD': HBM4_TIMING.nRRD,     # Row-to-row delay
+    'tFAW': HBM4_TIMING.nFAW,     # Four-activate window
+    'tRFC': HBM4_TIMING.nRFC,     # Refresh cycle time
+    'tREFI': HBM4_TIMING.nREFI,   # Refresh interval
+    'tCL': HBM4_TIMING.nCL,       # CAS latency
+    'tCWL': HBM4_TIMING.nCWL,     # CAS write latency
 }
 
 # Speed grade presets

@@ -12,11 +12,11 @@ Key features:
 - State transition timing validation
 - Bank group-aware scheduling
 
-HBM4 Key Timing Parameters:
-- tRCD: 12 cycles (Activate to Read/Write)
-- tRP: 12 cycles (Precharge)
-- tRAS: 28 cycles (Activate to Precharge)
-- tRC: 40 cycles (Activate to Activate same bank)
+HBM4 Key Timing Parameters (from HBM4TimingSource):
+- tRCD: 8 cycles (Activate to Read/Write)
+- tRP: 8 cycles (Precharge)
+- tRAS: 20 cycles (Activate to Precharge)
+- tRC: 22 cycles (Activate to Activate same bank)
 
 Reference:
 - JEDEC JESD270-4A HBM4 specification
@@ -27,6 +27,9 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Dict, Set
 import logging
+
+# Import unified timing source
+from model.dram.timing import HBM4TimingSource, HBM4_TIMING as UNIFIED_TIMING
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -74,78 +77,80 @@ class HBM4Command(IntEnum):
     RFM = 7      # Row flash memory
 
 
-# Pre-computed timing lookup for HBM4 (12 Gbps optimized)
-# Reference: JEDEC JESD270-4A HBM4 specification with tighter timing
-HBM4_TIMING = {
+# Use unified timing source - single source of truth
+# Reference: JEDEC JESD270-4A HBM4 specification with JEDEC baseline timing
+BANK_TIMING = {
     # Row command timing (cycles @ 8 GT/s, tCK = 125 ps)
-    'tRCD': 12,    # RAS to CAS delay (Activate to Read/Write)
-    'tRP': 12,     # Precharge time
-    'tRAS': 28,    # Row active time minimum (28 cycles = 3.5 ns)
-    'tRC': 40,     # Row cycle time (same bank)
+    # Values from HBM4TimingSource (HBM4 spec baseline)
+    'tRCD': UNIFIED_TIMING.nRCD,    # RAS to CAS delay (8 cycles = 1 ns)
+    'tRP': UNIFIED_TIMING.nRP,     # Precharge time (8 cycles = 1 ns)
+    'tRAS': UNIFIED_TIMING.nRAS,    # Row active time minimum (20 cycles = 2.5 ns)
+    'tRC': UNIFIED_TIMING.nRC,      # Row cycle time (same bank) (22 cycles = 2.75 ns)
 
     # Column command timing
-    'tCL': 8,      # CAS latency
-    'tCWL': 4,     # CAS write latency
+    'tCL': UNIFIED_TIMING.nCL,      # CAS latency (8 cycles = 1 ns)
+    'tCWL': UNIFIED_TIMING.nCWL,    # CAS write latency (3 cycles = 375 ps)
 
     # Bank group timing
-    'tCCD': 4,     # CAS-to-CAS delay
-    'tCCDS': 2,    # CAS-to-CAS delay (same BG)
-    'tCCDL': 3,    # CAS-to-CAS delay (different BG)
+    'tCCD': UNIFIED_TIMING.nCCD,    # CAS-to-CAS delay (4 cycles = 500 ps)
+    'tCCDS': UNIFIED_TIMING.nCCDS,  # CAS-to-CAS delay (same BG) (2 cycles = 250 ps)
+    'tCCDL': UNIFIED_TIMING.nCCDL,  # CAS-to-CAS delay (different BG) (3 cycles = 375 ps)
 
     # Row timing
-    'tRRD': 4,     # Row-to-row delay
-    'tRRDS': 3,    # Row-to-row delay (same BG)
-    'tRRDL': 4,    # Row-to-row delay (different BG)
-    'tFAW': 16,    # Four-activate window
+    'tRRD': UNIFIED_TIMING.nRRD,    # Row-to-row delay (4 cycles = 500 ps)
+    'tRRDS': UNIFIED_TIMING.nRRDS,  # Row-to-row delay (same BG) (3 cycles = 375 ps)
+    'tRRDL': UNIFIED_TIMING.nRRDL,  # Row-to-row delay (different BG) (4 cycles = 500 ps)
+    'tFAW': UNIFIED_TIMING.nFAW,    # Four-activate window (16 cycles = 2 ns)
 
     # Turnaround timing
-    'tWTRS': 4,    # Write to read (same BG)
-    'tWTRL': 5,    # Write to read (different BG)
-    'tRTW': 4,     # Read to write
+    'tWTRS': UNIFIED_TIMING.nWTRS,  # Write to read (same BG) (4 cycles = 500 ps)
+    'tWTRL': UNIFIED_TIMING.nWTRL,  # Write to read (different BG) (5 cycles = 625 ps)
+    'tRTW': UNIFIED_TIMING.nRTW,    # Read to write (4 cycles = 500 ps)
 
     # Refresh timing
-    'tRFC': 180,   # Refresh cycle time
-    'tREFI': 3900, # Refresh interval
+    'tRFC': UNIFIED_TIMING.nRFC,    # Refresh cycle time (180 cycles = 22.5 ns)
+    'tREFI': UNIFIED_TIMING.nREFI,  # Refresh interval (3900 cycles = 487.5 us)
 }
 
 
 @dataclass
 class HBM4BankTiming:
-    """HBM4 timing parameters for a single bank
+    """HBM4 timing parameters for a single bank - uses unified timing source
 
     All timing values are in clock cycles @ 8 GT/s (tCK = 125 ps)
+    Values are sourced from HBM4TimingSource for consistency.
     """
-    # Clock period
-    tCK_ps: float = 125.0
+    # Clock period - from unified source
+    tCK_ps: float = 125.0  # Default 125 ps
 
-    # Row command timing
-    tRCD: int = 12   # RAS to CAS delay
-    tRP: int = 12    # Precharge time
-    tRAS: int = 28   # Row active time minimum
-    tRC: int = 40    # Row cycle time (same bank)
+    # Row command timing - from unified source
+    tRCD: int = UNIFIED_TIMING.nRCD   # RAS to CAS delay
+    tRP: int = UNIFIED_TIMING.nRP     # Precharge time
+    tRAS: int = UNIFIED_TIMING.nRAS   # Row active time minimum
+    tRC: int = UNIFIED_TIMING.nRC     # Row cycle time (same bank)
 
-    # Column command timing
-    tCL: int = 8     # CAS latency
-    tCWL: int = 4    # CAS write latency
+    # Column command timing - from unified source
+    tCL: int = UNIFIED_TIMING.nCL     # CAS latency
+    tCWL: int = UNIFIED_TIMING.nCWL   # CAS write latency
 
-    # Bank group timing
-    tRRDS: int = 3   # RAS to RAS delay (same BG)
-    tRRDL: int = 4   # RAS to RAS delay (different BG)
-    tFAW: int = 16   # Four-activate window
+    # Bank group timing - from unified source
+    tRRDS: int = UNIFIED_TIMING.nRRDS # RAS to RAS delay (same BG)
+    tRRDL: int = UNIFIED_TIMING.nRRDL # RAS to RAS delay (different BG)
+    tFAW: int = UNIFIED_TIMING.nFAW   # Four-activate window
 
-    # Turnaround timing
-    tWTRS: int = 4   # Write to read (same BG)
-    tWTRL: int = 5   # Write to read (different BG)
-    tRTW: int = 4    # Read to write
+    # Turnaround timing - from unified source
+    tWTRS: int = UNIFIED_TIMING.nWTRS # Write to read (same BG)
+    tWTRL: int = UNIFIED_TIMING.nWTRL # Write to read (different BG)
+    tRTW: int = UNIFIED_TIMING.nRTW   # Read to write
 
-    # CAS-to-CAS delay
-    tCCD: int = 4    # CAS-to-CAS delay (column command spacing)
+    # CAS-to-CAS delay - from unified source
+    tCCD: int = UNIFIED_TIMING.nCCD   # CAS-to-CAS delay (column command spacing)
 
-    # Refresh timing
-    tRFC: int = 180  # Refresh cycle time
+    # Refresh timing - from unified source
+    tRFC: int = UNIFIED_TIMING.nRFC   # Refresh cycle time
 
     # Burst length
-    tBL: int = 4     # Burst length (FLINE = 4 beats)
+    tBL: int = UNIFIED_TIMING.nBL     # Burst length (FLINE = 4 beats)
 
     @property
     def clock_period_ns(self) -> float:
