@@ -100,6 +100,24 @@ from model.dram.dfi_interface import (
 from model.dram.bank_state_machine import (
     BankStateMachine,
     BankStateEnum,
+    BankArray,
+    TimingViolation,
+    create_bank_state_machine,
+    create_bank_array,
+)
+
+# Backward compatibility: HBM4-specific exports
+from model.dram.hbm4_bank_state_machine import (
+    HBM4BankState,
+    HBM4BankStateMachine,
+    HBM4BankArray,
+    HBM4BankTiming,
+    HBM4Command,
+    HBM4TimingSource,
+    UNIFIED_TIMING,
+    BANK_TIMING,
+    create_hbm4_bank_state_machine,
+    create_hbm4_bank_array,
 )
 
 # Full Stack Models
@@ -165,6 +183,22 @@ __all__ = [
     # State Management
     'BankStateMachine',
     'BankStateEnum',
+    'BankArray',
+    'TimingViolation',
+    'create_bank_state_machine',
+    'create_bank_array',
+
+    # HBM4 State Management (backward compatibility)
+    'HBM4BankState',
+    'HBM4BankStateMachine',
+    'HBM4BankArray',
+    'HBM4BankTiming',
+    'HBM4Command',
+    'HBM4TimingSource',
+    'UNIFIED_TIMING',
+    'BANK_TIMING',
+    'create_hbm4_bank_state_machine',
+    'create_hbm4_bank_array',
 
     # Full Stack
     'DRAMModel',

@@ -19,19 +19,38 @@ import sys
 class BankStateEnum(IntEnum):
     """Bank state enum
 
-    Aligned with RTL 3-bit encoding:
-    - RTL: 000=IDLE, 001=ACTIVE, 010=BUSY, 011=REFRESH, 100=POWERDN, 101=SELFREF
-    """
-    IDLE = 0       # 000 - Bank idle
-    ACTIVE = 1     # 001 - Bank activated
-    BUSY = 2       # 010 - Bank busy (READ/WRITE in progress)
-    REFRESHING = 3 # 011 - Refreshing
-    POWERDN = 4    # 100 - Power down
-    SELFREF = 5    # 101 - Self refresh
+    Supports both HBM3 and HBM4 state tracking:
+    - HBM3 mode: 3-bit encoding (IDLE, ACTIVE, BUSY, REFRESHING, POWERDN, SELFREF)
+    - HBM4 mode: Extended 4-bit with intermediate states (ACTIVATING, PRECHARGING)
 
-    # Aliases for backward compatibility with HBM3 naming
-    READING = 2    # Same as BUSY
-    WRITING = 2    # Same as BUSY
+    HBM4 State Encoding (from JEDEC JESD270-4A):
+    - 000=CLOSED, 001=ACTIVATING, 010=OPEN, 011=PRECHARGING
+    - 100=READ, 101=WRITE, 110=REFRESH, 111=POWER_DOWN/SELF_REFRESH
+    """
+    # HBM4 Primary States (JEDEC encoding)
+    CLOSED = 0        # 000 - Bank precharged and idle
+    ACTIVATING = 1    # 001 - Activation in progress (tRCD period)
+    OPEN = 2          # 010 - Row is open and accessible
+    PRECHARGING = 3   # 011 - Precharge in progress (tRP period)
+    READ = 4          # 100 - Read operation in progress
+    WRITE = 5         # 101 - Write operation in progress
+    REFRESH = 6       # 110 - Refresh in progress
+    POWER_DOWN = 7    # 111 - Power down mode
+
+    # Extended states
+    SELF_REFRESH = 8  # Self refresh mode
+
+    # HBM3 compatibility aliases (using RTL 3-bit encoding)
+    IDLE = 0          # Same as CLOSED
+    ACTIVE = 2        # Same as OPEN
+    BUSY = 4          # Same as READ (covers both read/write)
+    REFRESHING = 6   # Same as REFRESH
+    POWERDN = 7      # Same as POWER_DOWN
+    SELFREF = 8      # Same as SELF_REFRESH
+
+    # Legacy aliases
+    READING = 4       # Same as READ
+    WRITING = 5       # Same as WRITE
 
 
 class OperationType(IntEnum):
@@ -47,31 +66,34 @@ _STATE_IDLE = 1 << BankStateEnum.IDLE
 _STATE_ACTIVE = 1 << BankStateEnum.ACTIVE
 _STATE_BUSY = 1 << BankStateEnum.BUSY
 _STATE_REFRESHING = 1 << BankStateEnum.REFRESHING
+_STATE_ACTIVATING = 1 << BankStateEnum.ACTIVATING
+_STATE_PRECHARGING = 1 << BankStateEnum.PRECHARGING
 
 
-# Timing lookup table - pre-computed values for common timing parameters
-# Maps timing parameter names to their cycle values for HBM3
-_TIMING_LOOKUP = {
-    'nRC': 340,
-    'nRAS': 320,
-    'nRCD': 20,
-    'nRP': 20,
-    'nRFC': 260,
-    'nCL': 20,
-    'nCWL': 16,
-    'nCCD': 4,
-    'nWTRS': 4,
-    'nRTW': 4,
+# HBM3 Timing lookup table (default values)
+# HBM4 values: nRC=22, nRAS=20, nRCD=8, nRP=8, nRFC=180
+_HBM3_TIMING = {
+    'nRC': 340, 'nRAS': 320, 'nRCD': 20, 'nRP': 20, 'nRFC': 260,
+    'nCL': 20, 'nCWL': 16, 'nCCD': 4, 'nWTRS': 4, 'nRTW': 4,
     # HBM3 aliases
-    'tRC': 340,
-    'tRAS': 320,
-    'tRCD': 20,
-    'tRP': 20,
-    'tRFC': 260,
-    'tCL': 20,
-    'tCWL': 16,
-    'tCCD': 4,
+    'tRC': 340, 'tRAS': 320, 'tRCD': 20, 'tRP': 20, 'tRFC': 260,
+    'tCL': 20, 'tCWL': 16, 'tCCD': 4,
 }
+
+# HBM4 Timing lookup table (from JEDEC JESD270-4A)
+# tCK = 125 ps @ 8 GT/s
+_HBM4_TIMING = {
+    'nRC': 22, 'nRAS': 20, 'nRCD': 8, 'nRP': 8, 'nRFC': 180,
+    'nCL': 8, 'nCWL': 3, 'nCCD': 4, 'nWTRS': 4, 'nWTRL': 5, 'nRTW': 4,
+    # HBM4 Bank Group timing
+    'nCCDS': 2, 'nCCDL': 3, 'nRRDS': 3, 'nRRDL': 4, 'nFAW': 16,
+    # HBM4 aliases
+    'tRC': 22, 'tRAS': 20, 'tRCD': 8, 'tRP': 8, 'tRFC': 180,
+    'tCL': 8, 'tCWL': 3, 'tCCD': 4,
+}
+
+# Default timing lookup uses HBM3 values for backward compatibility
+_TIMING_LOOKUP = _HBM3_TIMING.copy()
 
 
 class Bank:
@@ -137,6 +159,37 @@ class Bank:
         """Check if bank has ever been precharged"""
         return self.precharge_time >= 0
 
+    # HBM4 extended state properties
+    @property
+    def is_closed(self) -> bool:
+        """Check if bank is closed (HBM4 compatibility)"""
+        return self.state == BankStateEnum.IDLE or self.state == BankStateEnum.CLOSED
+
+    @property
+    def is_open(self) -> bool:
+        """Check if bank is open (HBM4 compatibility)"""
+        return self.state == BankStateEnum.ACTIVE or self.state == BankStateEnum.OPEN
+
+    @property
+    def is_activating(self) -> bool:
+        """Check if bank is activating (HBM4 extended)"""
+        return self.state == BankStateEnum.ACTIVATING
+
+    @property
+    def is_precharging(self) -> bool:
+        """Check if bank is precharging (HBM4 extended)"""
+        return self.state == BankStateEnum.PRECHARGING
+
+    @property
+    def is_reading(self) -> bool:
+        """Check if bank is reading (HBM4 compatibility)"""
+        return self.state == BankStateEnum.BUSY and self.read_start_time >= 0
+
+    @property
+    def is_writing(self) -> bool:
+        """Check if bank is writing (HBM4 compatibility)"""
+        return self.state == BankStateEnum.BUSY and self.write_start_time >= 0
+
     def update_state(self, new_state: BankStateEnum):
         """Update state with cached flag update"""
         self.state = new_state
@@ -185,7 +238,7 @@ class BankStateMachine:
     """Bank State Machine - Optimized Version
 
     Manages single bank state transitions and timing constraints.
-    Supports HBM3/HBM4 timing parameters.
+    Supports HBM3/HBM4 timing parameters with unified state tracking.
 
     Optimizations:
     - Batch timing checks
@@ -193,24 +246,52 @@ class BankStateMachine:
     - Fast state comparisons using cached masks
     - Timing lookup table for O(1) access
     - No set_time() calls - time passed directly to check methods
+
+    HBM4 Features:
+    - Extended state tracking (ACTIVATING, PRECHARGING)
+    - Bank group-aware scheduling
+    - State transition history
     """
 
-    __slots__ = ('bank', 'timing', 'current_time', 'timing_violations',
+    __slots__ = ('bank_id', 'channel_id', 'pseudo_channel_id', 'bank_group_id',
+                 'bank', 'timing', 'current_time', 'timing_violations',
                  '_clock_period_ns', '_clock_period_s', '_timing_cache',
                  '_cache_valid', '_cached_tRC', '_cached_tRAS', '_cached_tRCD',
-                 '_cached_tRFC', '_cached_tCL', '_cached_tCWL', '_cached_tCCD')
+                 '_cached_tRFC', '_cached_tCL', '_cached_tCWL', '_cached_tCCD',
+                 '_is_hbm4', '_activation_complete_time', '_precharge_complete_time',
+                 '_last_act_cycle', '_last_col_cmd_cycle', '_last_col_cmd_bg',
+                 '_last_col_cmd_is_write')
 
-    def __init__(self, bank_id: int, timing):
+    def __init__(self, bank_id: int, timing, channel_id: int = 0,
+                 pseudo_channel_id: int = 0, bank_group_id: int = 0):
         """Initialize Bank State Machine
 
         Args:
             bank_id: Bank ID
             timing: Timing parameter object (HBM3Timing or HBM4Timing)
+            channel_id: Channel index (0-31, for HBM4)
+            pseudo_channel_id: Pseudo-channel index (0-1, for HBM4)
+            bank_group_id: Bank group index (0-7, for HBM4)
         """
+        # Store IDs as instance attributes for backward compatibility
+        self.bank_id = bank_id
+        self.channel_id = channel_id
+        self.pseudo_channel_id = pseudo_channel_id
+        self.bank_group_id = bank_group_id
+
         self.bank = Bank(bank_id=bank_id)
         self.timing = timing
         self.current_time = 0.0
         self.timing_violations: List[TimingViolation] = []
+
+        # Detect HBM4 mode from timing object
+        self._is_hbm4 = self._detect_hbm4_mode()
+
+        # HBM4 extended context (private, for internal tracking)
+        self._last_act_cycle = -1
+        self._last_col_cmd_cycle = -1
+        self._last_col_cmd_bg = -1
+        self._last_col_cmd_is_write = False
 
         # Pre-compute clock period for fast cycles-to-seconds conversion
         # Use timing object's pre-computed value if available
@@ -230,6 +311,21 @@ class BankStateMachine:
         self._cached_tCL = 0
         self._cached_tCWL = 0
         self._cached_tCCD = 0
+
+    def _detect_hbm4_mode(self) -> bool:
+        """Detect if timing object is HBM4
+
+        Returns:
+            True if HBM4 timing parameters detected
+        """
+        # HBM4 has nRCD = 8, HBM3 has nRCD = 17 (or 20 for older specs)
+        nRCD = getattr(self.timing, 'nRCD', 0) or getattr(self.timing, 'tRCD', 0)
+        if nRCD <= 10:  # HBM4: 8 cycles
+            return True
+        # Also check for HBM4 timing class
+        if type(self.timing).__name__.startswith('HBM4'):
+            return True
+        return False
 
     def _init_timing_cache(self):
         """Initialize timing lookup cache at construction time"""
@@ -294,10 +390,7 @@ class BankStateMachine:
         Returns:
             Timing parameter value (in cycles)
         """
-        # Check lookup table first (fastest path)
-        if name in _TIMING_LOOKUP:
-            return _TIMING_LOOKUP[name]
-
+        # Priority: timing object > mode-specific table > generic table
         # HBM4 n-prefix priority
         if hasattr(self.timing, name):
             return getattr(self.timing, name)
@@ -305,6 +398,11 @@ class BankStateMachine:
         hbm3_name = name.replace('n', 't', 1) if name.startswith('n') else name
         if hasattr(self.timing, hbm3_name):
             return getattr(self.timing, hbm3_name)
+        # Check mode-specific table
+        if self._is_hbm4 and name in _HBM4_TIMING:
+            return _HBM4_TIMING[name]
+        if name in _HBM3_TIMING:
+            return _HBM3_TIMING[name]
         # Default to 0
         return 0
 
@@ -357,11 +455,38 @@ class BankStateMachine:
                 self._record_violation('tRC', tRC, time_since_last, msg)
                 return False, msg
 
-        self.bank.update_state(BankStateEnum.ACTIVE)
+        # HBM4 mode: use intermediate ACTIVATING state
+        if self._is_hbm4:
+            self.bank.update_state(BankStateEnum.ACTIVATING)
+            # Record activation complete time (after tRCD)
+            tRCD = self._get_cached_timing('nRCD')
+            self.bank.activate_time = self.current_time  # Start time
+            self._activation_complete_time = self.current_time + tRCD
+        else:
+            self.bank.update_state(BankStateEnum.ACTIVE)
+
         self.bank.open_row = row
-        self.bank.activate_time = self.current_time
         self.bank.last_operation_time = self.current_time
+        self._last_act_cycle = int(self.current_time)
         return True, None
+
+    def complete_activation(self) -> bool:
+        """Complete activation transition (HBM4)
+
+        Call this after tRCD cycles have elapsed.
+
+        Returns:
+            True if activation was completed
+        """
+        if self.bank.state != BankStateEnum.ACTIVATING:
+            return True  # Already completed or not in activating state
+
+        if hasattr(self, '_activation_complete_time'):
+            if self.current_time < self._activation_complete_time:
+                return False
+
+        self.bank.update_state(BankStateEnum.ACTIVE)
+        return True
 
     # =========================================================================
     # Precharge State Transitions
@@ -408,11 +533,38 @@ class BankStateMachine:
             self._record_violation('tRAS', tRAS, time_since_act, msg)
             return False, msg
 
+        # HBM4 mode: use intermediate PRECHARGING state
+        if self._is_hbm4:
+            self.bank.update_state(BankStateEnum.PRECHARGING)
+            tRP = self._get_cached_timing('nRP')
+            self._precharge_complete_time = self.current_time + tRP
+        else:
+            self.bank.update_state(BankStateEnum.IDLE)
+            self.bank.open_row = -1
+            self.bank.precharge_time = self.current_time
+            self.bank.last_operation_time = self.current_time
+        return True, None
+
+    def complete_precharge(self) -> bool:
+        """Complete precharge transition (HBM4)
+
+        Call this after tRP cycles have elapsed.
+
+        Returns:
+            True if precharge was completed
+        """
+        if self.bank.state != BankStateEnum.PRECHARGING:
+            return True  # Already completed or not in precharging state
+
+        if hasattr(self, '_precharge_complete_time'):
+            if self.current_time < self._precharge_complete_time:
+                return False
+
         self.bank.update_state(BankStateEnum.IDLE)
         self.bank.open_row = -1
         self.bank.precharge_time = self.current_time
         self.bank.last_operation_time = self.current_time
-        return True, None
+        return True
 
     # =========================================================================
     # Read State Transitions
@@ -430,9 +582,16 @@ class BankStateMachine:
         """Check if READ can be initiated
 
         Timing constraints:
-        - Bank must be ACTIVE
+        - Bank must be ACTIVE (or ACTIVATING in HBM4 mode with tRCD elapsed)
         - Must be >= tRCD since ACT
         """
+        # HBM4: Also allow READ when in ACTIVATING state if tRCD elapsed
+        if self._is_hbm4 and self.bank.state == BankStateEnum.ACTIVATING:
+            if hasattr(self, '_activation_complete_time'):
+                if self.current_time < self._activation_complete_time:
+                    return False
+            return True
+
         if self.bank.state != BankStateEnum.ACTIVE:
             return False
 
@@ -462,6 +621,10 @@ class BankStateMachine:
         tCL = self._get_cached_timing('nCL')
         tCCD = self._get_cached_timing('nCCD')
         self.bank.read_complete_time = self.current_time + tRCD + tCL + (burst_length - 1) * tCCD
+
+        # Track column command for bank group scheduling
+        self._last_col_cmd_cycle = int(self.current_time)
+        self._last_col_cmd_is_write = False
 
         return True, None
 
@@ -497,9 +660,16 @@ class BankStateMachine:
         """Check if WRITE can be initiated
 
         Timing constraints:
-        - Bank must be ACTIVE
+        - Bank must be ACTIVE (or ACTIVATING in HBM4 mode with tRCD elapsed)
         - Must be >= tRCD since ACT
         """
+        # HBM4: Also allow WRITE when in ACTIVATING state if tRCD elapsed
+        if self._is_hbm4 and self.bank.state == BankStateEnum.ACTIVATING:
+            if hasattr(self, '_activation_complete_time'):
+                if self.current_time < self._activation_complete_time:
+                    return False
+            return True
+
         if self.bank.state != BankStateEnum.ACTIVE:
             return False
 
@@ -529,6 +699,10 @@ class BankStateMachine:
         tCWL = self._get_cached_timing('nCWL')
         tCCD = self._get_cached_timing('nCCD')
         self.bank.write_complete_time = self.current_time + tRCD + tCWL + (burst_length - 1) * tCCD
+
+        # Track column command for bank group scheduling
+        self._last_col_cmd_cycle = int(self.current_time)
+        self._last_col_cmd_is_write = True
 
         return True, None
 
@@ -589,10 +763,18 @@ class BankStateMachine:
         if not self.can_complete_write():
             return False
 
-        # tWTRS: Write to Read (same Bank Group)
-        tWTRS = self.get_timing_value('nWTRS')
+        # HBM4: Use bank group-aware timing
+        if self._is_hbm4:
+            tWTRS = self.get_timing_value('nWTRS')
+            tWTRL = self.get_timing_value('nWTRL')
+            # For simplicity, use tWTRS (same BG). In a full implementation,
+            # this would check if the target is in the same bank group.
+            tWTR = tWTRS
+        else:
+            tWTR = self.get_timing_value('nWTRS')
+
         time_since_write = self.current_time - self.bank.write_complete_time
-        return time_since_write >= tWTRS
+        return time_since_write >= tWTR
 
     def can_write_after_read(self) -> bool:
         """Check if WRITE can be initiated after READ (tRTW)
@@ -610,6 +792,53 @@ class BankStateMachine:
         tRTW = self.get_timing_value('nRTW')
         time_since_read = self.current_time - self.bank.read_complete_time
         return time_since_read >= tRTW
+
+    # =========================================================================
+    # Bank Group-Aware Scheduling (HBM4)
+    # =========================================================================
+
+    def can_activate_after_bank_group(self, last_bg_id: int) -> bool:
+        """Check if activation can proceed after another bank group (HBM4)
+
+        Args:
+            last_bg_id: Last activated bank group ID
+
+        Returns:
+            True if timing allows activation
+        """
+        if last_bg_id < 0:
+            return True
+
+        if self._last_act_cycle < 0:
+            return True
+
+        elapsed = self.current_time - self._last_act_cycle
+
+        if self._bank_group_id == last_bg_id:
+            # Same bank group: tRRDS
+            tRRD = self.get_timing_value('nRRDS')
+        else:
+            # Different bank group: tRRDL
+            tRRD = self.get_timing_value('nRRDL')
+
+        return elapsed >= tRRD
+
+    def get_info(self) -> dict:
+        """Get bank state machine information
+
+        Returns:
+            Dictionary with state information
+        """
+        return {
+            'bank_id': self.bank.bank_id,
+            'channel_id': self._channel_id,
+            'pseudo_channel_id': self._pseudo_channel_id,
+            'bank_group_id': self._bank_group_id,
+            'state': self.bank.state.name,
+            'open_row': self.bank.open_row,
+            'current_time': self.current_time,
+            'is_hbm4': self._is_hbm4,
+        }
 
     # =========================================================================
     # Refresh State Transitions
@@ -841,11 +1070,175 @@ class BankStateMachine:
         """WRITE complete (legacy)"""
         self.complete_write()
 
+    # =========================================================================
+    # HBM4 Compatibility Methods
+    # =========================================================================
+
+    def get_state(self) -> BankStateEnum:
+        """Get current bank state (HBM4 compatibility)"""
+        return self.bank.state
+
+    def get_open_row(self) -> int:
+        """Get currently open row (HBM4 compatibility)"""
+        return self.bank.open_row
+
+    def is_row_hit(self, row: int) -> bool:
+        """Check if the specified row is open (HBM4 compatibility)"""
+        return self.bank.state == BankStateEnum.ACTIVE and self.bank.open_row == row
+
+    def reset(self):
+        """Reset bank state (HBM4 compatibility)"""
+        self.bank.update_state(BankStateEnum.IDLE)
+        self.bank.open_row = -1
+        self.current_time = 0
+        self.timing_violations.clear()
+        self._last_act_cycle = -1
+        self._last_col_cmd_cycle = -1
+
+    def get_info(self) -> dict:
+        """Get bank state information (HBM4 compatibility)"""
+        return {
+            'bank_id': self.bank_id,
+            'channel_id': self.channel_id,
+            'pseudo_channel_id': self.pseudo_channel_id,
+            'bank_group_id': self.bank_group_id,
+            'state': self.bank.state.name,
+            'open_row': self.bank.open_row,
+            'current_time': self.current_time,
+            'is_hbm4': self._is_hbm4,
+        }
+
+    def __repr__(self) -> str:
+        return (f"BankStateMachine(bank={self.bank_id}, ch={self.channel_id}, "
+                f"pch={self.pseudo_channel_id}, bg={self.bank_group_id}, "
+                f"state={self.bank.state.name}, row={self.bank.open_row})")
+
 
 # Aliases for backward compatibility
-def create_bank_state_machine(bank_id: int, timing) -> BankStateMachine:
-    """Factory function to create BankStateMachine"""
-    return BankStateMachine(bank_id=bank_id, timing=timing)
+def create_bank_state_machine(bank_id: int, timing, channel_id: int = 0,
+                              pseudo_channel_id: int = 0, bank_group_id: int = 0) -> BankStateMachine:
+    """Factory function to create BankStateMachine
+
+    Args:
+        bank_id: Bank ID
+        timing: Timing parameter object (HBM3Timing or HBM4Timing)
+        channel_id: Channel index (0-31, for HBM4)
+        pseudo_channel_id: Pseudo-channel index (0-1, for HBM4)
+        bank_group_id: Bank group index (0-7, for HBM4)
+
+    Returns:
+        BankStateMachine instance
+    """
+    return BankStateMachine(
+        bank_id=bank_id,
+        timing=timing,
+        channel_id=channel_id,
+        pseudo_channel_id=pseudo_channel_id,
+        bank_group_id=bank_group_id
+    )
+
+
+class BankArray:
+    """Array of banks for a single pseudo-channel
+
+    Manages banks organized into bank groups.
+    """
+
+    def __init__(self, num_banks: int = 16, timing=None,
+                 channel_id: int = 0, pseudo_channel_id: int = 0):
+        """Initialize bank array
+
+        Args:
+            num_banks: Number of banks (default 16 for HBM4)
+            timing: Timing parameter object
+            channel_id: Channel index
+            pseudo_channel_id: Pseudo-channel index
+        """
+        self.pseudo_channel_id = pseudo_channel_id
+        self.channel_id = channel_id
+        self.timing = timing
+        self.num_banks = num_banks
+
+        # Create banks with bank group assignment
+        self.banks: List[BankStateMachine] = []
+        for bank_id in range(num_banks):
+            bg_id = bank_id // 2  # 2 banks per group
+            bank = BankStateMachine(
+                bank_id=bank_id,
+                timing=timing,
+                channel_id=channel_id,
+                pseudo_channel_id=pseudo_channel_id,
+                bank_group_id=bg_id
+            )
+            self.banks.append(bank)
+
+    def set_time(self, cycle: float):
+        """Set time for all banks"""
+        for bank in self.banks:
+            bank.set_time(cycle)
+
+    def tick(self, advance_cycle: bool = True):
+        """Advance time and process state completions
+
+        Args:
+            advance_cycle: If True, increment current_cycle for each bank.
+        """
+        for bank in self.banks:
+            if advance_cycle:
+                bank.current_time += 1
+
+            # Auto-complete HBM4 state transitions
+            if bank._is_hbm4:
+                if bank.bank.state == BankStateEnum.ACTIVATING:
+                    bank.complete_activation()
+                elif bank.bank.state == BankStateEnum.PRECHARGING:
+                    bank.complete_precharge()
+
+    def get_bank(self, bank_id: int) -> Optional[BankStateMachine]:
+        """Get bank by ID"""
+        if 0 <= bank_id < len(self.banks):
+            return self.banks[bank_id]
+        return None
+
+    def get_banks_in_group(self, bg_id: int) -> List[BankStateMachine]:
+        """Get all banks in a bank group"""
+        return [self.banks[bg_id * 2 + i] for i in range(2) if bg_id * 2 + i < len(self.banks)]
+
+    def get_active_bank_count(self) -> int:
+        """Get count of active (open) banks"""
+        return sum(1 for b in self.banks if b.bank.is_active)
+
+    def get_idle_bank_count(self) -> int:
+        """Get count of idle (closed) banks"""
+        return sum(1 for b in self.banks if b.bank.is_idle)
+
+    def reset(self):
+        """Reset all banks"""
+        for bank in self.banks:
+            bank.set_time(0)
+            bank.bank.update_state(BankStateEnum.IDLE)
+            bank.bank.open_row = -1
+
+
+def create_bank_array(num_banks: int = 16, timing=None,
+                      channel_id: int = 0, pseudo_channel_id: int = 0) -> BankArray:
+    """Factory function to create BankArray
+
+    Args:
+        num_banks: Number of banks (default 16 for HBM4)
+        timing: Timing parameter object
+        channel_id: Channel index
+        pseudo_channel_id: Pseudo-channel index
+
+    Returns:
+        BankArray with configured banks
+    """
+    return BankArray(
+        num_banks=num_banks,
+        timing=timing,
+        channel_id=channel_id,
+        pseudo_channel_id=pseudo_channel_id
+    )
 
 
 # Vectorized operations for batch processing (using lists, no numpy dependency)
