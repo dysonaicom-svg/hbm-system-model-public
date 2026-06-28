@@ -333,6 +333,14 @@ class HBM4Controller:
         # Row state cache for hit detection
         self._row_state: Dict[Tuple[int, int, int], int] = {}  # (ch, pch, bank) -> row
 
+        # Backpressure control state
+        # ponytail: backpressure control - reduces submit rate when queues are near full
+        self._backpressure_enabled = True
+        self._backpressure_reject_count = 0
+        self._backpressure_cycle_count = 0  # Cycles to wait before accepting next request
+        self._last_submit_cycle = 0
+        self._min_submit_interval = 1  # Minimum cycles between submissions under backpressure
+
     @property
     def channels(self) -> int:
         """Number of HBM4 channels"""
@@ -367,8 +375,15 @@ class HBM4Controller:
             size_bytes: Request size in bytes
 
         Returns:
-            Request ID if successful, None if queue full
+            Request ID if successful, None if queue full or backpressured
         """
+        # Backpressure control: check if we should throttle submissions
+        if self._backpressure_enabled and self._backpressure_cycle_count > 0:
+            if self._cycle_count < self._backpressure_cycle_count:
+                # In backpressure cooldown period - reject this request
+                self._backpressure_reject_count += 1
+                return None
+
         # Decode address
         decoded = self.decoder.decode(addr)
 
@@ -394,11 +409,22 @@ class HBM4Controller:
         # Enqueue request - queue push returns success/failure
         if is_read:
             success = self.queue_manager.push_read(request)
+            # Update backpressure based on queue status
+            if self._backpressure_enabled:
+                bp_factor = self.queue_manager.read_queue.get_backpressure_factor()
+                self._update_backpressure(bp_factor)
         else:
             success = self.queue_manager.push_write(request)
+            # Update backpressure based on queue status
+            if self._backpressure_enabled:
+                bp_factor = self.queue_manager.write_queue.get_backpressure_factor()
+                self._update_backpressure(bp_factor)
 
         if not success:
             _logger.debug(f"Queue full, request rejected: addr=0x{addr:x}, ch={decoded.channel_id}")
+            # Trigger stronger backpressure on queue full
+            if self._backpressure_enabled:
+                self._backpressure_cycle_count = self._cycle_count + 10
             return None
 
         # Track request
@@ -1031,6 +1057,62 @@ class HBM4Controller:
         """Get per-channel queue capacity"""
         return 8  # 8 requests per channel
 
+    def _update_backpressure(self, bp_factor: float):
+        """Update backpressure state based on queue occupancy
+
+        Args:
+            bp_factor: Backpressure factor from queue (0.0-1.0)
+        """
+        if bp_factor >= 1.0:
+            # Queue full - strong backpressure
+            self._backpressure_cycle_count = self._cycle_count + 10
+        elif bp_factor >= 0.5:
+            # High occupancy - moderate backpressure
+            self._backpressure_cycle_count = self._cycle_count + int(bp_factor * 5)
+        elif bp_factor > 0:
+            # Low occupancy warning - minimal backpressure
+            self._backpressure_cycle_count = self._cycle_count + 1
+        # else: no backpressure needed
+
+    def get_queue_occupancy_status(self) -> Dict[str, str]:
+        """Get occupancy status for all queues
+
+        Returns:
+            Dictionary with queue status ('NORMAL' | 'WARNING' | 'CRITICAL' | 'FULL')
+        """
+        return {
+            'read_queue': self.queue_manager.read_queue.get_occupancy_status(),
+            'write_queue': self.queue_manager.write_queue.get_occupancy_status(),
+        }
+
+    def get_backpressure_stats(self) -> Dict[str, Any]:
+        """Get backpressure statistics
+
+        Returns:
+            Dictionary with backpressure stats
+        """
+        read_bp = self.queue_manager.read_queue.get_backpressure_factor()
+        write_bp = self.queue_manager.write_queue.get_backpressure_factor()
+
+        return {
+            'backpressure_enabled': self._backpressure_enabled,
+            'backpressure_reject_count': self._backpressure_reject_count,
+            'read_backpressure_factor': read_bp,
+            'write_backpressure_factor': write_bp,
+            'combined_backpressure_factor': max(read_bp, write_bp),
+            'current_backpressure_cycles': max(0, self._backpressure_cycle_count - self._cycle_count),
+        }
+
+    def enable_backpressure(self, enabled: bool):
+        """Enable or disable backpressure control
+
+        Args:
+            enabled: Whether to enable backpressure
+        """
+        self._backpressure_enabled = enabled
+        if enabled:
+            self._backpressure_cycle_count = 0
+
     def trigger_repair(self, channel_id: int, lane_mask: int) -> bool:
         """Trigger lane repair for a channel
 
@@ -1081,6 +1163,9 @@ class HBM4Controller:
             'queues': {
                 'read_depth': len(self.queue_manager.read_queue),
                 'write_depth': len(self.queue_manager.write_queue),
+                'read_occupancy': self.queue_manager.read_queue.get_occupancy_status(),
+                'write_occupancy': self.queue_manager.write_queue.get_occupancy_status(),
+                'backpressure_stats': self.get_backpressure_stats(),
             },
             'qos': {
                 'enabled': self._enable_qos,
@@ -1278,6 +1363,10 @@ class HBM4Controller:
         # Reset pending requests
         self._pending_requests.clear()
         self._completed_requests.clear()
+
+        # Reset backpressure state
+        self._backpressure_reject_count = 0
+        self._backpressure_cycle_count = 0
 
         # Reset statistics
         self.stats = HBM4ControllerStats()

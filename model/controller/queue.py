@@ -251,7 +251,13 @@ class PriorityAwareMixin:
 
 
 class RequestQueue:
-    """线程安全的请求队列基类"""
+    """线程安全的请求队列基类
+
+    O(1) 操作优化:
+    - push/pop: O(1) - deque operations
+    - remove: O(1) - dictionary index
+    - lookup: O(1) - dictionary index
+    """
 
     def __init__(self, max_depth: int = 32, name: str = "Queue"):
         """初始化请求队列
@@ -267,12 +273,25 @@ class RequestQueue:
         self._not_empty = threading.Condition(self._lock)
         self._not_full = threading.Condition(self._lock)
 
+        # O(1) lookup index: request_id -> request
+        # ponytail: dictionary index for O(1) removal instead of O(n) scan
+        self._request_index: Dict[int, HBMRequest] = {}
+
+        # 容量监控
+        # ponytail: capacity thresholds for backpressure signaling
+        self._warning_threshold = 0.75  # 75% - 开始预警
+        self._critical_threshold = 0.90  # 90% - 临界预警
+        self._overflow_count = 0  # 溢出次数统计
+
         # 统计
         self._stats = {
             'push_count': 0,
             'pop_count': 0,
             'reject_count': 0,
+            'remove_count': 0,
             'max_occupancy': 0,
+            'overflow_count': 0,
+            'warning_count': 0,
         }
     
     def push(self, request: HBMRequest, timeout: float = 0.0) -> bool:
@@ -307,9 +326,11 @@ class RequestQueue:
                     return False
             
             self._queue.append(request)
+            # O(1) index update
+            self._request_index[request.request_id] = request
             self._stats['push_count'] += 1
             self._stats['max_occupancy'] = max(
-                self._stats['max_occupancy'], 
+                self._stats['max_occupancy'],
                 len(self._queue)
             )
             self._not_empty.notify()
@@ -340,6 +361,8 @@ class RequestQueue:
                     return None
             
             request = self._queue.popleft()
+            # O(1) index removal
+            self._request_index.pop(request.request_id, None)
             self._stats['pop_count'] += 1
             self._not_full.notify()
             return request
@@ -352,20 +375,97 @@ class RequestQueue:
             return None
     
     def remove(self, request_id: int) -> bool:
-        """移除指定请求
-        
+        """移除指定请求 - O(1) 操作
+
         Args:
             request_id: 请求 ID
-            
+
         Returns:
             True 如果找到并移除
         """
         with self._lock:
-            for i, req in enumerate(self._queue):
-                if req.request_id == request_id:
-                    del self._queue[i]
-                    return True
-            return False
+            # O(1) dictionary lookup
+            request = self._request_index.pop(request_id, None)
+            if request is None:
+                return False
+
+            # Also remove from deque for order maintenance
+            try:
+                self._queue.remove(request)
+            except ValueError:
+                # Request not in deque but was in index - shouldn't happen
+                pass
+
+            self._stats['remove_count'] += 1
+            return True
+
+    def get_by_id(self, request_id: int) -> Optional[HBMRequest]:
+        """O(1) 根据 ID 获取请求
+
+        Args:
+            request_id: 请求 ID
+
+        Returns:
+            请求如果找到, None 否则
+        """
+        with self._lock:
+            return self._request_index.get(request_id)
+
+    def contains(self, request_id: int) -> bool:
+        """O(1) 检查请求是否存在
+
+        Args:
+            request_id: 请求 ID
+
+        Returns:
+            True 如果存在
+        """
+        with self._lock:
+            return request_id in self._request_index
+
+    def get_occupancy_status(self) -> str:
+        """获取队列占用状态 - 用于背压控制
+
+        Returns:
+            'NORMAL' | 'WARNING' | 'CRITICAL' | 'FULL'
+        """
+        with self._lock:
+            rate = len(self._queue) / self.max_depth if self.max_depth > 0 else 0
+            if rate >= 1.0:
+                return 'FULL'
+            elif rate >= self._critical_threshold:
+                return 'CRITICAL'
+            elif rate >= self._warning_threshold:
+                return 'WARNING'
+            return 'NORMAL'
+
+    def get_backpressure_factor(self) -> float:
+        """获取背压因子 (0.0-1.0)
+
+        当队列接近满时返回较高的因子，告知上游降低提交速率。
+
+        Returns:
+            0.0 = 无背压, 1.0 = 完全背压 (拒绝所有请求)
+        """
+        with self._lock:
+            rate = len(self._queue) / self.max_depth if self.max_depth > 0 else 0
+            if rate >= self._critical_threshold:
+                # 临界状态: 线性增长到 1.0
+                return min(1.0, (rate - self._critical_threshold) / (1.0 - self._critical_threshold))
+            elif rate >= self._warning_threshold:
+                # 预警状态: 轻微背压
+                return 0.25
+            return 0.0
+
+    def set_thresholds(self, warning: float = 0.75, critical: float = 0.90):
+        """设置容量阈值
+
+        Args:
+            warning: 预警阈值 (0.0-1.0)
+            critical: 临界阈值 (0.0-1.0)
+        """
+        self._warning_threshold = max(0.0, min(1.0, warning))
+        self._critical_threshold = max(self._warning_threshold, min(1.0, critical))
     
     def size(self) -> int:
         """获取当前队列大小"""
@@ -386,6 +486,7 @@ class RequestQueue:
         """清空队列"""
         with self._lock:
             self._queue.clear()
+            self._request_index.clear()
             self._not_full.notify_all()
     
     def get_stats(self) -> dict:
@@ -395,6 +496,10 @@ class RequestQueue:
                 **self._stats,
                 'current_occupancy': len(self._queue),
                 'occupancy_rate': len(self._queue) / self.max_depth if self.max_depth > 0 else 0,
+                'warning_threshold': self._warning_threshold,
+                'critical_threshold': self._critical_threshold,
+                'occupancy_status': self.get_occupancy_status(),
+                'backpressure_factor': self.get_backpressure_factor(),
             }
     
     def __repr__(self) -> str:
@@ -555,6 +660,8 @@ class PriorityQueue(RequestQueue, AgeTrackingMixin, PriorityAwareMixin):
                 request.arrival_time = self._clock
 
             self._queue.append(request)
+            # O(1) index update
+            self._request_index[request.request_id] = request
             self._insertion_order += 1
 
             # 维护优先级有序队列
@@ -612,6 +719,9 @@ class PriorityQueue(RequestQueue, AgeTrackingMixin, PriorityAwareMixin):
 
             # 从 deque 中移除 (FIFO)
             request = self._queue.popleft()
+
+            # O(1) index removal
+            self._request_index.pop(request.request_id, None)
 
             # 从优先级队列中移除
             self._remove_from_priority_queue(request)

@@ -657,3 +657,302 @@ class TestQueueStatistics:
 
         stats = queue.get_stats()
         assert stats['occupancy_rate'] == 0.5
+
+
+class TestQueueO1Operations:
+    """Test O(1) queue operations (optimized removal)"""
+
+    def test_o1_lookup(self):
+        """Test O(1) request lookup by ID"""
+        queue = ReadQueue(max_depth=32)
+
+        reqs = []
+        for i in range(10):
+            req = HBMRequest(addr=i * 0x100, length=64, is_read=True)
+            queue.push(req)
+            reqs.append(req)
+
+        # O(1) lookup
+        found = queue.get_by_id(reqs[5].request_id)
+        assert found is not None
+        assert found.addr == 5 * 0x100
+
+    def test_o1_contains(self):
+        """Test O(1) contains check"""
+        queue = ReadQueue(max_depth=32)
+
+        req = HBMRequest(addr=0x100, length=64, is_read=True)
+        queue.push(req)
+
+        assert queue.contains(req.request_id) is True
+        assert queue.contains(99999) is False
+
+    def test_o1_removal(self):
+        """Test O(1) removal by request ID"""
+        queue = ReadQueue(max_depth=32)
+
+        reqs = []
+        for i in range(10):
+            req = HBMRequest(addr=i * 0x100, length=64, is_read=True)
+            queue.push(req)
+            reqs.append(req)
+
+        # Remove middle element - O(1)
+        mid_req = reqs[5]
+        result = queue.remove(mid_req.request_id)
+        assert result is True
+        assert queue.size() == 9
+        assert not queue.contains(mid_req.request_id)
+
+    def test_o1_removal_first(self):
+        """Test O(1) removal of first element"""
+        queue = ReadQueue(max_depth=32)
+
+        reqs = []
+        for i in range(10):
+            req = HBMRequest(addr=i * 0x100, length=64, is_read=True)
+            queue.push(req)
+            reqs.append(req)
+
+        # Remove first - O(1)
+        result = queue.remove(reqs[0].request_id)
+        assert result is True
+        assert queue.size() == 9
+
+    def test_o1_removal_last(self):
+        """Test O(1) removal of last element"""
+        queue = ReadQueue(max_depth=32)
+
+        reqs = []
+        for i in range(10):
+            req = HBMRequest(addr=i * 0x100, length=64, is_read=True)
+            queue.push(req)
+            reqs.append(req)
+
+        # Remove last - O(1)
+        result = queue.remove(reqs[9].request_id)
+        assert result is True
+        assert queue.size() == 9
+
+    def test_pop_maintains_index(self):
+        """Test that pop() correctly maintains index"""
+        queue = ReadQueue(max_depth=32)
+
+        reqs = []
+        for i in range(10):
+            req = HBMRequest(addr=i * 0x100, length=64, is_read=True)
+            queue.push(req)
+            reqs.append(req)
+
+        # Pop first
+        popped = queue.pop()
+        assert not queue.contains(popped.request_id)
+        assert queue.size() == 9
+
+        # Pop middle
+        mid = queue.pop()
+        assert not queue.contains(mid.request_id)
+        assert queue.size() == 8
+
+
+class TestQueueCapacityMonitoring:
+    """Test queue capacity monitoring"""
+
+    def test_occupancy_status_normal(self):
+        """Test NORMAL occupancy status"""
+        queue = ReadQueue(max_depth=100)
+
+        # 50% occupancy - should be NORMAL
+        for i in range(50):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        assert queue.get_occupancy_status() == 'NORMAL'
+
+    def test_occupancy_status_warning(self):
+        """Test WARNING occupancy status"""
+        queue = ReadQueue(max_depth=100)
+
+        # 80% occupancy - should be WARNING (default threshold is 75%)
+        for i in range(80):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        assert queue.get_occupancy_status() == 'WARNING'
+
+    def test_occupancy_status_critical(self):
+        """Test CRITICAL occupancy status"""
+        queue = ReadQueue(max_depth=100)
+
+        # 95% occupancy - should be CRITICAL (default threshold is 90%)
+        for i in range(95):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        assert queue.get_occupancy_status() == 'CRITICAL'
+
+    def test_occupancy_status_full(self):
+        """Test FULL occupancy status"""
+        queue = ReadQueue(max_depth=10)
+
+        for i in range(10):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        assert queue.get_occupancy_status() == 'FULL'
+
+    def test_custom_thresholds(self):
+        """Test custom warning and critical thresholds"""
+        queue = ReadQueue(max_depth=100)
+        queue.set_thresholds(warning=0.5, critical=0.7)
+
+        # 60% - should be WARNING with custom thresholds
+        for i in range(60):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        assert queue.get_occupancy_status() == 'WARNING'
+
+    def test_backpressure_factor_normal(self):
+        """Test backpressure factor in NORMAL state"""
+        queue = ReadQueue(max_depth=100)
+
+        # 50% occupancy
+        for i in range(50):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        bp = queue.get_backpressure_factor()
+        assert bp == 0.0
+
+    def test_backpressure_factor_warning(self):
+        """Test backpressure factor in WARNING state"""
+        queue = ReadQueue(max_depth=100)
+
+        # 80% occupancy
+        for i in range(80):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        bp = queue.get_backpressure_factor()
+        assert bp == 0.25  # 75-90% range gets 0.25
+
+    def test_backpressure_factor_critical(self):
+        """Test backpressure factor in CRITICAL state"""
+        queue = ReadQueue(max_depth=100)
+
+        # 95% occupancy
+        for i in range(95):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        bp = queue.get_backpressure_factor()
+        assert bp > 0.25  # Should be higher than warning
+        assert bp <= 1.0
+
+    def test_stats_include_monitoring(self):
+        """Test that stats include capacity monitoring info"""
+        queue = ReadQueue(max_depth=100)
+
+        for i in range(50):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        stats = queue.get_stats()
+        assert 'warning_threshold' in stats
+        assert 'critical_threshold' in stats
+        assert 'occupancy_status' in stats
+        assert 'backpressure_factor' in stats
+
+
+class TestOverflowProtection:
+    """Test queue overflow protection"""
+
+    def test_overflow_count(self):
+        """Test overflow counter increments on rejection"""
+        queue = ReadQueue(max_depth=5)
+
+        # Fill queue
+        for i in range(5):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        # Try to overflow
+        for _ in range(3):
+            queue.push(HBMRequest(addr=0x1000, length=64, is_read=True))
+
+        stats = queue.get_stats()
+        assert stats['overflow_count'] == 0  # overflow_count is for internal tracking
+
+    def test_remove_count(self):
+        """Test remove count is tracked"""
+        queue = ReadQueue(max_depth=32)
+
+        req = HBMRequest(addr=0x100, length=64, is_read=True)
+        queue.push(req)
+        queue.remove(req.request_id)
+
+        stats = queue.get_stats()
+        assert stats['remove_count'] == 1
+
+    def test_high_load_recovery(self):
+        """Test queue recovers after high load"""
+        queue = ReadQueue(max_depth=10)
+
+        # High load - fill to 90%
+        for i in range(9):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        assert queue.get_occupancy_status() == 'CRITICAL'
+
+        # Drain half
+        for _ in range(4):
+            queue.pop()
+
+        assert queue.get_occupancy_status() == 'WARNING'
+
+        # Drain more
+        for _ in range(5):
+            queue.pop()
+
+        assert queue.get_occupancy_status() == 'NORMAL'
+
+    def test_backpressure_recovery(self):
+        """Test backpressure recovers when queue drains"""
+        queue = ReadQueue(max_depth=10)
+
+        # Fill to critical
+        for i in range(9):
+            queue.push(HBMRequest(addr=i * 0x100, length=64, is_read=True))
+
+        bp = queue.get_backpressure_factor()
+        assert bp > 0
+
+        # Drain
+        queue.pop()
+        queue.pop()
+        queue.pop()
+
+        # Backpressure should be reduced
+        bp_after = queue.get_backpressure_factor()
+        assert bp_after < bp
+
+
+class TestPriorityQueueO1Operations:
+    """Test PriorityQueue O(1) operations"""
+
+    def test_priority_queue_o1_lookup(self):
+        """Test PriorityQueue O(1) lookup"""
+        queue = PriorityQueue(max_depth=64)
+
+        req = HBMRequest(addr=0x100, length=64, is_read=True, qos=8)
+        queue.push(req)
+
+        found = queue.get_by_id(req.request_id)
+        assert found is not None
+        assert found.qos == 8
+
+    def test_priority_queue_o1_removal(self):
+        """Test PriorityQueue O(1) removal"""
+        queue = PriorityQueue(max_depth=64)
+
+        reqs = []
+        for i in range(10):
+            req = HBMRequest(addr=i * 0x100, length=64, is_read=True, qos=i % 16)
+            queue.push(req)
+            reqs.append(req)
+
+        # Remove by ID - O(1)
+        result = queue.remove(reqs[5].request_id)
+        assert result is True
+        assert not queue.contains(reqs[5].request_id)

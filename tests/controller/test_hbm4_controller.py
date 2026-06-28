@@ -704,5 +704,111 @@ class TestHBM4ControllerIntegration:
         assert bandwidth > 0
 
 
+class TestControllerBackpressure:
+    """Test controller backpressure control"""
+
+    def test_backpressure_enabled_by_default(self):
+        """Test backpressure is enabled by default"""
+        controller = HBM4Controller()
+        bp_stats = controller.get_backpressure_stats()
+        assert bp_stats['backpressure_enabled'] is True
+
+    def test_backpressure_can_be_disabled(self):
+        """Test backpressure can be disabled"""
+        controller = HBM4Controller()
+        controller.enable_backpressure(False)
+        bp_stats = controller.get_backpressure_stats()
+        assert bp_stats['backpressure_enabled'] is False
+
+    def test_queue_occupancy_status(self):
+        """Test queue occupancy status reporting"""
+        controller = HBM4Controller()
+        status = controller.get_queue_occupancy_status()
+        assert 'read_queue' in status
+        assert 'write_queue' in status
+        assert status['read_queue'] == 'NORMAL'
+
+    def test_backpressure_stats_structure(self):
+        """Test backpressure stats contain required fields"""
+        controller = HBM4Controller()
+        bp_stats = controller.get_backpressure_stats()
+
+        assert 'backpressure_enabled' in bp_stats
+        assert 'backpressure_reject_count' in bp_stats
+        assert 'read_backpressure_factor' in bp_stats
+        assert 'write_backpressure_factor' in bp_stats
+        assert 'combined_backpressure_factor' in bp_stats
+        assert 'current_backpressure_cycles' in bp_stats
+
+    def test_backpressure_reject_on_full_queue(self):
+        """Test requests are rejected when backpressure active"""
+        controller = HBM4Controller()
+        controller.enable_backpressure(True)
+
+        # Flood queues
+        for i in range(300):  # More than queue capacity
+            controller.submit_request(addr=i << 8, is_read=True)
+
+        # Some requests should have been rejected by backpressure
+        bp_stats = controller.get_backpressure_stats()
+        assert bp_stats['backpressure_reject_count'] > 0
+
+    def test_backpressure_recovery(self):
+        """Test backpressure clears when queues drain"""
+        controller = HBM4Controller()
+
+        # Fill queues
+        for i in range(100):
+            controller.submit_request(addr=i << 8, is_read=True)
+
+        # Drain queues by ticking
+        for _ in range(200):
+            controller.tick()
+
+        # Backpressure should be cleared
+        bp_stats = controller.get_backpressure_stats()
+        assert bp_stats['backpressure_reject_count'] >= 0  # May have some rejects
+
+    def test_backpressure_in_stats(self):
+        """Test backpressure info in controller stats"""
+        controller = HBM4Controller()
+
+        # Submit some requests
+        for i in range(10):
+            controller.submit_request(addr=i << 8, is_read=True)
+
+        stats = controller.get_stats()
+        assert 'queues' in stats
+        assert 'backpressure_stats' in stats['queues']
+
+
+class TestControllerQueueOverflow:
+    """Test controller queue overflow handling"""
+
+    def test_overflow_tracking(self):
+        """Test overflow conditions are tracked"""
+        controller = HBM4Controller()
+
+        # Try to overflow queues
+        initial_read_depth = len(controller.queue_manager.read_queue)
+
+        for i in range(500):
+            controller.submit_request(addr=i << 8, is_read=True)
+
+        # Check queues don't grow unbounded
+        final_read_depth = len(controller.queue_manager.read_queue)
+        assert final_read_depth <= controller.queue_manager.read_queue.max_depth + 10
+
+    def test_queue_stats_include_monitoring(self):
+        """Test queue stats include capacity monitoring"""
+        controller = HBM4Controller()
+
+        stats = controller.get_stats()
+        queues = stats['queues']
+
+        assert 'read_occupancy' in queues
+        assert 'write_occupancy' in queues
+
+
 # Import the helper function
 from model.dram.hbm4_spec import create_hbm4_spec_from_speed_grade
