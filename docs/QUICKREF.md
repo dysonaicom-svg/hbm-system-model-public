@@ -2,7 +2,7 @@
 
 > 简洁的项目状态和命令速查
 
-*Last Updated: 2026-06-24*
+*Last Updated: 2026-06-25*
 
 ---
 
@@ -11,12 +11,12 @@
 | 项目 | 值 |
 |------|-----|
 | 分支 | `feat/hbm4-logic-base-die-phase2` |
-| 版本 | 2.2.0 |
+| 版本 | 2.5.0 |
 | 测试数 | **4,409+** ✅ |
 | Python 文件 | 150+ |
 | RTL 文件 | 7 |
-| 开发阶段 | Phase G-J - Logic Base Die, Unified Simulator, Performance, Integration |
-| 最新提交 | `ab9d1f0` |
+| 开发阶段 | Phase 0-8/A-J 全部完成 |
+| 最新提交 | `84584f7` |
 
 ---
 
@@ -239,11 +239,16 @@ for comp, cycles in sorted(profile.items(), key=lambda x: -x[1]):
 
 ## 📋 十、任务清单
 
-- [x] Phase 2 Logic Base Die 核心功能
-- [x] HBM4 Channel Model 完善
-- [x] DFI 5.0 接口完善
-- [x] Controller 集成
-- [x] 地址解码器完善
+- [x] Phase 0 Project Initialization
+- [x] Phase A-J HBM Controller/DRAM/PHY
+- [x] Phase G Logic Base Die 核心功能
+- [x] Phase H Unified Simulator
+- [x] Phase I Performance Optimization
+- [x] Phase J Controller Integration
+- [x] Phase 5 HBM4 Controller Integration
+- [x] Phase 6 Performance, Features, Verification
+- [x] Phase 7 Performance Optimization (BankStateCache, Prefetch, ErrorRecovery)
+- [x] Phase 8 RTL Auto-Sync Tool
 - [ ] 合并到 master 分支
 - [ ] (可选) gem5 集成
 - [ ] (可选) PyPI 发布

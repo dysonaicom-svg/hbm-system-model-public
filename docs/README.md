@@ -1,24 +1,26 @@
 # HBM System Modeling Platform
 
-> **Version**: 2.4.0 | **Status**: All Phases Complete | **Tests**: 4,409+ Passing
+> **Version**: 2.5.0 | **Status**: All Phases Complete | **Tests**: 4,409+ Passing
 > **Branch**: `feat/hbm4-logic-base-die-phase2`
-> **Last Updated**: 2026-06-24
+> **Last Updated**: 2026-06-25
 
 ---
 
-## v2.4.0 Release Notes (2026-06-24)
+## v2.5.0 Release Notes (2026-06-25)
 
-### New Features
-- **Phase 5 Complete**: HBM4 Controller Integration
-  - Command Pipeline (4-stage pipeline)
-  - Bank Conflict Tracker
-  - HBM4ChannelArray (32-channel integration)
-  - Address Decoder (RBC/BCR/CRB mapping schemes)
-- **140 new test cases** added (73 Controller + 67 Address Decoder)
-- **Bug fixes**: BCR/CRB mapping issues, row locality analysis
+### New Features - Phase 7 Complete
+- **BankStateCache**: LRU eviction for scheduler optimization
+- **PrefetchEngine**: Multiple policies (sequential, stride, adaptive)
+- **ErrorRecovery**: Hot block detection and recovery
+- **Performance regression tests**: 50+ new tests
+
+### New Features - Phase 8 Complete
+- **RTL-Python Auto-Sync Tool**: Automatic waveform comparison
+- **Timing alignment verification**: Cycle-accurate sync
+- **Hot block detection**: Error recovery enhancements
 
 ### All Phases Complete
-Phase 0-5 and A-J all completed, marking the first production release.
+Phase 0-8 and A-J all completed, marking the first production release.
 
 ---
 
@@ -37,7 +39,10 @@ Phase 0-5 and A-J all completed, marking the first production release.
 | H | Unified Simulator | ✅ **Complete** |
 | I | Performance Optimization | ✅ **Complete** |
 | J | Controller Integration | ✅ **Complete** |
-| **5** | **HBM4 Controller Integration** | ✅ **Complete** |
+| 5 | HBM4 Controller Integration | ✅ **Complete** |
+| 6 | Performance, Features, Verification | ✅ **Complete** |
+| 7 | Performance Optimization | ✅ **Complete** |
+| 8 | RTL Auto-Sync Tool | ✅ **Complete** |
 
 ---
 
@@ -217,15 +222,19 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 - **Complete HBM3/HBM4 modeling** with full controller, DRAM timing, and PHY support
 - **4,409+ tests passing** with comprehensive coverage
 - **RTL-Python co-simulation** capability for verification alignment
+- **RTL Auto-Sync Tool** for automatic waveform comparison
 - **UVM verification environment** with reference models
 - **6 address mapping modes** and 16-level QoS scheduling
 - **ECC/CRC error detection** and lane repair capabilities
 - **Thermal management** and power estimation
 - **Logic Base Die integration** with per-channel independence
 - **PAM3 encoding support** for HBM4 signal integrity
+- **BankStateCache** with LRU eviction for scheduler optimization
+- **PrefetchEngine** with multiple policies (sequential, stride, adaptive)
+- **ErrorRecovery** with hot block detection
 - **Public release package** ready for distribution
-- **Phase 5 Complete**: Command pipeline and address decoder fully integrated
-- **140 new test cases** for controller and address decoder validation
+- **Phase 7 Complete**: Performance optimization with cache, prefetch, error recovery
+- **Phase 8 Complete**: RTL Auto-Sync Tool integration
 
 ---
 
@@ -311,6 +320,35 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 ---
 
+## Phase 7: Performance Optimization
+
+| Component | Description |
+|-----------|-------------|
+| BankStateCache | LRU eviction cache for scheduler optimization |
+| PrefetchEngine | Sequential, stride, and adaptive prefetch policies |
+| ErrorRecovery | Hot block detection and recovery mechanisms |
+| Performance Tests | 50+ regression tests |
+
+**Key Files:**
+- `model/controller/bank_state_cache.py` - Bank state caching
+- `model/controller/prefetch_engine.py` - Prefetch engine
+- `model/controller/error_recovery.py` - Error recovery
+
+---
+
+## Phase 8: RTL Auto-Sync Tool
+
+| Feature | Description |
+|---------|-------------|
+| RTL-Python Sync | Automatic RTL and Python model synchronization |
+| Waveform Comparison | Cycle-accurate timing comparison |
+| Alignment Verification | Signal-level alignment checking |
+
+**Key Files:**
+- `sim/rtl_sync.py` - RTL auto-sync tool
+
+---
+
 ## Code Metrics
 
 | Category | Count | Size |
@@ -325,7 +363,8 @@ cd rtl && verilator --cc --trace --top-module hbm_controller_tb \
 
 | Version | Date | Status |
 |---------|------|--------|
-| v2.4.0 | 2026-06-24 | **Latest** - Phase 5 Complete |
+| v2.5.0 | 2026-06-25 | **Latest** - Phase 7/8 Complete |
+| v2.4.0 | 2026-06-24 | Phase 5 Complete |
 | v2.3.0 | 2026-06-20 | Phase 4 Complete |
 | v2.2.0 | 2026-06-17 | Phase 3 Complete |
 | v2.1.0 | 2026-06-15 | Phase 2 Complete |
