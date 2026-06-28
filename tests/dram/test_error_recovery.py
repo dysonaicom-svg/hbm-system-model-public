@@ -482,5 +482,100 @@ class TestIntegration:
         assert stats['recovery_stats']['total_errors'] == 3
 
 
+class TestHotBlockDetection:
+    """Test hot block detection functionality"""
+
+    def test_hot_block_not_hot_initially(self):
+        """Test block is not hot when no errors"""
+        recovery = ErrorRecoveryController()
+        assert recovery.is_hot_block(0x1000) is False
+
+    def test_hot_block_after_threshold_errors(self):
+        """Test block becomes hot after threshold errors"""
+        recovery = ErrorRecoveryController()
+        # Record 10 errors in same 4KB block (default threshold=10)
+        for i in range(10):
+            recovery._record_error(
+                channel=0, bank=1, address=0x1000 + i,
+                error_type='single_bit_error', corrected=True,
+            )
+        assert recovery.is_hot_block(0x1000) is True
+
+    def test_hot_block_below_threshold(self):
+        """Test block below threshold is not hot"""
+        recovery = ErrorRecoveryController()
+        # Record 5 errors (below threshold of 10)
+        for i in range(5):
+            recovery._record_error(
+                channel=0, bank=1, address=0x1000 + i,
+                error_type='single_bit_error', corrected=True,
+            )
+        assert recovery.is_hot_block(0x1000) is False
+
+    def test_hot_block_custom_threshold(self):
+        """Test hot block with custom threshold"""
+        recovery = ErrorRecoveryController()
+        recovery.set_hot_block_threshold(3)
+        # 3 errors should be hot with threshold=3
+        for i in range(3):
+            recovery._record_error(
+                channel=0, bank=1, address=0x1000 + i,
+                error_type='single_bit_error', corrected=True,
+            )
+        assert recovery.is_hot_block(0x1000) is True
+
+    def test_different_blocks_independent(self):
+        """Test different blocks are tracked independently"""
+        recovery = ErrorRecoveryController()
+        # Block 1: 10 errors (hot)
+        for i in range(10):
+            recovery._record_error(channel=0, bank=1, address=0x1000 + i,
+                                  error_type='single_bit_error', corrected=True)
+        # Block 2: 5 errors (not hot)
+        for i in range(5):
+            recovery._record_error(channel=0, bank=1, address=0x2000 + i,
+                                  error_type='single_bit_error', corrected=True)
+
+        assert recovery.is_hot_block(0x1000) is True
+        assert recovery.is_hot_block(0x2000) is False
+
+    def test_get_hot_blocks(self):
+        """Test getting all hot blocks"""
+        recovery = ErrorRecoveryController()
+        # Block 1: 12 errors (hot)
+        for i in range(12):
+            recovery._record_error(channel=0, bank=1, address=0x1000 + i,
+                                  error_type='single_bit_error', corrected=True)
+        # Block 2: 8 errors (not hot)
+        for i in range(8):
+            recovery._record_error(channel=0, bank=1, address=0x2000 + i,
+                                  error_type='single_bit_error', corrected=True)
+
+        hot_blocks = recovery.get_hot_blocks()
+        assert len(hot_blocks) == 1
+        assert (0x1000 & ~0xFFF) in hot_blocks
+
+    def test_get_block_error_count(self):
+        """Test getting error count for specific block"""
+        recovery = ErrorRecoveryController()
+        for i in range(5):
+            recovery._record_error(channel=0, bank=1, address=0x1000 + i,
+                                  error_type='single_bit_error', corrected=True)
+
+        count = recovery.get_block_error_count(0x1000)
+        assert count == 5
+
+    def test_hot_block_tracking_in_reset(self):
+        """Test hot blocks are cleared on reset"""
+        recovery = ErrorRecoveryController()
+        for i in range(15):
+            recovery._record_error(channel=0, bank=1, address=0x1000 + i,
+                                  error_type='single_bit_error', corrected=True)
+
+        assert recovery.is_hot_block(0x1000) is True
+        recovery.reset()
+        assert recovery.is_hot_block(0x1000) is False
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

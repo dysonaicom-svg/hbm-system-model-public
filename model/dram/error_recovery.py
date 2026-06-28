@@ -190,6 +190,10 @@ class ErrorRecoveryController:
         # Statistics
         self._stats = RecoveryStats()
 
+        # Hot block detection (4KB block granularity)
+        self._hot_blocks: Dict[int, int] = {}  # block_addr -> error_count
+        self._hot_block_threshold: int = 10
+
         # Error injection state
         self._injected_errors: Dict[Tuple[int, int], Dict] = {}
 
@@ -420,6 +424,10 @@ class ErrorRecoveryController:
 
         # Track error rate
         self._error_rate_window.append(self._current_time_ns)
+
+        # Hot block detection (4KB granularity)
+        block_addr = address & ~0xFFF
+        self._hot_blocks[block_addr] = self._hot_blocks.get(block_addr, 0) + 1
 
         return record
 
@@ -796,6 +804,61 @@ class ErrorRecoveryController:
             },
         }
 
+    # ==================== Hot Block Detection ====================
+
+    def is_hot_block(self, address: int, threshold: Optional[int] = None) -> bool:
+        """Check if address belongs to a hot block
+
+        A hot block is a 4KB memory region with many errors,
+        indicating potential hardware issues.
+
+        Args:
+            address: Memory address to check
+            threshold: Custom threshold (uses default if None)
+
+        Returns:
+            True if block is hot (exceeds threshold)
+        """
+        threshold = threshold if threshold is not None else self._hot_block_threshold
+        block_addr = address & ~0xFFF
+        return self._hot_blocks.get(block_addr, 0) >= threshold
+
+    def get_hot_blocks(self, threshold: Optional[int] = None) -> Dict[int, int]:
+        """Get all hot blocks above threshold
+
+        Args:
+            threshold: Minimum error count for inclusion
+
+        Returns:
+            Dict mapping block addresses to error counts
+        """
+        threshold = threshold if threshold is not None else self._hot_block_threshold
+        return {
+            addr: count
+            for addr, count in self._hot_blocks.items()
+            if count >= threshold
+        }
+
+    def get_block_error_count(self, address: int) -> int:
+        """Get error count for a specific block
+
+        Args:
+            address: Memory address in the block
+
+        Returns:
+            Number of errors in this block
+        """
+        block_addr = address & ~0xFFF
+        return self._hot_blocks.get(block_addr, 0)
+
+    def set_hot_block_threshold(self, threshold: int) -> None:
+        """Set hot block detection threshold
+
+        Args:
+            threshold: Error count to qualify as hot block
+        """
+        self._hot_block_threshold = max(1, threshold)
+
     # ==================== Simulation ====================
 
     def advance_cycle(self, cycles: int = 1) -> None:
@@ -821,6 +884,7 @@ class ErrorRecoveryController:
         self._error_id_counter = 0
         self._stats = RecoveryStats()
         self._error_rate_window.clear()
+        self._hot_blocks.clear()
         self._current_cycle = 0
         self._current_time_ns = 0
 
