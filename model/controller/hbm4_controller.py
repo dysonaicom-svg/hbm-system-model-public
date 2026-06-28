@@ -973,8 +973,9 @@ class HBM4Controller:
         else:
             self.queue_manager.remove_write(selected.request_id, selected.channel_id)
 
-        # Update channel state
+        # Update channel state with completion metrics
         channel_state.queue_depth = max(0, channel_state.queue_depth - 1)
+        channel_state.record_completion(latency, self._cycle_count)
 
         # Remove from pending
         if selected.request_id in self._pending_requests:
@@ -1185,6 +1186,10 @@ class HBM4Controller:
             'channel_model': {
                 'performance': self.channel_model.get_system_performance_summary(),
             },
+            'load_balance': {
+                'imbalance': self.get_channel_load_imbalance(),
+                'utilization': self.get_channel_utilization(),
+            },
         }
         return stats
 
@@ -1212,6 +1217,128 @@ class HBM4Controller:
         """
         gbs = self.get_bandwidth_gbs()
         return gbs / 1000  # Convert to TB/s
+
+    # === Channel Load Balancing Methods ===
+
+    def get_channel_load_report(self) -> Dict[int, Dict[str, Any]]:
+        """Get load report for all channels
+
+        Returns:
+            Dictionary mapping channel_id to load metrics
+        """
+        report = {}
+        for ch_id, state in self._channel_states.items():
+            # Update load from queue manager
+            ch_reads = len(self.queue_manager.get_reads_for_channel(ch_id))
+            ch_writes = len(self.queue_manager.get_writes_for_channel(ch_id))
+            state.update_load(
+                queue_depth=ch_reads + ch_writes,
+                pending=state.pending_requests,
+                cycle=self._cycle_count
+            )
+            report[ch_id] = state.get_load_report()
+        return report
+
+    def get_channel_load_imbalance(self) -> Dict[str, Any]:
+        """Calculate channel load imbalance metrics
+
+        Returns:
+            Dictionary with imbalance statistics
+        """
+        loads = [s.load_score for s in self._channel_states.values()]
+
+        if not loads:
+            return {'imbalance': 0.0, 'max_load': 0, 'min_load': 0, 'avg_load': 0.0}
+
+        max_load = max(loads)
+        min_load = min(loads)
+        avg_load = sum(loads) / len(loads)
+
+        # Imbalance = (max - min) / avg (coefficient of variation)
+        imbalance = (max_load - min_load) / avg_load if avg_load > 0 else 0.0
+
+        return {
+            'imbalance': imbalance,
+            'max_load': max_load,
+            'min_load': min_load,
+            'avg_load': avg_load,
+            'max_channel': loads.index(max_load),
+            'min_channel': loads.index(min_load),
+            'total_channels': len(loads),
+        }
+
+    def get_least_loaded_channels(self, count: int = 4) -> List[int]:
+        """Get the least loaded channels
+
+        Args:
+            count: Number of channels to return
+
+        Returns:
+            List of channel IDs sorted by load (least loaded first)
+        """
+        # Update all channel loads
+        for ch_id in range(self.spec.channels):
+            ch_reads = len(self.queue_manager.get_reads_for_channel(ch_id))
+            ch_writes = len(self.queue_manager.get_writes_for_channel(ch_id))
+            self._channel_states[ch_id].update_load(
+                queue_depth=ch_reads + ch_writes,
+                pending=self._channel_states[ch_id].pending_requests,
+                cycle=self._cycle_count
+            )
+
+        # Sort channels by load score
+        channels = sorted(
+            self._channel_states.items(),
+            key=lambda x: x[1].load_score
+        )
+        return [ch_id for ch_id, _ in channels[:count]]
+
+    def get_channel_utilization(self) -> Dict[int, float]:
+        """Get channel utilization percentages
+
+        Returns:
+            Dictionary mapping channel_id to utilization (0.0-1.0)
+        """
+        utilization = {}
+        per_channel_capacity = self._get_queue_capacity()
+
+        for ch_id in range(self.spec.channels):
+            ch_reads = len(self.queue_manager.get_reads_for_channel(ch_id))
+            ch_writes = len(self.queue_manager.get_writes_for_channel(ch_id))
+            total = ch_reads + ch_writes
+            utilization[ch_id] = min(1.0, total / per_channel_capacity)
+
+        return utilization
+
+    def _update_channel_loads(self):
+        """Update all channel load metrics"""
+        for ch_id in range(self.spec.channels):
+            ch_reads = len(self.queue_manager.get_reads_for_channel(ch_id))
+            ch_writes = len(self.queue_manager.get_writes_for_channel(ch_id))
+            self._channel_states[ch_id].update_load(
+                queue_depth=ch_reads + ch_writes,
+                pending=self._channel_states[ch_id].pending_requests,
+                cycle=self._cycle_count
+            )
+
+    def log_load_balance_warning(self, threshold: float = 0.5) -> bool:
+        """Log warning if channel load is imbalanced
+
+        Args:
+            threshold: Imbalance threshold to trigger warning
+
+        Returns:
+            True if load is imbalanced beyond threshold
+        """
+        imbalance = self.get_channel_load_imbalance()
+        if imbalance['imbalance'] > threshold and imbalance['avg_load'] > 1.0:
+            _logger.warning(
+                f"Channel load imbalance detected: {imbalance['imbalance']:.2f} "
+                f"(max_ch={imbalance['max_channel']}, min_ch={imbalance['min_channel']}, "
+                f"max={imbalance['max_load']}, min={imbalance['min_load']})"
+            )
+            return True
+        return False
 
     # === DFI 5.0 Interface Methods ===
 
@@ -1295,6 +1422,17 @@ class HBM4Controller:
         if not self.dfi:
             return {}
         return self.dfi.get_statistics()
+
+    def get_channel_id(self, addr: int) -> int:
+        """Get channel ID for an address
+
+        Args:
+            addr: 64-bit physical address
+
+        Returns:
+            Channel ID (0-31)
+        """
+        return self.decoder.get_channel_id(addr)
 
     def trigger_training(self, channel_id: Optional[int] = None) -> str:
         """Trigger training for a channel or all channels
@@ -1385,6 +1523,12 @@ class ChannelState:
     last_refresh_cycle: int = 0
     training_state: str = "COMPLETE"  # IDLE, TRAINING, COMPLETE
     power_state: str = "ACTIVE"  # ACTIVE, SELF_REFRESH, POWER_DOWN
+    # Load balancing metrics (ponytail: per-channel tracking for imbalance detection)
+    pending_requests: int = 0
+    completed_requests: int = 0
+    total_latency_ns: float = 0.0
+    last_access_cycle: int = 0
+    load_score: float = 0.0  # Weighted load: queue_depth + pending * 2
 
     def is_available(self) -> bool:
         """Check if channel is available for requests"""
@@ -1392,3 +1536,32 @@ class ChannelState:
             self.training_state == "COMPLETE" and
             self.power_state == "ACTIVE"
         )
+
+    def update_load(self, queue_depth: int, pending: int, cycle: int):
+        """Update channel load metrics"""
+        self.queue_depth = queue_depth
+        self.pending_requests = pending
+        self.last_access_cycle = cycle
+        # Weighted load: queue depth + pending requests * weight
+        self.load_score = queue_depth + pending * 2.0
+
+    def record_completion(self, latency_ns: float, cycle: int):
+        """Record a completed request"""
+        self.completed_requests += 1
+        self.total_latency_ns += latency_ns
+        self.last_access_cycle = cycle
+
+    def get_load_report(self) -> Dict[str, Any]:
+        """Get load metrics for this channel"""
+        return {
+            'channel_id': self.channel_id,
+            'queue_depth': self.queue_depth,
+            'pending_requests': self.pending_requests,
+            'completed_requests': self.completed_requests,
+            'load_score': self.load_score,
+            'avg_latency_ns': (
+                self.total_latency_ns / self.completed_requests
+                if self.completed_requests > 0 else 0.0
+            ),
+            'idle_cycles': self.last_access_cycle,
+        }
