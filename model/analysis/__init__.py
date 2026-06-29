@@ -17,6 +17,12 @@ from model.analysis.latency_analyzer import (
     LatencyStats,
     LatencyDistribution,
 )
+from model.analysis.dvfs_analyzer import (
+    DVFSAnalyzer,
+    DVFSResult,
+    DVFSSpeedGrade,
+    ParetoPoint,
+)
 
 __all__ = [
     # Bottleneck
@@ -33,4 +39,9 @@ __all__ = [
     # Latency
     "LatencyStats",
     "LatencyDistribution",
+    # DVFS
+    "DVFSAnalyzer",
+    "DVFSResult",
+    "DVFSSpeedGrade",
+    "ParetoPoint",
 ]
