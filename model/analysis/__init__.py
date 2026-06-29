@@ -6,10 +6,24 @@ from model.analysis.bottleneck_detector import (
     BottleneckReport,
     BottleneckDetector,
 )
+from model.analysis.hotspot_detector import (
+    HotspotData,
+    HotspotType,
+    HeatmapData,
+    HotspotReport,
+    HotspotDetector,
+)
 
 __all__ = [
+    # Bottleneck
     "Bottleneck",
     "BottleneckType",
     "BottleneckReport",
     "BottleneckDetector",
+    # Hotspot
+    "HotspotData",
+    "HotspotType",
+    "HeatmapData",
+    "HotspotReport",
+    "HotspotDetector",
 ]
