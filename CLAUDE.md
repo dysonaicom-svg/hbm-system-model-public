@@ -4,9 +4,9 @@
 
 HBM (High Bandwidth Memory) 系统仿真平台，支持芯片设计探索和验证对齐。
 
-**Current Branch**: `feat/hbm4-logic-base-die-phase2` (→ `master`)
+**Current Branch**: `master`
 **Main Branch**: `master`
-**Current Version**: 2.4.0 | **Development Phase**: Phase 7 ✅ Complete | **Tests**: 4,409+ Passing
+**Current Version**: 2.4.0 | **Development Phase**: Phase 8 ✅ Complete | **Tests**: 4,409+ Passing
 
 ## Architecture
 
@@ -46,7 +46,8 @@ Statistics Collector
 | 5 | HBM4 Controller Integration | ✅ **Complete** |
 | 6 | Performance, Features, Verification | ✅ **Complete** |
 | 7 | Performance Optimization (BankStateCache, Prefetch, ErrorRecovery) | ✅ **Complete** |
-| 8 | RTL Auto-Sync Tool | ✅ **Complete** |
+| 8 | RTL Auto-Sync Tool, Load Balancing, Queue Optimization | ✅ **Complete** |
+| 9 | Advanced Features (Coverage, Multi-Stack, Thermal) | 🚧 **Planning** |
 
 ### Phase 3 Highlights (Unified Simulator)
 
