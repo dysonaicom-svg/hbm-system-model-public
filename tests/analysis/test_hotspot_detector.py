@@ -158,3 +158,33 @@ class TestHotspotDetector:
         # Max heat should be 1.0
         max_heat = max(h.heat_level for h in report.hotspots)
         assert max_heat == 1.0
+
+    def test_detect_with_decoder(self):
+        """Test detect() with address decoder function"""
+        from model.analysis.hotspot_detector import HotspotDetector
+
+        def decoder(addr):
+            return {
+                'bank_id': (addr >> 10) & 0xF,
+                'channel_id': (addr >> 14) & 0x1F,
+                'row_id': addr & 0x3FF
+            }
+
+        detector = HotspotDetector()
+        trace = [(0x1000, True)] * 100 + [(0x2000, True)] * 50
+        report = detector.detect(trace, decoder=decoder)
+
+        # Should have address hotspots
+        assert len(report.hotspots) >= 1
+        # Should have bank/channel/row hotspots when decoder provided
+        bank_hotspots = [h for h in report.hotspots if h.hotspot_type == HotspotType.BANK]
+        assert len(bank_hotspots) > 0
+
+    def test_get_heatmap_alias(self):
+        """Test get_heatmap() returns same as generate_heatmap()"""
+        from model.analysis.hotspot_detector import HotspotDetector
+        detector = HotspotDetector()
+        trace = [(0x1000, True)] * 100
+        report = detector.detect_from_trace(trace)
+        report.generate_heatmap()
+        assert report.get_heatmap() == report._heatmaps
