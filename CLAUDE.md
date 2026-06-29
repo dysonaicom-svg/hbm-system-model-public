@@ -4,9 +4,9 @@
 
 HBM (High Bandwidth Memory) 系统仿真平台，支持芯片设计探索和验证对齐。
 
-**Current Branch**: `master`
+**Current Branch**: `feat/phase9-advanced-features` (→ `master`)
 **Main Branch**: `master`
-**Current Version**: 2.4.0 | **Development Phase**: Phase 8 ✅ Complete | **Tests**: 4,409+ Passing
+**Current Version**: 2.4.0 | **Development Phase**: Phase 9 ✅ Complete | **Tests**: 4,726+ Passing
 
 ## Architecture
 
@@ -47,7 +47,7 @@ Statistics Collector
 | 6 | Performance, Features, Verification | ✅ **Complete** |
 | 7 | Performance Optimization (BankStateCache, Prefetch, ErrorRecovery) | ✅ **Complete** |
 | 8 | RTL Auto-Sync Tool, Load Balancing, Queue Optimization | ✅ **Complete** |
-| 9 | Advanced Features (Coverage, Multi-Stack, Thermal) | 🚧 **Planning** |
+| 9 | Advanced Features (Coverage, Multi-Stack, Thermal, Monitoring, Perfetto) | ✅ **Complete** |
 
 ### Phase 3 Highlights (Unified Simulator)
 
@@ -75,12 +75,28 @@ Statistics Collector
 | Waveform comparison | ✅ Complete |
 | Timing alignment verification | ✅ Complete |
 
+### Phase 9 Highlights (Advanced Features)
+
+| Feature | Status |
+|---------|--------|
+| UVM Functional Coverage Model | ✅ Complete |
+| Multi-Stack Interconnect (Mesh/Torus/Crossbar) | ✅ Complete |
+| Power/Thermal Enhancement (HotSpot) | ✅ Complete |
+| Performance Monitoring & Heatmaps | ✅ Complete |
+| Perfetto Trace Export | ✅ Complete |
+| Test Coverage Enhancement (Boundary/Reliability) | ✅ Complete |
+
 **Key Files Added:**
 - `sim/rtl_interface.py` - RTL co-simulation interface
 - `sim/benchmark_suite.py` - Performance benchmark suite
 - `sim/result_comparison.py` - Result comparison analysis
 - `sim/visualization/advanced_charts.py` - ASCII visualization
 - `sim/rtl_sync.py` - RTL auto-sync tool
+- `sim/trace_export/perfetto_exporter.py` - Perfetto trace export
+- `model/dram/inter_stack/` - Multi-stack interconnect modeling
+- `model/dram/power_thermal/` - Power/thermal enhancement
+- `model/monitoring/` - Performance monitoring & heatmaps
+- `verification/uvm/coverage/` - UVM coverage model
 
 ## Key Components
 
