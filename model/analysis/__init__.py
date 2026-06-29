@@ -13,6 +13,10 @@ from model.analysis.hotspot_detector import (
     HotspotReport,
     HotspotDetector,
 )
+from model.analysis.latency_analyzer import (
+    LatencyStats,
+    LatencyDistribution,
+)
 
 __all__ = [
     # Bottleneck
@@ -26,4 +30,7 @@ __all__ = [
     "HeatmapData",
     "HotspotReport",
     "HotspotDetector",
+    # Latency
+    "LatencyStats",
+    "LatencyDistribution",
 ]
