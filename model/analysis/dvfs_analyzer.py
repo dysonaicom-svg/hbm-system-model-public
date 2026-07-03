@@ -125,10 +125,13 @@ class DVFSAnalyzer:
         self,
         target_perf_percent: float = 80.0,
         prefer_power: bool = False
-    ) -> DVFSResult:
-        """Suggest optimal configuration based on target performance"""
+    ) -> Optional[DVFSResult]:
+        """Suggest optimal configuration based on target performance.
+
+        Returns None if results are empty. Callers should check for None.
+        """
         if not self.results:
-            return DVFSResult(0, 0, 0, 0, 0, 0)
+            return None
 
         max_bw = max(r.bandwidth_gbps for r in self.results)
         target_bw = max_bw * (target_perf_percent / 100.0)

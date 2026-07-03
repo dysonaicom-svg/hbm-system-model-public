@@ -115,7 +115,8 @@ class HotspotDetector:
 
         # Calculate threshold from address counts
         counts = sorted(address_counts.values(), reverse=True)
-        threshold_idx = int(len(counts) * self.threshold_percentile / 100)
+        # Use (len-1) in numerator for correct percentile index
+        threshold_idx = int((len(counts) - 1) * self.threshold_percentile / 100)
         threshold = counts[min(threshold_idx, len(counts) - 1)] if counts else 0
         max_count = max(counts) if counts else 0
 

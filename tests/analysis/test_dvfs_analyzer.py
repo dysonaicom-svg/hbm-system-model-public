@@ -94,9 +94,10 @@ class TestDVFSAnalyzer:
         assert config.power_w > 0
 
     def test_suggest_optimal_config_empty_results(self):
+        """When results are empty, suggest_optimal_config returns None"""
         analyzer = DVFSAnalyzer()
         config = analyzer.suggest_optimal_config()
-        assert config.frequency_gtps == 0
+        assert config is None
 
     def test_suggest_optimal_config_target_percent(self):
         analyzer = DVFSAnalyzer()
