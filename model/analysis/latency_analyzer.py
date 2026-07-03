@@ -25,41 +25,49 @@ class LatencyDistribution:
 
     def __init__(self):
         self.samples: List[float] = []
+        self._cached_stats: Optional[LatencyStats] = None
 
     def add_sample(self, latency_ns: float):
         self.samples.append(latency_ns)
+        self._cached_stats = None  # Invalidate cache
 
     def analyze(self) -> LatencyStats:
         if not self.samples:
             return LatencyStats()
 
+        # Use cached result if available
+        if self._cached_stats is not None:
+            return self._cached_stats
+
         sorted_samples = sorted(self.samples)
         n = len(sorted_samples)
 
-        def percentile(p: float) -> float:
-            idx = int(n * p / 100)
-            idx = min(idx, n - 1)
-            return sorted_samples[idx]
+        # Compute all percentiles at once using statistics.quantiles
+        qs = statistics.quantiles(sorted_samples, n=100) if n > 1 else []
 
-        return LatencyStats(
+        stats = LatencyStats(
             min_ns=min(sorted_samples),
             max_ns=max(sorted_samples),
             mean_ns=statistics.mean(sorted_samples),
-            median_ns=percentile(50),
-            p50_ns=percentile(50),
-            p90_ns=percentile(90),
-            p95_ns=percentile(95),
-            p99_ns=percentile(99),
+            median_ns=qs[49] if len(qs) > 49 else sorted_samples[-1],  # p50
+            p50_ns=qs[49] if len(qs) > 49 else sorted_samples[-1],
+            p90_ns=qs[89] if len(qs) > 89 else sorted_samples[-1],
+            p95_ns=qs[94] if len(qs) > 94 else sorted_samples[-1],
+            p99_ns=qs[98] if len(qs) > 98 else sorted_samples[-1],
             std_dev_ns=statistics.stdev(sorted_samples) if n > 1 else 0.0,
             sample_count=n
         )
+
+        self._cached_stats = stats
+        return stats
 
     def get_histogram(self, bins: int = 20) -> Tuple[List[float], List[int]]:
         if not self.samples:
             return [], []
 
         min_val, max_val = min(self.samples), max(self.samples)
-        if min_val == max_val:
+        # Use tolerance for float comparison
+        if abs(max_val - min_val) < 1e-9:
             return [min_val], [len(self.samples)]
 
         bin_width = (max_val - min_val) / bins
@@ -81,9 +89,24 @@ class LatencyDistribution:
         sorted_samples = sorted(self.samples)
         n = len(sorted_samples)
 
-        def percentile(p: float) -> float:
-            idx = int(n * p / 100)
-            idx = min(idx, n - 1)
-            return sorted_samples[idx]
+        # Use statistics.quantiles for accurate percentile calculation
+        if n >= 100:
+            qs = statistics.quantiles(sorted_samples, n=100)
+            result = {}
+            for p in percentiles:
+                idx = int(p) - 1
+                if 0 <= idx < 99:
+                    result[p] = qs[idx]
+                else:
+                    result[p] = sorted_samples[-1]
+            return result
+        else:
+            # Fallback for small samples: use linear interpolation
+            def percentile(p: float) -> float:
+                idx = (n - 1) * p / 100
+                lower = int(idx)
+                upper = min(lower + 1, n - 1)
+                weight = idx - lower
+                return sorted_samples[lower] * (1 - weight) + sorted_samples[upper] * weight
 
-        return {p: percentile(p) for p in percentiles}
+            return {p: percentile(p) for p in percentiles}

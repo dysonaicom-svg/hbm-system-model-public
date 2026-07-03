@@ -23,6 +23,14 @@ from model.analysis.dvfs_analyzer import (
     DVFSSpeedGrade,
     ParetoPoint,
 )
+from model.analysis.power_performance_curve import (
+    PowerPerformanceCurve,
+    CurvePoint,
+)
+from model.analysis.optimizer import (
+    Optimizer,
+    OptimizationSuggestion,
+)
 
 __all__ = [
     # Bottleneck
@@ -44,4 +52,10 @@ __all__ = [
     "DVFSResult",
     "DVFSSpeedGrade",
     "ParetoPoint",
+    # Power Performance
+    "PowerPerformanceCurve",
+    "CurvePoint",
+    # Optimizer
+    "Optimizer",
+    "OptimizationSuggestion",
 ]

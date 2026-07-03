@@ -39,6 +39,10 @@ class PowerPerformanceCurve:
         if not self.points:
             return None
 
+        # Handle zero target
+        if target_performance <= 0:
+            return None
+
         best = None
         best_diff = float('inf')
 

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict
 from enum import Enum
+from math import isclose
 
 
 class DVFSSpeedGrade(Enum):
@@ -95,22 +96,25 @@ class DVFSAnalyzer:
             return []
 
         pareto_points = []
+
+        # Single pass to compute max/min values
+        max_eff = max(p.efficiency for p in self.results)
+        min_power = min(r.power_w for r in self.results)
+        max_bw = max(r.bandwidth_gbps for r in self.results)
+
         for r in self.results:
             point = ParetoPoint(dvfs_result=r)
 
-            # Identify knee point (maximum efficiency)
-            max_eff = max(p.efficiency for p in self.results)
-            if r.efficiency == max_eff:
+            # Identify knee point (maximum efficiency) - use isclose for float comparison
+            if isclose(r.efficiency, max_eff, rel_tol=1e-9):
                 point.is_knee_point = True
 
             # Identify optimal power point (lowest power)
-            min_power = min(r.power_w for r in self.results)
-            if r.power_w == min_power:
+            if isclose(r.power_w, min_power, rel_tol=1e-9):
                 point.is_optimal_power = True
 
             # Identify optimal performance point (highest bandwidth)
-            max_bw = max(r.bandwidth_gbps for r in self.results)
-            if r.bandwidth_gbps == max_bw:
+            if isclose(r.bandwidth_gbps, max_bw, rel_tol=1e-9):
                 point.is_optimal_performance = True
 
             pareto_points.append(point)

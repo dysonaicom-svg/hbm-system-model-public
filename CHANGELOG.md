@@ -20,6 +20,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Python 3.10 compatibility (removed dataclass slots=True)
 
+## [2.6.0] - 2026-07-04
+
+### Added
+
+#### Analysis Modules
+- **BottleneckDetector**: Detects performance bottlenecks (bank conflicts, queue blocking, channel utilization)
+- **HotspotDetector**: Identifies memory access hotspots with heatmap generation
+- **LatencyAnalyzer**: Statistical latency analysis with P50/P90/P95/P99 percentiles
+- **DVFSAnalyzer**: Power-performance tradeoff analysis for 8/12/16 GT/s speed grades
+- **PowerPerformanceCurve**: Generates power-performance curves with operating point detection
+- **Optimizer**: Generates optimization suggestions based on analysis results
+
+#### Compliance Modules
+- **JEDECValidator**: Validates against JEDEC JESD270-4A standards
+- **HBM3CompatibilityChecker**: Checks HBM4/HBM3 backward compatibility
+
+#### Integration
+- **SimulatorAnalyzer**: Integrated analyzer for HBMSimulator
+- **ComplianceValidator**: Validates HBM4 implementation against standards
+- Analysis and compliance modules exported from `sim` package
+
+#### Performance Optimization
+- **OptimizedMetrics**: Efficient performance metrics collection
+- **BatchRequestProcessor**: Optimized batch request processing
+- **OptimizedBankSelector**: Bank selection with caching
+- **LatencyTracker**: Optimized latency tracking with lazy sorting
+
+### Changed
+- LatencyStats percentile calculation using `statistics.quantiles()`
+- DVFSAnalyzer float comparisons using `isclose()`
+- PowerPerformanceCurve zero target handling
+
+### Fixed
+- Missing exports in `model/analysis/__init__.py`
+- Division by zero in `find_operating_point()`
+- Float precision errors in `generate_pareto_curve()`
+
 ## [1.0.0] - 2026-06-16
 
 ### Added
