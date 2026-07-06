@@ -4,9 +4,9 @@
 
 HBM (High Bandwidth Memory) 系统仿真平台，支持芯片设计探索和验证对齐。
 
-**Current Branch**: `feat/phase9-advanced-features` (→ `master`)
+**Current Branch**: `master`
 **Main Branch**: `master`
-**Current Version**: 2.4.0 | **Development Phase**: Phase 9 ✅ Complete | **Tests**: 4,726+ Passing
+**Current Version**: 2.6.0 | **Development Phase**: Phase 11 ✅ Complete | **Tests**: 4,726+ Passing
 
 ## Architecture
 
@@ -47,6 +47,9 @@ Statistics Collector
 | 6 | Performance, Features, Verification | ✅ **Complete** |
 | 7 | Performance Optimization (BankStateCache, Prefetch, ErrorRecovery) | ✅ **Complete** |
 | 8 | RTL Auto-Sync Tool, Load Balancing, Queue Optimization | ✅ **Complete** |
+| 9 | Advanced Features (Coverage, Multi-Stack, Thermal, Monitoring, Perfetto) | ✅ **Complete** |
+| 10 | Performance Analysis & DVFS (Bottleneck, Hotspot, Latency, JEDEC) | ✅ **Complete** |
+| 11 | Integration & Production Hardening | ✅ **Complete** |
 | 9 | Advanced Features (Coverage, Multi-Stack, Thermal, Monitoring, Perfetto) | ✅ **Complete** |
 
 ### Phase 3 Highlights (Unified Simulator)
