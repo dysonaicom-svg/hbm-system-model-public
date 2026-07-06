@@ -1,6 +1,6 @@
 # HBM System Modeling Platform
 
-> **Version**: 2.2 | **Status**: Phase 2 Development | **Branch**: `feat/hbm4-logic-base-die-phase2`
+> **Version**: 2.6.0 | **Status**: Phase 11 Development | **Branch**: `feat/phase10-analysis-dvfs`
 
 High Bandwidth Memory (HBM) system simulation platform for chip design exploration and verification alignment.
 
@@ -126,6 +126,36 @@ stats = sim.run()
 print(f"Throughput: {stats.throughput_gbps:.2f} GB/s")
 print(f"Row hit rate: {stats.row_hit_rate:.2%}")
 print(f"Efficiency: {stats.efficiency:.2%}")
+```
+
+### Performance Analysis
+
+```python
+from sim.analysis_integration import SimulatorAnalyzer
+from sim.compliance_integration import ComplianceValidator
+
+# Create integrated analyzer
+analyzer = SimulatorAnalyzer(enabled=True)
+
+# Record requests during simulation
+analyzer.record_request(address=0x1000, is_read=True, latency_ns=50.0)
+
+# Run analysis
+metrics = {"channel_0": {"bank_conflict_rate": 0.3, "utilization": 0.8}}
+report = analyzer.analyze(metrics)
+
+# Get analysis report
+print(f"Bottlenecks: {report.bottleneck_report.get_summary()['total_bottlenecks']}")
+print(f"P99 Latency: {report.latency_stats.p99_ns:.2f} ns")
+
+# Run compliance check
+validator = ComplianceValidator()
+compliance_report = validator.validate(
+    timing_params={"tRCD_ns": 10.0, "tRP_ns": 10.0, "tRAS_ns": 25.0, "tRC_ns": 35.0},
+    power_params={"active_power_w": 15.0, "idle_power_w": 2.0},
+    config={"mode": "HBM4"},
+)
+print(f"JEDEC Compliant: {compliance_report.is_compliant}")
 ```
 
 ## Architecture

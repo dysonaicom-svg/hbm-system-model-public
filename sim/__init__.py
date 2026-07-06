@@ -47,6 +47,19 @@ from sim.visualization.advanced_charts import (
     analyze_and_visualize,
 )
 
+# Import analysis integration
+from sim.analysis_integration import (
+    SimulatorAnalyzer,
+    AnalysisReport,
+)
+
+# Import compliance integration
+from sim.compliance_integration import (
+    ComplianceValidator,
+    ComplianceReport,
+    run_compliance_check,
+)
+
 __all__ += [
     "simulate",
     "run_benchmark",
@@ -73,4 +86,11 @@ __all__ += [
     "VisualizationData",
     "create_visualizer",
     "analyze_and_visualize",
+    # Analysis Integration
+    "SimulatorAnalyzer",
+    "AnalysisReport",
+    # Compliance Integration
+    "ComplianceValidator",
+    "ComplianceReport",
+    "run_compliance_check",
 ]

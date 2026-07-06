@@ -1,0 +1,143 @@
+{
+  "timestamp": "2026-06-29T17:14:02.450857",
+  "summary": {
+    "timestamp": "2026-06-29T17:14:02.450860",
+    "total_samples": 4,
+    "covergroups": {
+      "bank_conflict_cg": {
+        "coverage_percent": 30.76923076923077,
+        "bins_hit": 4,
+        "total_bins": 13
+      },
+      "row_hammer_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 10
+      },
+      "refresh_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 15
+      },
+      "channel_interleave_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 16
+      },
+      "row_hit_miss_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 10
+      },
+      "queue_fullness_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 10
+      },
+      "command_type_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 9
+      },
+      "latency_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 13
+      },
+      "bandwidth_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 12
+      },
+      "qos_priority_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 21
+      },
+      "transaction_cg": {
+        "coverage_percent": 0.0,
+        "bins_hit": 0,
+        "total_bins": 19
+      }
+    }
+  },
+  "database": {
+    "samples": [
+      {
+        "timestamp": 1782724442.450844,
+        "covergroup": "bank_conflict_cg",
+        "coverpoint": "bank_id",
+        "value": 5,
+        "bin_name": "banks_0_15"
+      },
+      {
+        "timestamp": 1782724442.450849,
+        "covergroup": "bank_conflict_cg",
+        "coverpoint": "bank_id",
+        "value": 5,
+        "bin_name": "bank_groups_4_7"
+      },
+      {
+        "timestamp": 1782724442.450852,
+        "covergroup": "bank_conflict_cg",
+        "coverpoint": "conflict_type",
+        "value": 1,
+        "bin_name": "same_bank_different_row"
+      },
+      {
+        "timestamp": 1782724442.450855,
+        "covergroup": "bank_conflict_cg",
+        "coverpoint": "bank_group_conflict",
+        "value": 1,
+        "bin_name": "group1"
+      }
+    ],
+    "bin_counts": {
+      "bank_conflict_cg.bank_id": {
+        "banks_0_15": 1,
+        "bank_groups_4_7": 1
+      },
+      "bank_conflict_cg.conflict_type": {
+        "same_bank_different_row": 1
+      },
+      "bank_conflict_cg.bank_group_conflict": {
+        "group1": 1
+      }
+    },
+    "total_bins": {
+      "bank_conflict_cg.bank_id": 5,
+      "bank_conflict_cg.conflict_type": 4,
+      "bank_conflict_cg.bank_group_conflict": 4,
+      "row_hammer_cg.hammer_bank": 2,
+      "row_hammer_cg.hammer_count": 5,
+      "row_hammer_cg.hammer_intensity": 3,
+      "refresh_cg.refresh_type": 4,
+      "refresh_cg.refresh_bank": 6,
+      "refresh_cg.refresh_interval": 5,
+      "channel_interleave_cg.channel_id": 3,
+      "channel_interleave_cg.interleave_depth": 5,
+      "channel_interleave_cg.interleave_pattern": 4,
+      "channel_interleave_cg.channel_switches": 4,
+      "row_hit_miss_cg.access_type": 4,
+      "row_hit_miss_cg.channel": 3,
+      "row_hit_miss_cg.row_address": 3,
+      "queue_fullness_cg.read_queue_depth": 5,
+      "queue_fullness_cg.write_queue_depth": 5,
+      "command_type_cg.cmd_type": 6,
+      "command_type_cg.channel": 3,
+      "latency_cg.read_latency": 5,
+      "latency_cg.write_latency": 5,
+      "latency_cg.cmd_mix_latency": 3,
+      "bandwidth_cg.bandwidth_util": 5,
+      "bandwidth_cg.read_write_ratio": 3,
+      "bandwidth_cg.data_width_util": 4,
+      "qos_priority_cg.priority": 7,
+      "qos_priority_cg.channel": 3,
+      "qos_priority_cg.priority_transition": 6,
+      "qos_priority_cg.starvation_cycles": 5,
+      "transaction_cg.transaction_type": 8,
+      "transaction_cg.address_pattern": 5,
+      "transaction_cg.data_pattern": 6
+    }
+  }
+}
