@@ -66,6 +66,13 @@ class DVFSAnalyzer:
     def __init__(self):
         self.results: List[DVFSResult] = []
 
+    def get_recommendations(self) -> List[DVFSResult]:
+        """Get DVFS recommendations - runs analysis and returns results"""
+        if not self.results:
+            # Run default analysis
+            self.analyze_frequency_sweep((8.0, 16.0, 4.0))
+        return self.results
+
     def analyze_frequency_sweep(
         self,
         freq_range: Tuple[float, float, float],  # min, max, step (GT/s)

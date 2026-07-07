@@ -77,6 +77,22 @@ class HotspotDetector:
 
     def __init__(self, threshold_percentile: float = 95.0):
         self.threshold_percentile = threshold_percentile
+        self._report = HotspotReport()
+        self._access_counts = defaultdict(int)
+
+    def add_access(self, address: int, is_read: bool = True):
+        """Add an access for hotspot tracking"""
+        self._access_counts[address] += 1
+
+    def generate_report(self) -> HotspotReport:
+        """Generate report from accumulated accesses"""
+        if not self._access_counts:
+            return self._report
+
+        # Build trace format for detect()
+        trace = [(addr, True) for addr, count in self._access_counts.items() for _ in range(count)]
+        self._report = self.detect(trace)
+        return self._report
 
     def detect(self, trace: List[Tuple[int, bool]],
                decoder: Optional[Callable[[int], Dict[str, int]]] = None) -> HotspotReport:

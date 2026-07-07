@@ -46,6 +46,14 @@ from model.controller.advanced_prefetch import (
 from model.controller.smart_queue import SmartQueue, QueueEntry
 from model.controller.bank_predictor import BankPredictor, BankState
 
+# Phase 14: Controller Integration
+from model.controller.hbm4_optimized_controller import (
+    HBM4OptimizedController,
+    OptimizationReport,
+    Phase14Stats,
+    create_optimized_controller,
+)
+
 __all__ = [
     'HBMController',
     'HBM4Controller',
@@ -77,4 +85,9 @@ __all__ = [
     'QueueEntry',
     'BankPredictor',
     'BankState',
+    # Phase 14: Controller Integration
+    'HBM4OptimizedController',
+    'OptimizationReport',
+    'Phase14Stats',
+    'create_optimized_controller',
 ]
