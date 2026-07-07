@@ -45,6 +45,11 @@ from sim.visualization.advanced_charts import (
     create_visualizer,
     analyze_and_visualize,
 )
+from sim.visualization.performance_dashboard import (
+    PerformanceDashboard,
+    DashboardMetrics,
+)
+from sim.visualization.thermal_heatmap import ThermalHeatmap
 
 __all__ = [
     # Bandwidth charts
@@ -82,4 +87,9 @@ __all__ = [
     'ChartType',
     'create_visualizer',
     'analyze_and_visualize',
+    # Phase 16: Performance Dashboard
+    'PerformanceDashboard',
+    'DashboardMetrics',
+    # Phase 16: Thermal Heatmap
+    'ThermalHeatmap',
 ]
