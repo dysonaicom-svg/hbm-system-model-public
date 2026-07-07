@@ -33,6 +33,19 @@ from model.controller.request import HBMRequest, HBMResponse, RequestState
 from model.controller.config import HBMConfig, HBM3_DEFAULT, HBM4_DEFAULT
 from model.controller.exceptions import HBMError, AddressError, TimingError
 
+# Phase 13: Performance Optimization
+from model.controller.parallel_scheduler import (
+    ParallelChannelScheduler,
+    ChannelLoad,
+)
+from model.controller.advanced_prefetch import (
+    AdvancedPrefetchEngine,
+    AccessPatternClassifier,
+    PrefetchDecision,
+)
+from model.controller.smart_queue import SmartQueue, QueueEntry
+from model.controller.bank_predictor import BankPredictor, BankState
+
 __all__ = [
     'HBMController',
     'HBM4Controller',
@@ -54,4 +67,14 @@ __all__ = [
     'HBMError',
     'AddressError',
     'TimingError',
+    # Phase 13: Performance Optimization
+    'ParallelChannelScheduler',
+    'ChannelLoad',
+    'AdvancedPrefetchEngine',
+    'AccessPatternClassifier',
+    'PrefetchDecision',
+    'SmartQueue',
+    'QueueEntry',
+    'BankPredictor',
+    'BankState',
 ]
