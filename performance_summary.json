@@ -1,0 +1,11 @@
+{
+  "exported_at": "2026-07-08T18:15:07.494014",
+  "version": "1.0.0",
+  "data": {
+    "timestamp": "2026-07-08T18:15:07.494009",
+    "summary": {
+      "throughput": 100.0,
+      "latency": 10.5
+    }
+  }
+}

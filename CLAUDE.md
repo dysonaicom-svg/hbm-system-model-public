@@ -6,7 +6,7 @@ HBM (High Bandwidth Memory) 系统仿真平台，支持芯片设计探索和验�
 
 **Current Branch**: `master`
 **Main Branch**: `master`
-**Current Version**: 2.6.0 | **Development Phase**: Phase 11 ✅ Complete | **Tests**: 4,726+ Passing
+**Current Version**: 2.7.0 | **Development Phase**: Phase 18 ✅ Complete | **Tests**: 4,726+ Passing
 
 ## Architecture
 
@@ -50,7 +50,7 @@ Statistics Collector
 | 9 | Advanced Features (Coverage, Multi-Stack, Thermal, Monitoring, Perfetto) | ✅ **Complete** |
 | 10 | Performance Analysis & DVFS (Bottleneck, Hotspot, Latency, JEDEC) | ✅ **Complete** |
 | 11 | Integration & Production Hardening | ✅ **Complete** |
-| 9 | Advanced Features (Coverage, Multi-Stack, Thermal, Monitoring, Perfetto) | ✅ **Complete** |
+| 18 | Export & CLI Enhancement | ✅ **Complete** |
 
 ### Phase 3 Highlights (Unified Simulator)
 
@@ -88,6 +88,23 @@ Statistics Collector
 | Performance Monitoring & Heatmaps | ✅ Complete |
 | Perfetto Trace Export | ✅ Complete |
 | Test Coverage Enhancement (Boundary/Reliability) | ✅ Complete |
+
+### Phase 18 Highlights (Export & CLI)
+
+| Feature | Status |
+|---------|--------|
+| Analysis Report Exporter (JSON/HTML/CSV) | ✅ Complete |
+| CLI Interface (analyze, validate, export, benchmark) | ✅ Complete |
+| Visualization Export (ASCII charts, heatmaps, timing diagrams) | ✅ Complete |
+| SVG chart export | ✅ Complete |
+| Comprehensive test suite | ✅ Complete |
+
+**Key Files Added:**
+- `model/export/report_exporter.py` - Report export
+- `model/export/cli.py` - CLI interface
+- `model/export/visualization_export.py` - ASCII/SVG visualization
+- `tests/export/test_export.py` - Export tests
+- `docs/guides/export-guide.md` - Usage guide
 
 **Key Files Added:**
 - `sim/rtl_interface.py` - RTL co-simulation interface

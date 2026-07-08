@@ -60,6 +60,16 @@ from sim.compliance_integration import (
     run_compliance_check,
 )
 
+# Import export functionality
+from model.export import (
+    AnalysisReportExporter,
+    ExporterConfig,
+    HBM4CLI,
+    VisualizationExporter,
+    ChartData,
+    quick_chart,
+)
+
 __all__ += [
     "simulate",
     "run_benchmark",
@@ -93,4 +103,11 @@ __all__ += [
     "ComplianceValidator",
     "ComplianceReport",
     "run_compliance_check",
+    # Export
+    "AnalysisReportExporter",
+    "ExporterConfig",
+    "HBM4CLI",
+    "VisualizationExporter",
+    "ChartData",
+    "quick_chart",
 ]

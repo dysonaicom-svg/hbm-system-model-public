@@ -1,0 +1,16 @@
+{
+  "exported_at": "2026-07-08T18:15:07.492953",
+  "version": "1.0.0",
+  "data": {
+    "bottlenecks": [
+      {
+        "type": "bank",
+        "count": 10
+      },
+      {
+        "type": "channel",
+        "count": 5
+      }
+    ]
+  }
+}

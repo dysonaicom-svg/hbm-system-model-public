@@ -44,7 +44,7 @@ from model.dram.lane_repair import (
 )
 from model.dram.hbm4_bank_state_machine import (
     HBM4BankStateMachine, HBM4BankState, HBM4BankTiming,
-    HBM4Command, HBM4Bank, BankStateTransition
+    HBM4Command, HBM4Bank
 )
 from model.dram.hbm4_channel_model import HBM4Channel
 from model.controller.queue import (
